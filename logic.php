@@ -1,5 +1,6 @@
 <?php
 
+use Bitrix\Main\Loader;
 use Bitrix\Main\Type\DateTime;
 use Bitrix\Main\Web\Json;
 
@@ -861,6 +862,33 @@ function overtimeCreateRequestElement(array $fields, array $propertyValues): int
     return $id;
 }
 
+function overtimeStartRequestWorkflow(int $requestId, array $config): ?string
+{
+    $workflowTemplateId = (int)($config['REQUEST_WORKFLOW_TEMPLATE_ID'] ?? 0);
+    if ($requestId <= 0 || $workflowTemplateId <= 0) {
+        return null;
+    }
+
+    if (!Loader::includeModule('bizproc')) {
+        return 'Не удалось подключить модуль bizproc.';
+    }
+
+    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
+    $workflowErrors = [];
+    $workflowId = CBPDocument::StartWorkflow(
+        $workflowTemplateId,
+        $documentId,
+        [],
+        $workflowErrors
+    );
+
+    if (!$workflowId) {
+        return 'Бизнес-процесс не запустился: ' . implode('; ', $workflowErrors);
+    }
+
+    return null;
+}
+
 function overtimeBuildGroupRequestName(array $employeeIds): string
 {
     $employeeIds = array_values(array_unique(array_filter(array_map('intval', $employeeIds))));
@@ -1055,7 +1083,22 @@ function overtimeCreateEmployeeRequestPack(
             $propertyValues[$config['REQ_PROP_JUST_FILE']] = $justificationFile;
         }
 
-        $createdIds[] = overtimeCreateRequestElement($fields, $propertyValues);
+        $createdId = overtimeCreateRequestElement($fields, $propertyValues);
+        $workflowError = overtimeStartRequestWorkflow($createdId, $config);
+        if ($workflowError !== null) {
+            $errors[] = 'Ошибка для заявки "' . $fields['NAME'] . '": ' . $workflowError;
+            continue;
+        }
+
+        $createdIds[] = $createdId;
+    }
+
+    if (!empty($errors)) {
+        return [
+            'success' => false,
+            'errors' => $errors,
+            'created_ids' => $createdIds,
+        ];
     }
 
     overtimeUpdateLinkedRequests($createdIds, $config);
