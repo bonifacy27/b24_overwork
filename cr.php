@@ -46,6 +46,9 @@ if (in_array($debugQueryValue, ['1', 'y', 'yes', 'true'], true)) {
 }
 
 $overtimeConfig['ALLOW_DUTY'] = overtimeCanCurrentUserUseDuty($currentUserId, $overtimeConfig);
+$overtimeConfig['CREATABLE_EMPLOYEE_IDS'] = overtimeGetCreatableEmployeeIdsForUser($currentUserId, $overtimeConfig);
+$overtimeConfig['RETRO_ALLOWED_EMPLOYEE_IDS'] = overtimeGetRetroAllowedEmployeeIds($overtimeConfig);
+$overtimeConfig['CAN_CREATE_REQUESTS'] = !empty($overtimeConfig['CREATABLE_EMPLOYEE_IDS']);
 
 /**
  * AJAX: предпросмотр
@@ -57,6 +60,14 @@ if ($request->isPost() && $request->getPost('ajax_action') === 'preview') {
         echo Json::encode([
             'success' => false,
             'errors' => ['Сессия истекла. Обновите страницу.'],
+        ]);
+        die();
+    }
+
+    if (empty($overtimeConfig['CAN_CREATE_REQUESTS'])) {
+        echo Json::encode([
+            'success' => false,
+            'errors' => ['Создание заявок доступно только руководителям или их заместителям по оргструктуре.'],
         ]);
         die();
     }
@@ -94,15 +105,23 @@ if (
     && $request->getPost('confirm_create') === 'Y'
     && check_bitrix_sessid()
 ) {
-    $mode = trim((string)$request->getPost('mode'));
+    if (empty($overtimeConfig['CAN_CREATE_REQUESTS'])) {
+        $createResult = [
+            'success' => false,
+            'errors' => ['Создание заявок доступно только руководителям или их заместителям по оргструктуре.'],
+            'created_ids' => [],
+        ];
+    } else {
+        $mode = trim((string)$request->getPost('mode'));
 
-    $createResult = overtimeCreateByMode(
-        $mode,
-        $_POST,
-        $_FILES,
-        $currentUserId,
-        $overtimeConfig
-    );
+        $createResult = overtimeCreateByMode(
+            $mode,
+            $_POST,
+            $_FILES,
+            $currentUserId,
+            $overtimeConfig
+        );
+    }
 
     if (!empty($createResult['success'])) {
         LocalRedirect('/forms/hr_administration/overtime/list.php');

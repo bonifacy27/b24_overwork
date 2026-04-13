@@ -668,12 +668,42 @@ function overtimeBuildSplitWarning(array $segments, array $config): array
     ];
 }
 
+function overtimeCanCurrentUserCreateForEmployee(int $employeeId, array $config): bool
+{
+    $allowed = is_array($config['CREATABLE_EMPLOYEE_IDS'] ?? null) ? $config['CREATABLE_EMPLOYEE_IDS'] : [];
+    return $employeeId > 0 && in_array($employeeId, $allowed, true);
+}
+
+function overtimeCanUsePastPeriodForEmployee(int $employeeId, array $config): bool
+{
+    $allowed = is_array($config['RETRO_ALLOWED_EMPLOYEE_IDS'] ?? null) ? $config['RETRO_ALLOWED_EMPLOYEE_IDS'] : [];
+    return $employeeId > 0 && in_array($employeeId, $allowed, true);
+}
+
+function overtimeValidatePeriodStartDate(int $employeeId, DateTime $start, array $config): ?string
+{
+    if (overtimeCanUsePastPeriodForEmployee($employeeId, $config)) {
+        return null;
+    }
+
+    $today = date('Y-m-d');
+    $startDate = $start->format('Y-m-d');
+
+    if ($startDate < $today) {
+        return 'Дата начала работ не может быть в прошлом для выбранного сотрудника.';
+    }
+
+    return null;
+}
+
 function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, string $timeStart, string $dateEnd, string $timeEnd, bool $isDuty, array $config): array
 {
     $errors = [];
 
     if ($employeeId <= 0) {
         $errors[] = 'Не выбран сотрудник.';
+    } elseif (!overtimeCanCurrentUserCreateForEmployee($employeeId, $config)) {
+        $errors[] = 'Недостаточно прав: заявку можно создавать только на подчиненных сотрудников.';
     }
 
     $start = overtimeParseDateTimeFromHtml($dateStart, $timeStart);
@@ -696,6 +726,13 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
 
     if (strtotime($start->format('Y-m-d H:i:s')) >= strtotime($end->format('Y-m-d H:i:s'))) {
         $errors[] = 'Дата/время окончания должны быть больше даты/времени начала.';
+    }
+
+    if (empty($errors)) {
+        $dateError = overtimeValidatePeriodStartDate($employeeId, $start, $config);
+        if ($dateError !== null) {
+            $errors[] = $dateError;
+        }
     }
 
     if (!empty($errors)) {
@@ -982,6 +1019,18 @@ function overtimeCreateEmployeeRequestPack(
     $segments = overtimeRestoreSegments($segmentsRaw);
     $errors = [];
     $createdIds = [];
+
+    if (!overtimeCanCurrentUserCreateForEmployee($employeeId, $config)) {
+        $errors[] = 'Недостаточно прав: заявку можно создавать только на подчиненных сотрудников.';
+    }
+
+    foreach ($segments as $segment) {
+        $dateError = overtimeValidatePeriodStartDate($employeeId, $segment['start'], $config);
+        if ($dateError !== null) {
+            $errors[] = $dateError . ' Сотрудник: ' . overtimeGetUserNameById($employeeId) . '.';
+            break;
+        }
+    }
 
     $errors = array_merge($errors, overtimeValidatePaymentTypes($segments, $paymentTypes, $employeeId));
 

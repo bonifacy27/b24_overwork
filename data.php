@@ -40,29 +40,21 @@ function overtimeGetUserNameById(int $userId): string
     return $data['name'];
 }
 
-
-
-function overtimeGetDutyAllowedEmployeeIds(array $config): array
+function overtimeGetEmployeeIdsFromListIblock(int $iblockId, string $propCode): array
 {
     static $cache = [];
 
-    $cacheKey = md5(serialize([
-        (int)($config['IBLOCK_DUTY_ACCESS'] ?? 0),
-        (string)($config['DUTY_ACCESS_PROP_EMPLOYEE'] ?? ''),
-    ]));
-
+    $cacheKey = $iblockId . '|' . $propCode;
     if (isset($cache[$cacheKey])) {
         return $cache[$cacheKey];
     }
-
-    $result = [];
-    $iblockId = (int)($config['IBLOCK_DUTY_ACCESS'] ?? 0);
-    $propCode = (string)($config['DUTY_ACCESS_PROP_EMPLOYEE'] ?? '');
 
     if ($iblockId <= 0 || $propCode === '') {
         $cache[$cacheKey] = [];
         return $cache[$cacheKey];
     }
+
+    $result = [];
 
     $res = CIBlockElement::GetList(
         ['ID' => 'ASC'],
@@ -86,6 +78,14 @@ function overtimeGetDutyAllowedEmployeeIds(array $config): array
     return $cache[$cacheKey];
 }
 
+function overtimeGetDutyAllowedEmployeeIds(array $config): array
+{
+    return overtimeGetEmployeeIdsFromListIblock(
+        (int)($config['IBLOCK_DUTY_ACCESS'] ?? 0),
+        (string)($config['DUTY_ACCESS_PROP_EMPLOYEE'] ?? '')
+    );
+}
+
 function overtimeCanCurrentUserUseDuty(int $userId, array $config): bool
 {
     if ($userId <= 0) {
@@ -94,6 +94,166 @@ function overtimeCanCurrentUserUseDuty(int $userId, array $config): bool
 
     $allowedUserIds = overtimeGetDutyAllowedEmployeeIds($config);
     return in_array($userId, $allowedUserIds, true);
+}
+
+function overtimeGetRetroAllowedEmployeeIds(array $config): array
+{
+    return overtimeGetEmployeeIdsFromListIblock(
+        (int)($config['IBLOCK_RETRO_ACCESS'] ?? 0),
+        (string)($config['RETRO_ACCESS_PROP_EMPLOYEE'] ?? '')
+    );
+}
+
+function overtimeGetDepartmentIdsByBounds(int $iblockId, int $leftMargin, int $rightMargin): array
+{
+    $result = [];
+
+    if ($iblockId <= 0 || $leftMargin <= 0 || $rightMargin <= 0 || $leftMargin > $rightMargin) {
+        return [];
+    }
+
+    $res = CIBlockSection::GetList(
+        ['LEFT_MARGIN' => 'ASC'],
+        [
+            'IBLOCK_ID' => $iblockId,
+            '>=LEFT_MARGIN' => $leftMargin,
+            '<=RIGHT_MARGIN' => $rightMargin,
+            'GLOBAL_ACTIVE' => 'Y',
+        ],
+        false,
+        ['ID']
+    );
+
+    while ($section = $res->Fetch()) {
+        $sectionId = (int)($section['ID'] ?? 0);
+        if ($sectionId > 0) {
+            $result[$sectionId] = $sectionId;
+        }
+    }
+
+    return array_values($result);
+}
+
+function overtimeGetManagedDepartmentIds(int $userId, array $config): array
+{
+    static $cache = [];
+
+    $cacheKey = $userId . '|' . md5(serialize([
+        (int)($config['IBLOCK_COMPANY_STRUCTURE'] ?? 0),
+        (string)($config['STRUCTURE_UF_MANAGER'] ?? ''),
+        (string)($config['STRUCTURE_UF_DEPUTY'] ?? ''),
+    ]));
+
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+
+    if ($userId <= 0) {
+        $cache[$cacheKey] = [];
+        return $cache[$cacheKey];
+    }
+
+    $iblockId = (int)($config['IBLOCK_COMPANY_STRUCTURE'] ?? 0);
+    $managerField = (string)($config['STRUCTURE_UF_MANAGER'] ?? 'UF_HEAD');
+    $deputyField = (string)($config['STRUCTURE_UF_DEPUTY'] ?? 'UF_DEPUTY');
+    if ($iblockId <= 0) {
+        $cache[$cacheKey] = [];
+        return $cache[$cacheKey];
+    }
+
+    $rootSections = [];
+    $sectionFilters = [
+        ['IBLOCK_ID' => $iblockId, 'GLOBAL_ACTIVE' => 'Y', $managerField => $userId],
+        ['IBLOCK_ID' => $iblockId, 'GLOBAL_ACTIVE' => 'Y', $deputyField => $userId],
+    ];
+
+    foreach ($sectionFilters as $filter) {
+        $res = CIBlockSection::GetList(
+            ['LEFT_MARGIN' => 'ASC'],
+            $filter,
+            false,
+            ['ID', 'LEFT_MARGIN', 'RIGHT_MARGIN']
+        );
+
+        while ($section = $res->Fetch()) {
+            $sectionId = (int)($section['ID'] ?? 0);
+            $left = (int)($section['LEFT_MARGIN'] ?? 0);
+            $right = (int)($section['RIGHT_MARGIN'] ?? 0);
+            if ($sectionId > 0 && $left > 0 && $right > 0) {
+                $rootSections[$sectionId] = [
+                    'left' => $left,
+                    'right' => $right,
+                ];
+            }
+        }
+    }
+
+    if (empty($rootSections)) {
+        $cache[$cacheKey] = [];
+        return $cache[$cacheKey];
+    }
+
+    $allDepartmentIds = [];
+    foreach ($rootSections as $sectionData) {
+        $ids = overtimeGetDepartmentIdsByBounds($iblockId, $sectionData['left'], $sectionData['right']);
+        foreach ($ids as $departmentId) {
+            $allDepartmentIds[$departmentId] = $departmentId;
+        }
+    }
+
+    $cache[$cacheKey] = array_values($allDepartmentIds);
+    return $cache[$cacheKey];
+}
+
+function overtimeGetSubordinateEmployeeIdsByDepartments(array $departmentIds): array
+{
+    if (empty($departmentIds)) {
+        return [];
+    }
+
+    $result = [];
+    $by = 'id';
+    $order = 'asc';
+    $userRes = CUser::GetList(
+        $by,
+        $order,
+        ['ACTIVE' => 'Y', 'UF_DEPARTMENT' => array_values($departmentIds)],
+        ['SELECT' => ['ID']]
+    );
+
+    while ($user = $userRes->Fetch()) {
+        $userId = (int)($user['ID'] ?? 0);
+        if ($userId > 0) {
+            $result[$userId] = $userId;
+        }
+    }
+
+    return array_values($result);
+}
+
+function overtimeGetCreatableEmployeeIdsForUser(int $userId, array $config): array
+{
+    static $cache = [];
+    if (isset($cache[$userId])) {
+        return $cache[$userId];
+    }
+
+    if ($userId <= 0) {
+        $cache[$userId] = [];
+        return $cache[$userId];
+    }
+
+    $departmentIds = overtimeGetManagedDepartmentIds($userId, $config);
+    if (empty($departmentIds)) {
+        $cache[$userId] = [];
+        return $cache[$userId];
+    }
+
+    $employeeIds = overtimeGetSubordinateEmployeeIdsByDepartments($departmentIds);
+    $employeeIds = array_values(array_diff($employeeIds, [$userId]));
+
+    $cache[$userId] = $employeeIds;
+    return $cache[$userId];
 }
 
 function overtimeGetHourOptions(): array

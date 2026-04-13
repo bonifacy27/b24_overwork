@@ -13,7 +13,9 @@ $overtimeConfig = [
     'IBLOCK_PAYMENT_TYPES' => 394,
     'IBLOCK_STATUSES' => 388,
     'IBLOCK_DUTY_ACCESS' => 396,
+    'IBLOCK_RETRO_ACCESS' => 401,
     'IBLOCK_GROUP_REQUESTS' => 397,
+    'IBLOCK_COMPANY_STRUCTURE' => 5,
 
     'WORK_TYPE_OVERTIME_ID' => 3537677,
     'WORK_TYPE_WEEKEND_ID'  => 3537684,
@@ -23,6 +25,11 @@ $overtimeConfig = [
 
     // Список пользователей, которым доступен флаг "Дежурство"
     'DUTY_ACCESS_PROP_EMPLOYEE' => 'SOTRUDNIK',
+    // Список сотрудников, для которых можно создавать заявки за прошедший период
+    'RETRO_ACCESS_PROP_EMPLOYEE' => 'SOTRUDNIK',
+    // Поля оргструктуры
+    'STRUCTURE_UF_MANAGER' => 'UF_HEAD',
+    'STRUCTURE_UF_DEPUTY' => 'UF_DEPUTY',
 
     // Реестр часов сверхурочки
     'REG_PROP_EMPLOYEE' => 'SOTRUDNIK',

@@ -2,6 +2,7 @@
 CJSCore::Init(['ui.entity-selector']);
 $hourOptions = overtimeGetHourOptions();
 $dutyAllowed = !empty($overtimeConfig['ALLOW_DUTY']);
+$todayHtmlDate = date('Y-m-d');
 
 $initialPaymentState = [
     'single' => $formData['single']['payment_type'] ?? [],
@@ -61,6 +62,11 @@ foreach ($formData['rows_diff'] as $index => $row) {
                 <div class="overtime-alert overtime-alert-error"><?= overtimeH($error) ?></div>
             <?php endforeach; ?>
         <?php endif; ?>
+        <?php if (empty($overtimeConfig['CAN_CREATE_REQUESTS'])): ?>
+            <div class="overtime-alert overtime-alert-warning">
+                Создание заявок доступно только руководителям или заместителям руководителей по оргструктуре.
+            </div>
+        <?php endif; ?>
 
         <form method="post" id="overtime-form" enctype="multipart/form-data">
             <?= bitrix_sessid_post() ?>
@@ -98,7 +104,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                 <div class="overtime-grid-4">
                     <div class="overtime-field">
                         <label>Дата начала</label>
-                        <input type="date" name="single[date_start]" id="single_date_start" value="<?= overtimeH($formData['single']['date_start']) ?>">
+                        <input type="date" name="single[date_start]" id="single_date_start" min="<?= overtimeH($todayHtmlDate) ?>" value="<?= overtimeH($formData['single']['date_start']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -113,7 +119,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
                     <div class="overtime-field">
                         <label>Дата окончания</label>
-                        <input type="date" name="single[date_end]" id="single_date_end" value="<?= overtimeH($formData['single']['date_end']) ?>">
+                        <input type="date" name="single[date_end]" id="single_date_end" min="<?= overtimeH($todayHtmlDate) ?>" value="<?= overtimeH($formData['single']['date_end']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -165,7 +171,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                 <div class="overtime-grid-4">
                     <div class="overtime-field">
                         <label>Дата начала</label>
-                        <input type="date" name="common[date_start]" id="same_date_start" value="<?= overtimeH($formData['common']['date_start']) ?>">
+                        <input type="date" name="common[date_start]" id="same_date_start" min="<?= overtimeH($todayHtmlDate) ?>" value="<?= overtimeH($formData['common']['date_start']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -180,7 +186,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
                     <div class="overtime-field">
                         <label>Дата окончания</label>
-                        <input type="date" name="common[date_end]" id="same_date_end" value="<?= overtimeH($formData['common']['date_end']) ?>">
+                        <input type="date" name="common[date_end]" id="same_date_end" min="<?= overtimeH($todayHtmlDate) ?>" value="<?= overtimeH($formData['common']['date_end']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -301,7 +307,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                             <div class="overtime-grid-4">
                                 <div class="overtime-field">
                                     <label>Дата начала</label>
-                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_start]" class="diff-date-start" value="<?= overtimeH($row['date_start']) ?>">
+                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_start]" class="diff-date-start" min="<?= overtimeH($todayHtmlDate) ?>" value="<?= overtimeH($row['date_start']) ?>">
                                 </div>
 
                                 <div class="overtime-field">
@@ -316,7 +322,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
                                 <div class="overtime-field">
                                     <label>Дата окончания</label>
-                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_end]" class="diff-date-end" value="<?= overtimeH($row['date_end']) ?>">
+                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_end]" class="diff-date-end" min="<?= overtimeH($todayHtmlDate) ?>" value="<?= overtimeH($row['date_end']) ?>">
                                 </div>
 
                                 <div class="overtime-field">
@@ -363,4 +369,8 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
 <script>
 window.overtimeInitialPaymentState = <?= \Bitrix\Main\Web\Json::encode($initialPaymentState) ?>;
+window.overtimeCreatableEmployeeIds = <?= \Bitrix\Main\Web\Json::encode(array_values($overtimeConfig['CREATABLE_EMPLOYEE_IDS'] ?? [])) ?>;
+window.overtimeRetroAllowedEmployeeIds = <?= \Bitrix\Main\Web\Json::encode(array_values($overtimeConfig['RETRO_ALLOWED_EMPLOYEE_IDS'] ?? [])) ?>;
+window.overtimeToday = <?= \Bitrix\Main\Web\Json::encode($todayHtmlDate) ?>;
+window.overtimeCanCreateRequests = <?= !empty($overtimeConfig['CAN_CREATE_REQUESTS']) ? 'true' : 'false' ?>;
 </script>

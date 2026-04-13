@@ -4,6 +4,10 @@ BX.ready(function () {
     const modeInput = document.getElementById('mode');
     const modeTabs = document.querySelectorAll('.overtime-mode-tab');
     const initialPaymentState = window.overtimeInitialPaymentState || {single:{}, rows_same:{}, rows_diff:{}};
+    const creatableEmployeeIds = new Set((window.overtimeCreatableEmployeeIds || []).map(function(id){ return String(id); }));
+    const retroAllowedEmployeeIds = new Set((window.overtimeRetroAllowedEmployeeIds || []).map(function(id){ return String(id); }));
+    const todayDate = String(window.overtimeToday || '');
+    const canCreateRequests = !!window.overtimeCanCreateRequests;
     const confirmInput = document.getElementById('confirm_create');
     const modalOverlay = document.getElementById('overtime-confirm-overlay');
     const modalContent = document.getElementById('overtime-confirm-content');
@@ -15,6 +19,59 @@ BX.ready(function () {
 
     let lastPreviewResponse = null;
     let previewTimer = null;
+
+    function canUsePastDates(employeeId) {
+        return retroAllowedEmployeeIds.has(String(employeeId || '0'));
+    }
+
+    function applyMinDateToInput(input, minDate) {
+        if (!input) {
+            return;
+        }
+
+        if (minDate) {
+            input.setAttribute('min', minDate);
+        } else {
+            input.removeAttribute('min');
+        }
+    }
+
+    function updateDateConstraints() {
+        if (!todayDate) {
+            return;
+        }
+
+        if (modeInput.value === 'single') {
+            const employeeInput = document.getElementById('single_employee_id');
+            const minDate = canUsePastDates(employeeInput ? employeeInput.value : '0') ? '' : todayDate;
+            applyMinDateToInput(document.getElementById('single_date_start'), minDate);
+            applyMinDateToInput(document.getElementById('single_date_end'), minDate);
+            return;
+        }
+
+        if (modeInput.value === 'multi_same') {
+            const employeeInputs = document.querySelectorAll('input[name^="rows_same"][name$="[employee_id]"]');
+            let allAllowPast = employeeInputs.length > 0;
+
+            employeeInputs.forEach(function(input) {
+                if (!input.value || input.value === '0' || !canUsePastDates(input.value)) {
+                    allAllowPast = false;
+                }
+            });
+
+            const minDate = allAllowPast ? '' : todayDate;
+            applyMinDateToInput(document.getElementById('same_date_start'), minDate);
+            applyMinDateToInput(document.getElementById('same_date_end'), minDate);
+            return;
+        }
+
+        document.querySelectorAll('.diff-row').forEach(function(row) {
+            const employeeInput = row.querySelector('input[name*="[employee_id]"]');
+            const minDate = canUsePastDates(employeeInput ? employeeInput.value : '0') ? '' : todayDate;
+            applyMinDateToInput(row.querySelector('.diff-date-start'), minDate);
+            applyMinDateToInput(row.querySelector('.diff-date-end'), minDate);
+        });
+    }
 
     function escapeHtml(text) {
         const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
@@ -238,6 +295,7 @@ BX.ready(function () {
         });
 
         toggleFileVisibility();
+        updateDateConstraints();
         requestPreview();
     }
 
@@ -291,16 +349,24 @@ BX.ready(function () {
                     const item = event.getData().item;
                     const title = typeof item.getTitle === 'function' ? item.getTitle() : '';
                     const subtitle = typeof item.getSubtitle === 'function' ? item.getSubtitle() : '';
+                    const selectedId = String(item.getId());
 
-                    input.value = item.getId();
+                    if (!creatableEmployeeIds.has(selectedId)) {
+                        alert('Можно выбирать только подчиненных сотрудников руководителя/заместителя.');
+                        return;
+                    }
+
+                    input.value = selectedId;
                     box.innerHTML = escapeHtml(title || 'Выбран сотрудник');
                     setEmployeeInfo(box, title, subtitle);
+                    updateDateConstraints();
                     requestPreview();
                 },
                 'Item:onDeselect': function() {
                     input.value = '';
                     box.innerHTML = 'Выберите сотрудника';
                     setEmployeeInfo(box, '', '');
+                    updateDateConstraints();
                     requestPreview();
                 }
             }
@@ -918,9 +984,11 @@ BX.ready(function () {
             container.appendChild(div);
             initSelector(div.querySelector('.overtime-selector-row'));
             bindDynamicPreviewEvents(div);
+            updateDateConstraints();
             div.querySelector('.remove-same-row').addEventListener('click', function(){
                 div.remove();
                 rebuildSameIndexes();
+                updateDateConstraints();
                 requestPreview();
             });
             requestPreview();
@@ -931,6 +999,7 @@ BX.ready(function () {
         btn.addEventListener('click', function(){
             btn.closest('.same-row').remove();
             rebuildSameIndexes();
+            updateDateConstraints();
             requestPreview();
         });
     });
@@ -965,9 +1034,9 @@ BX.ready(function () {
                 </div>
                 <div class="overtime-subtitle">Выберите периоды работы</div>
                 <div class="overtime-grid-4">
-                    <div class="overtime-field"><label>Дата начала</label><input type="date" name="rows_diff[${idx}][date_start]" class="diff-date-start"></div>
+                    <div class="overtime-field"><label>Дата начала</label><input type="date" name="rows_diff[${idx}][date_start]" class="diff-date-start" min="${escapeHtml(todayDate)}"></div>
                     <div class="overtime-field"><label>Время начала</label><select name="rows_diff[${idx}][time_start]" class="diff-time-start">${options}</select></div>
-                    <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end"></div>
+                    <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end" min="${escapeHtml(todayDate)}"></div>
                     <div class="overtime-field"><label>Время окончания</label><select name="rows_diff[${idx}][time_end]" class="diff-time-end">${options}</select></div>
                 </div>
                 <div class="overtime-preview-box row-preview" id="diff_preview_${idx}"></div>
@@ -975,9 +1044,11 @@ BX.ready(function () {
             container.appendChild(div);
             initSelector(div.querySelector('.overtime-selector-row'));
             bindDynamicPreviewEvents(div);
+            updateDateConstraints();
             div.querySelector('.remove-diff-row').addEventListener('click', function(){
                 div.remove();
                 rebuildDiffIndexes();
+                updateDateConstraints();
                 requestPreview();
             });
             requestPreview();
@@ -988,6 +1059,7 @@ BX.ready(function () {
         btn.addEventListener('click', function(){
             btn.closest('.diff-row').remove();
             rebuildDiffIndexes();
+            updateDateConstraints();
             requestPreview();
         });
     });
@@ -999,6 +1071,14 @@ BX.ready(function () {
         }
     });
 
+    if (!canCreateRequests) {
+        const createBtn = document.getElementById('create-btn');
+        if (createBtn) {
+            createBtn.disabled = true;
+        }
+    }
+
+    updateDateConstraints();
     switchMode(modeInput.value || 'single');
 });
 </script>
