@@ -1,7 +1,7 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.7.2');
+    define('OVERTIME_REQUEST_VERSION', '1.7.3');
 }
 
 $overtimeConfig = [
@@ -14,6 +14,7 @@ $overtimeConfig = [
     'IBLOCK_STATUSES' => 388,
     'IBLOCK_DUTY_ACCESS' => 396,
     'IBLOCK_GROUP_REQUESTS' => 397,
+    'REQUEST_WORKFLOW_TEMPLATE_ID' => 1292,
 
     'WORK_TYPE_OVERTIME_ID' => 3537677,
     'WORK_TYPE_WEEKEND_ID'  => 3537684,
