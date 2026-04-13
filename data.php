@@ -150,11 +150,54 @@ function overtimeCanCreatePastPeriodForEmployee(int $employeeId, array $config):
     return in_array($employeeId, $allowedEmployeeIds, true);
 }
 
-function overtimeGetCreatorAccessMap(int $creatorId, array $config): array
+
+function overtimeGetDeputizedManagerIds(int $deputyId): array
 {
     static $cache = [];
 
-    $cacheKey = md5(serialize([$creatorId, (int)($config['STRUCTURE_IBLOCK_ID'] ?? 0)]));
+    if (isset($cache[$deputyId])) {
+        return $cache[$deputyId];
+    }
+
+    $result = [];
+    if ($deputyId <= 0) {
+        $cache[$deputyId] = $result;
+        return $result;
+    }
+
+    $userRes = CUser::GetList(
+        $by = 'id',
+        $order = 'asc',
+        ['ACTIVE' => 'Y'],
+        ['FIELDS' => ['ID'], 'SELECT' => ['UF_DEPUTY']]
+    );
+
+    while ($user = $userRes->Fetch()) {
+        $managerId = (int)($user['ID'] ?? 0);
+        if ($managerId <= 0 || $managerId === $deputyId) {
+            continue;
+        }
+
+        $deputyValue = $user['UF_DEPUTY'] ?? null;
+        $deputyIds = is_array($deputyValue) ? $deputyValue : [$deputyValue];
+
+        foreach ($deputyIds as $value) {
+            if ((int)$value === $deputyId) {
+                $result[$managerId] = $managerId;
+                break;
+            }
+        }
+    }
+
+    $cache[$deputyId] = array_values($result);
+    return $cache[$deputyId];
+}
+
+function overtimeGetCreatorAccessMap(int $creatorId, array $config, bool $includeDeputyInheritance = true): array
+{
+    static $cache = [];
+
+    $cacheKey = md5(serialize([$creatorId, (int)($config['STRUCTURE_IBLOCK_ID'] ?? 0), $includeDeputyInheritance]));
     if (isset($cache[$cacheKey])) {
         return $cache[$cacheKey];
     }
@@ -246,6 +289,22 @@ function overtimeGetCreatorAccessMap(int $creatorId, array $config): array
             if ($employeeId > 0 && $employeeId !== $creatorId) {
                 $result['subordinate_employee_ids'][$employeeId] = $employeeId;
             }
+        }
+    }
+
+    if ($includeDeputyInheritance) {
+        $deputizedManagerIds = overtimeGetDeputizedManagerIds($creatorId);
+        foreach ($deputizedManagerIds as $managerId) {
+            $managerAccess = overtimeGetCreatorAccessMap((int)$managerId, $config, false);
+
+            foreach (($managerAccess['allowed_employee_ids'] ?? []) as $employeeId) {
+                $employeeId = (int)$employeeId;
+                if ($employeeId > 0 && $employeeId !== $creatorId) {
+                    $result['subordinate_employee_ids'][$employeeId] = $employeeId;
+                }
+            }
+
+            $result['subordinate_employee_ids'][(int)$managerId] = (int)$managerId;
         }
     }
 
