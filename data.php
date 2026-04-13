@@ -150,11 +150,54 @@ function overtimeCanCreatePastPeriodForEmployee(int $employeeId, array $config):
     return in_array($employeeId, $allowedEmployeeIds, true);
 }
 
-function overtimeGetCreatorAccessMap(int $creatorId, array $config): array
+
+function overtimeGetDeputizedManagerIds(int $deputyId): array
 {
     static $cache = [];
 
-    $cacheKey = md5(serialize([$creatorId, (int)($config['STRUCTURE_IBLOCK_ID'] ?? 0)]));
+    if (isset($cache[$deputyId])) {
+        return $cache[$deputyId];
+    }
+
+    $result = [];
+    if ($deputyId <= 0) {
+        $cache[$deputyId] = $result;
+        return $result;
+    }
+
+    $userRes = CUser::GetList(
+        $by = 'id',
+        $order = 'asc',
+        ['ACTIVE' => 'Y'],
+        ['FIELDS' => ['ID'], 'SELECT' => ['UF_DEPUTY']]
+    );
+
+    while ($user = $userRes->Fetch()) {
+        $managerId = (int)($user['ID'] ?? 0);
+        if ($managerId <= 0 || $managerId === $deputyId) {
+            continue;
+        }
+
+        $deputyValue = $user['UF_DEPUTY'] ?? null;
+        $deputyIds = is_array($deputyValue) ? $deputyValue : [$deputyValue];
+
+        foreach ($deputyIds as $value) {
+            if ((int)$value === $deputyId) {
+                $result[$managerId] = $managerId;
+                break;
+            }
+        }
+    }
+
+    $cache[$deputyId] = array_values($result);
+    return $cache[$deputyId];
+}
+
+function overtimeGetCreatorAccessMap(int $creatorId, array $config, bool $includeDeputyInheritance = true): array
+{
+    static $cache = [];
+
+    $cacheKey = md5(serialize([$creatorId, (int)($config['STRUCTURE_IBLOCK_ID'] ?? 0), $includeDeputyInheritance]));
     if (isset($cache[$cacheKey])) {
         return $cache[$cacheKey];
     }
@@ -177,7 +220,6 @@ function overtimeGetCreatorAccessMap(int $creatorId, array $config): array
         return $result;
     }
 
-    $sections = [];
     $children = [];
     $rsSections = CIBlockSection::GetList(
         ['LEFT_MARGIN' => 'ASC'],
@@ -192,12 +234,6 @@ function overtimeGetCreatorAccessMap(int $creatorId, array $config): array
         $headId = (int)($section['UF_HEAD'] ?? 0);
         $deputyId = (int)($section['UF_DEPUTY'] ?? 0);
 
-        $sections[$sectionId] = [
-            'id' => $sectionId,
-            'parent_id' => $parentId,
-            'head_id' => $headId,
-            'deputy_id' => $deputyId,
-        ];
 
         if (!isset($children[$parentId])) {
             $children[$parentId] = [];
@@ -209,43 +245,56 @@ function overtimeGetCreatorAccessMap(int $creatorId, array $config): array
         }
     }
 
-    if (empty($result['managed_section_ids'])) {
-        $cache[$cacheKey] = $result;
-        return $result;
-    }
+    if (!empty($result['managed_section_ids'])) {
+        $allManagedSectionIds = [];
+        $queue = array_values($result['managed_section_ids']);
+        while (!empty($queue)) {
+            $sectionId = (int)array_shift($queue);
+            if ($sectionId <= 0 || isset($allManagedSectionIds[$sectionId])) {
+                continue;
+            }
 
-    $allManagedSectionIds = [];
-    $queue = array_values($result['managed_section_ids']);
-    while (!empty($queue)) {
-        $sectionId = (int)array_shift($queue);
-        if ($sectionId <= 0 || isset($allManagedSectionIds[$sectionId])) {
-            continue;
+            $allManagedSectionIds[$sectionId] = $sectionId;
+            foreach (($children[$sectionId] ?? []) as $childId) {
+                if (!isset($allManagedSectionIds[$childId])) {
+                    $queue[] = (int)$childId;
+                }
+            }
         }
 
-        $allManagedSectionIds[$sectionId] = $sectionId;
-        foreach (($children[$sectionId] ?? []) as $childId) {
-            if (!isset($allManagedSectionIds[$childId])) {
-                $queue[] = (int)$childId;
+        if (!empty($allManagedSectionIds)) {
+            $userRes = CUser::GetList(
+                $by = 'id',
+                $order = 'asc',
+                [
+                    'ACTIVE' => 'Y',
+                    'UF_DEPARTMENT' => array_values($allManagedSectionIds),
+                ],
+                ['FIELDS' => ['ID']]
+            );
+
+            while ($user = $userRes->Fetch()) {
+                $employeeId = (int)$user['ID'];
+                if ($employeeId > 0 && $employeeId !== $creatorId) {
+                    $result['subordinate_employee_ids'][$employeeId] = $employeeId;
+                }
             }
         }
     }
 
-    if (!empty($allManagedSectionIds)) {
-        $userRes = CUser::GetList(
-            $by = 'id',
-            $order = 'asc',
-            [
-                'ACTIVE' => 'Y',
-                'UF_DEPARTMENT' => array_values($allManagedSectionIds),
-            ],
-            ['FIELDS' => ['ID']]
-        );
+    if ($includeDeputyInheritance) {
+        $deputizedManagerIds = overtimeGetDeputizedManagerIds($creatorId);
+        foreach ($deputizedManagerIds as $managerId) {
+            $managerAccess = overtimeGetCreatorAccessMap((int)$managerId, $config, false);
 
-        while ($user = $userRes->Fetch()) {
-            $employeeId = (int)$user['ID'];
-            if ($employeeId > 0 && $employeeId !== $creatorId) {
-                $result['subordinate_employee_ids'][$employeeId] = $employeeId;
+            foreach (($managerAccess['allowed_employee_ids'] ?? []) as $employeeId) {
+                $employeeId = (int)$employeeId;
+                if ($employeeId > 0 && $employeeId !== $creatorId) {
+                    $result['subordinate_employee_ids'][$employeeId] = $employeeId;
+                }
             }
+
+            $result['subordinate_employee_ids'][(int)$managerId] = (int)$managerId;
         }
     }
 
