@@ -1,7 +1,7 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.7.3');
+    define('OVERTIME_REQUEST_VERSION', '1.8.0');
 }
 
 $overtimeConfig = [
@@ -13,6 +13,7 @@ $overtimeConfig = [
     'IBLOCK_PAYMENT_TYPES' => 394,
     'IBLOCK_STATUSES' => 388,
     'IBLOCK_DUTY_ACCESS' => 396,
+    'IBLOCK_PAST_PERIOD_ACCESS' => 401,
     'IBLOCK_GROUP_REQUESTS' => 397,
     'REQUEST_WORKFLOW_TEMPLATE_ID' => 1292,
 
@@ -24,6 +25,11 @@ $overtimeConfig = [
 
     // Список пользователей, которым доступен флаг "Дежурство"
     'DUTY_ACCESS_PROP_EMPLOYEE' => 'SOTRUDNIK',
+    // Список сотрудников, которым разрешено создавать заявки за прошедший период
+    'PAST_PERIOD_ACCESS_PROP_EMPLOYEE' => 'SOTRUDNIK',
+
+    // Организационная структура
+    'STRUCTURE_IBLOCK_ID' => 5,
 
     // Реестр часов сверхурочки
     'REG_PROP_EMPLOYEE' => 'SOTRUDNIK',

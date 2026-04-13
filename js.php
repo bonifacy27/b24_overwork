@@ -12,9 +12,11 @@ BX.ready(function () {
     const modalSubmit = document.getElementById('overtime-confirm-submit');
     const isDebug = <?= !empty($overtimeConfig['DEBUG']) ? 'true' : 'false' ?>;
     const dutyAllowed = <?= !empty($overtimeConfig['ALLOW_DUTY']) ? 'true' : 'false' ?>;
+    const creatorCanCreate = <?= !empty(($overtimeConfig['CREATOR_ACCESS_MAP']['is_manager'] ?? false)) ? 'true' : 'false' ?>;
 
     let lastPreviewResponse = null;
     let previewTimer = null;
+    const todayDate = '<?= date('Y-m-d') ?>';
 
     function escapeHtml(text) {
         const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
@@ -420,6 +422,39 @@ BX.ready(function () {
         }).join('');
     }
 
+    function hasBlockingRestrictions(response) {
+        if (!response) {
+            return false;
+        }
+
+        if (modeInput.value === 'single') {
+            return !!(response.single && response.single.block_create);
+        }
+
+        if (response.rows) {
+            return Object.keys(response.rows).some(function(index){
+                return !!(response.rows[index] && response.rows[index].block_create);
+            });
+        }
+
+        return false;
+    }
+
+    function updateCreateButtonState(response) {
+        const createBtn = document.getElementById('create-btn');
+        if (!createBtn) {
+            return;
+        }
+
+        if (!creatorCanCreate) {
+            createBtn.disabled = true;
+            return;
+        }
+
+        const blocked = hasBlockingRestrictions(response);
+        createBtn.disabled = blocked;
+    }
+
     function collectPayload() {
         const mode = modeInput.value;
 
@@ -572,6 +607,7 @@ BX.ready(function () {
                     toggleFileVisibility();
                     lastPreviewResponse = response;
                     updateLateWarningUiFromPreview(response);
+                    updateCreateButtonState(response);
 
                     if (!response || (response.success === false && response.errors)) {
                         if (payload.mode === 'single') {
@@ -593,6 +629,7 @@ BX.ready(function () {
                 },
                 onfailure: function(xhr){
                     toggleFileVisibility();
+                    updateCreateButtonState(null);
                     const text = xhr && xhr.responseText ? xhr.responseText : 'Ошибка AJAX';
                     if (modeInput.value === 'single') {
                         const singlePreview = document.getElementById('single_preview');
@@ -834,6 +871,12 @@ BX.ready(function () {
     }
 
     form.addEventListener('submit', function(e){
+        if (!creatorCanCreate || hasBlockingRestrictions(lastPreviewResponse)) {
+            e.preventDefault();
+            alert('Заявку можно создать только на подчиненных сотрудников и на самого себя.');
+            return;
+        }
+
         if (confirmInput.value !== 'Y') {
             e.preventDefault();
             openConfirmModal();
@@ -965,9 +1008,9 @@ BX.ready(function () {
                 </div>
                 <div class="overtime-subtitle">Выберите периоды работы</div>
                 <div class="overtime-grid-4">
-                    <div class="overtime-field"><label>Дата начала</label><input type="date" name="rows_diff[${idx}][date_start]" class="diff-date-start"></div>
+                    <div class="overtime-field"><label>Дата начала</label><input type="date" name="rows_diff[${idx}][date_start]" class="diff-date-start" min="${todayDate}"></div>
                     <div class="overtime-field"><label>Время начала</label><select name="rows_diff[${idx}][time_start]" class="diff-time-start">${options}</select></div>
-                    <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end"></div>
+                    <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end" min="${todayDate}"></div>
                     <div class="overtime-field"><label>Время окончания</label><select name="rows_diff[${idx}][time_end]" class="diff-time-end">${options}</select></div>
                 </div>
                 <div class="overtime-preview-box row-preview" id="diff_preview_${idx}"></div>

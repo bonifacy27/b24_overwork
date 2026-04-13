@@ -46,6 +46,8 @@ if (in_array($debugQueryValue, ['1', 'y', 'yes', 'true'], true)) {
 }
 
 $overtimeConfig['ALLOW_DUTY'] = overtimeCanCurrentUserUseDuty($currentUserId, $overtimeConfig);
+$overtimeConfig['CURRENT_USER_ID'] = $currentUserId;
+$overtimeConfig['CREATOR_ACCESS_MAP'] = overtimeGetCreatorAccessMap($currentUserId, $overtimeConfig);
 
 /**
  * AJAX: предпросмотр
