@@ -60,6 +60,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
         <?php if (!empty($createResult) && empty($createResult['success'])): ?>
             <?php foreach ($createResult['errors'] as $error): ?>
+                <?php if ($error === 'Создание заявок доступно только руководителям и назначенным заместителям руководителя.') { continue; } ?>
                 <div class="overtime-alert overtime-alert-error"><?= overtimeH($error) ?></div>
             <?php endforeach; ?>
         <?php endif; ?>
