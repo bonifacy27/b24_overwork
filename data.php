@@ -96,6 +96,178 @@ function overtimeCanCurrentUserUseDuty(int $userId, array $config): bool
     return in_array($userId, $allowedUserIds, true);
 }
 
+function overtimeGetPastPeriodAllowedEmployeeIds(array $config): array
+{
+    static $cache = [];
+
+    $cacheKey = md5(serialize([
+        (int)($config['IBLOCK_PAST_PERIOD_ACCESS'] ?? 0),
+        (string)($config['PAST_PERIOD_ACCESS_PROP_EMPLOYEE'] ?? ''),
+    ]));
+
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+
+    $result = [];
+    $iblockId = (int)($config['IBLOCK_PAST_PERIOD_ACCESS'] ?? 0);
+    $propCode = (string)($config['PAST_PERIOD_ACCESS_PROP_EMPLOYEE'] ?? '');
+
+    if ($iblockId <= 0 || $propCode === '') {
+        $cache[$cacheKey] = [];
+        return $cache[$cacheKey];
+    }
+
+    $res = CIBlockElement::GetList(
+        ['ID' => 'ASC'],
+        [
+            'IBLOCK_ID' => $iblockId,
+            'ACTIVE' => 'Y',
+        ],
+        false,
+        false,
+        ['ID', 'PROPERTY_' . $propCode]
+    );
+
+    while ($item = $res->Fetch()) {
+        $employeeId = (int)($item['PROPERTY_' . $propCode . '_VALUE'] ?? 0);
+        if ($employeeId > 0) {
+            $result[$employeeId] = $employeeId;
+        }
+    }
+
+    $cache[$cacheKey] = array_values($result);
+    return $cache[$cacheKey];
+}
+
+function overtimeCanCreatePastPeriodForEmployee(int $employeeId, array $config): bool
+{
+    if ($employeeId <= 0) {
+        return false;
+    }
+
+    $allowedEmployeeIds = overtimeGetPastPeriodAllowedEmployeeIds($config);
+    return in_array($employeeId, $allowedEmployeeIds, true);
+}
+
+function overtimeGetCreatorAccessMap(int $creatorId, array $config): array
+{
+    static $cache = [];
+
+    $cacheKey = md5(serialize([$creatorId, (int)($config['STRUCTURE_IBLOCK_ID'] ?? 0)]));
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+
+    $result = [
+        'is_manager' => false,
+        'allowed_employee_ids' => [$creatorId],
+        'subordinate_employee_ids' => [],
+        'managed_section_ids' => [],
+    ];
+
+    if ($creatorId <= 0) {
+        $cache[$cacheKey] = $result;
+        return $result;
+    }
+
+    $iblockId = (int)($config['STRUCTURE_IBLOCK_ID'] ?? 0);
+    if ($iblockId <= 0) {
+        $cache[$cacheKey] = $result;
+        return $result;
+    }
+
+    $sections = [];
+    $children = [];
+    $rsSections = CIBlockSection::GetList(
+        ['LEFT_MARGIN' => 'ASC'],
+        ['IBLOCK_ID' => $iblockId, 'ACTIVE' => 'Y', 'GLOBAL_ACTIVE' => 'Y'],
+        false,
+        ['ID', 'IBLOCK_SECTION_ID', 'UF_HEAD', 'UF_DEPUTY']
+    );
+
+    while ($section = $rsSections->GetNext()) {
+        $sectionId = (int)$section['ID'];
+        $parentId = (int)$section['IBLOCK_SECTION_ID'];
+        $headId = (int)($section['UF_HEAD'] ?? 0);
+        $deputyId = (int)($section['UF_DEPUTY'] ?? 0);
+
+        $sections[$sectionId] = [
+            'id' => $sectionId,
+            'parent_id' => $parentId,
+            'head_id' => $headId,
+            'deputy_id' => $deputyId,
+        ];
+
+        if (!isset($children[$parentId])) {
+            $children[$parentId] = [];
+        }
+        $children[$parentId][] = $sectionId;
+
+        if ($creatorId === $headId || $creatorId === $deputyId) {
+            $result['managed_section_ids'][$sectionId] = $sectionId;
+        }
+    }
+
+    if (empty($result['managed_section_ids'])) {
+        $cache[$cacheKey] = $result;
+        return $result;
+    }
+
+    $allManagedSectionIds = [];
+    $queue = array_values($result['managed_section_ids']);
+    while (!empty($queue)) {
+        $sectionId = (int)array_shift($queue);
+        if ($sectionId <= 0 || isset($allManagedSectionIds[$sectionId])) {
+            continue;
+        }
+
+        $allManagedSectionIds[$sectionId] = $sectionId;
+        foreach (($children[$sectionId] ?? []) as $childId) {
+            if (!isset($allManagedSectionIds[$childId])) {
+                $queue[] = (int)$childId;
+            }
+        }
+    }
+
+    if (!empty($allManagedSectionIds)) {
+        $userRes = CUser::GetList(
+            $by = 'id',
+            $order = 'asc',
+            [
+                'ACTIVE' => 'Y',
+                'UF_DEPARTMENT' => array_values($allManagedSectionIds),
+            ],
+            ['FIELDS' => ['ID']]
+        );
+
+        while ($user = $userRes->Fetch()) {
+            $employeeId = (int)$user['ID'];
+            if ($employeeId > 0 && $employeeId !== $creatorId) {
+                $result['subordinate_employee_ids'][$employeeId] = $employeeId;
+            }
+        }
+    }
+
+    $result['is_manager'] = !empty($result['subordinate_employee_ids']);
+    $result['subordinate_employee_ids'] = array_values($result['subordinate_employee_ids']);
+    $result['managed_section_ids'] = array_values($result['managed_section_ids']);
+    $result['allowed_employee_ids'] = array_values(array_unique(array_merge([$creatorId], $result['subordinate_employee_ids'])));
+
+    $cache[$cacheKey] = $result;
+    return $cache[$cacheKey];
+}
+
+function overtimeCanCreatorCreateForEmployee(int $creatorId, int $employeeId, array $config): bool
+{
+    if ($creatorId <= 0 || $employeeId <= 0) {
+        return false;
+    }
+
+    $accessMap = overtimeGetCreatorAccessMap($creatorId, $config);
+    return in_array($employeeId, $accessMap['allowed_employee_ids'], true);
+}
+
 function overtimeGetHourOptions(): array
 {
     $result = [];
