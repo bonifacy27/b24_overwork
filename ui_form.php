@@ -63,11 +63,6 @@ foreach ($formData['rows_diff'] as $index => $row) {
                 <div class="overtime-alert overtime-alert-error"><?= overtimeH($error) ?></div>
             <?php endforeach; ?>
         <?php endif; ?>
-
-        <?php if (!$creatorCanCreate): ?>
-            <div class="overtime-alert overtime-alert-error">Создание заявок доступно только руководителям и назначенным заместителям руководителя.</div>
-        <?php endif; ?>
-
         <form method="post" id="overtime-form" enctype="multipart/form-data">
             <?= bitrix_sessid_post() ?>
             <input type="hidden" name="action" value="create">
