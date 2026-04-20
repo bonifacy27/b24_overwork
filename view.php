@@ -1,0 +1,225 @@
+<?php
+use Bitrix\Main\Context;
+use Bitrix\Main\Loader;
+
+require_once $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
+
+if (
+    !Loader::includeModule('iblock')
+    || !Loader::includeModule('main')
+) {
+    require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
+    ShowError('Не удалось подключить модули iblock/main');
+    require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
+    return;
+}
+
+require_once __DIR__ . '/constants.php';
+require_once __DIR__ . '/data.php';
+
+$request = Context::getCurrent()->getRequest();
+$requestId = (int)$request->getQuery('id');
+
+function overtimeGetElementNameById(int $iblockId, int $elementId): string
+{
+    if ($iblockId <= 0 || $elementId <= 0) {
+        return '';
+    }
+
+    static $cache = [];
+    $cacheKey = $iblockId . ':' . $elementId;
+
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+
+    $name = '';
+    $res = CIBlockElement::GetList([], ['IBLOCK_ID' => $iblockId, 'ID' => $elementId], false, false, ['ID', 'NAME']);
+    if ($item = $res->Fetch()) {
+        $name = (string)$item['NAME'];
+    }
+
+    $cache[$cacheKey] = $name;
+    return $name;
+}
+
+function overtimeGetRequestViewData(int $requestId, array $config): ?array
+{
+    if ($requestId <= 0) {
+        return null;
+    }
+
+    $select = [
+        'ID',
+        'NAME',
+        'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
+        'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
+        'PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'],
+        'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
+        'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
+    ];
+
+    $res = CIBlockElement::GetList(
+        [],
+        [
+            'IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'],
+            'ID' => $requestId,
+        ],
+        false,
+        false,
+        $select
+    );
+
+    $item = $res->Fetch();
+    if (!$item) {
+        return null;
+    }
+
+    $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
+    $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
+
+    $employee = overtimeGetUserDataById($employeeId);
+
+    $linkedValue = $item['PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'] . '_VALUE'] ?? [];
+    if (!is_array($linkedValue)) {
+        $linkedValue = [$linkedValue];
+    }
+
+    $linkedRequestIds = [];
+    foreach ($linkedValue as $value) {
+        $linkedId = (int)$value;
+        if ($linkedId > 0 && $linkedId !== $requestId) {
+            $linkedRequestIds[$linkedId] = $linkedId;
+        }
+    }
+
+    return [
+        'id' => $requestId,
+        'name' => (string)$item['NAME'],
+        'employee_name' => $employee['name'] ?: 'Не указан',
+        'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], $workTypeId),
+        'calculation_html' => (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? ''),
+        'linked_request_ids' => array_values($linkedRequestIds),
+        'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
+    ];
+}
+
+function overtimeGetLinkedRequestCalculations(array $requestIds, array $config): array
+{
+    $requestIds = array_values(array_unique(array_map('intval', $requestIds)));
+    if (empty($requestIds)) {
+        return [];
+    }
+
+    $result = [];
+    $res = CIBlockElement::GetList(
+        ['ID' => 'ASC'],
+        [
+            'IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'],
+            'ID' => $requestIds,
+        ],
+        false,
+        false,
+        [
+            'ID',
+            'NAME',
+            'PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'],
+            'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
+        ]
+    );
+
+    while ($item = $res->Fetch()) {
+        $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
+        $employee = overtimeGetUserDataById($employeeId);
+
+        $result[] = [
+            'id' => (int)$item['ID'],
+            'name' => (string)$item['NAME'],
+            'employee_name' => $employee['name'] ?: 'Не указан',
+            'calculation_html' => (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? ''),
+        ];
+    }
+
+    return $result;
+}
+
+$viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
+$linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
+
+require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
+$APPLICATION->SetTitle('Просмотр заявки');
+?>
+<style>
+    .overtime-view-wrap {max-width: 1280px; margin: 0 auto;}
+    .overtime-view-box {background:#fff; border:1px solid #dfe3e8; border-radius:8px; padding:20px; margin-bottom:20px;}
+    .overtime-view-meta {display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; margin-bottom:20px;}
+    .overtime-view-meta-item {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc;}
+    .overtime-view-meta-label {font-size:12px; color:#6b7280; margin-bottom:4px;}
+    .overtime-view-meta-value {font-size:15px; font-weight:600;}
+    .overtime-view-title {font-size:18px; margin-bottom:12px;}
+    .overtime-view-subtitle {font-size:16px; margin:16px 0 10px;}
+    .overtime-view-calc {border:1px solid #e4e8ee; border-radius:6px; padding:12px; background:#fff; overflow:auto;}
+    .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
+    .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937;}
+    .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
+</style>
+
+<div class="overtime-view-wrap">
+    <div class="overtime-view-box">
+        <?php if (!$viewData): ?>
+            <div class="ui-alert ui-alert-danger">
+                <span class="ui-alert-message">Заявка с ID <?= (int)$requestId ?> не найдена.</span>
+            </div>
+        <?php else: ?>
+            <div class="overtime-view-title">Заявка #<?= (int)$viewData['id'] ?></div>
+
+            <div class="overtime-view-meta">
+                <div class="overtime-view-meta-item">
+                    <div class="overtime-view-meta-label">Название заявки</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['name']) ?></div>
+                </div>
+                <div class="overtime-view-meta-item">
+                    <div class="overtime-view-meta-label">Тип заявки</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['work_type_name'] ?: 'Не указан') ?></div>
+                </div>
+                <div class="overtime-view-meta-item">
+                    <div class="overtime-view-meta-label">Сотрудник</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['employee_name']) ?></div>
+                </div>
+            </div>
+
+            <div class="overtime-view-subtitle">Расчетная часть</div>
+            <div class="overtime-view-calc">
+                <?= $viewData['calculation_html'] !== '' ? $viewData['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
+            </div>
+
+            <?php if (!empty($linkedCalculations)): ?>
+                <div class="overtime-view-subtitle">Расчетная часть связанных заявок</div>
+                <?php foreach ($linkedCalculations as $linked): ?>
+                    <div class="overtime-view-subtitle" style="font-size:14px; margin-top:12px;">Заявка #<?= (int)$linked['id'] ?> — <?= overtimeH($linked['employee_name']) ?></div>
+                    <div class="overtime-view-calc">
+                        <?= $linked['calculation_html'] !== '' ? $linked['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+
+            <?php if ($viewData['group_id'] > 0): ?>
+                <div class="overtime-view-subtitle">Групповая заявка</div>
+                <a
+                    class="overtime-btn"
+                    href="https://ourtricolortv.nsc.ru/forms/hr_administration/overtime/list.php?group_filter=<?= (int)$viewData['group_id'] ?>"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    Открыть группу заявок #<?= (int)$viewData['group_id'] ?>
+                </a>
+            <?php endif; ?>
+        <?php endif; ?>
+
+        <div class="overtime-view-actions">
+            <a class="overtime-btn overtime-btn-primary" href="/forms/hr_administration/overtime/list.php">Вернуться к заявкам</a>
+        </div>
+    </div>
+</div>
+
+<?php require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
