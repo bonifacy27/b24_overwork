@@ -16,6 +16,7 @@ if (
 
 require_once __DIR__ . '/inc/constants.php';
 require_once __DIR__ . '/inc/data.php';
+require_once __DIR__ . '/inc/logic.php';
 
 $request = Context::getCurrent()->getRequest();
 $requestId = (int)$request->getQuery('id');
@@ -54,7 +55,8 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'NAME',
         'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
         'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
-        'PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'],
+        'PROPERTY_' . $config['REQ_PROP_START'],
+        'PROPERTY_' . $config['REQ_PROP_END'],
         'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
     ];
@@ -98,7 +100,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'name' => (string)$item['NAME'],
         'employee_name' => $employee['name'] ?: 'Не указан',
         'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], $workTypeId),
-        'calculation_html' => (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? ''),
+        'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
     ];
@@ -123,8 +125,10 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
         [
             'ID',
             'NAME',
-            'PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'],
             'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
+            'PROPERTY_' . $config['REQ_PROP_START'],
+            'PROPERTY_' . $config['REQ_PROP_END'],
         ]
     );
 
@@ -136,11 +140,109 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'id' => (int)$item['ID'],
             'name' => (string)$item['NAME'],
             'employee_name' => $employee['name'] ?: 'Не указан',
-            'calculation_html' => (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? ''),
+            'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         ];
     }
 
     return $result;
+}
+
+function overtimeExtractPropertyValue(array $item, string $propertyCode)
+{
+    $value = $item['PROPERTY_' . $propertyCode . '_VALUE'] ?? null;
+
+    if (is_array($value)) {
+        if (array_key_exists('VALUE', $value)) {
+            return overtimeExtractScalarValue($value['VALUE']);
+        }
+        return overtimeExtractScalarValue($value);
+    }
+
+    return $value;
+}
+
+function overtimeExtractScalarValue($value)
+{
+    if (!is_array($value)) {
+        return $value;
+    }
+
+    foreach ($value as $itemValue) {
+        $scalar = overtimeExtractScalarValue($itemValue);
+        if ($scalar !== null && $scalar !== '') {
+            return $scalar;
+        }
+    }
+
+    return null;
+}
+
+function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): string
+{
+    $employeeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_EMPLOYEE']);
+    $workTypeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_TYPE']);
+
+    if ($employeeId <= 0 || $workTypeId <= 0) {
+        return '';
+    }
+
+    if ($workTypeId !== (int)$config['WORK_TYPE_OVERTIME_ID']) {
+        return '';
+    }
+
+    $start = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_START']));
+    $end = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_END']));
+    if ($start === null || $end === null) {
+        return '';
+    }
+
+    if (strtotime($start->format('Y-m-d H:i:s')) >= strtotime($end->format('Y-m-d H:i:s'))) {
+        return '';
+    }
+
+    $segment = [
+        'type_id' => $workTypeId,
+        'type_name' => 'Сверхурочная работа',
+        'start' => $start,
+        'end' => $end,
+        'hours' => overtimeGetHoursDiff($start, $end),
+        'day_type' => 'workday',
+    ];
+
+    $paymentBreakdown = overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
+    return overtimeBuildCalculationHtmlReport($paymentBreakdown);
+}
+
+function overtimeParseRequestDateTimeValue($value): ?\Bitrix\Main\Type\DateTime
+{
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return null;
+    }
+
+    $formats = [
+        'd.m.Y H:i:s',
+        'd.m.Y H:i',
+        'Y-m-d H:i:s',
+        'Y-m-d H:i',
+    ];
+
+    foreach ($formats as $format) {
+        try {
+            $dt = new \Bitrix\Main\Type\DateTime($raw, $format);
+            if ($dt instanceof \Bitrix\Main\Type\DateTime) {
+                return $dt;
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) {
+        return null;
+    }
+
+    return new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $ts), 'd.m.Y H:i:s');
 }
 
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
@@ -166,6 +268,9 @@ $APPLICATION->SetTitle('Просмотр заявки');
 
 <div class="overtime-view-wrap">
     <div class="overtime-view-box">
+        <div class="overtime-view-meta-label" style="margin-bottom:10px;">
+            Версия скрипта: <?= defined('OVERTIME_REQUEST_VERSION') ? overtimeH((string)OVERTIME_REQUEST_VERSION) : 'n/a' ?>
+        </div>
         <?php if (!$viewData): ?>
             <div class="ui-alert ui-alert-danger">
                 <span class="ui-alert-message">Заявка с ID <?= (int)$requestId ?> не найдена.</span>
