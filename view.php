@@ -62,6 +62,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
     ];
+    $select = array_merge($select, overtimeBuildOptionalPropertySelect($config));
 
     $res = CIBlockElement::GetList(
         [],
@@ -81,6 +82,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
 
     $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
     $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
+    $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
 
     $employee = overtimeGetUserDataById($employeeId);
 
@@ -107,6 +109,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'name' => (string)$item['NAME'],
         'employee_name' => $employee['name'] ?: 'Не указан',
         'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], $workTypeId),
+        'payment_type_name' => $paymentTypeName,
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
@@ -138,6 +141,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
             'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
             'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
+            ...overtimeBuildOptionalPropertySelect($config),
         ]
     );
 
@@ -154,11 +158,69 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'id' => (int)$item['ID'],
             'name' => (string)$item['NAME'],
             'employee_name' => $employee['name'] ?: 'Не указан',
+            'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         ];
     }
 
     return $result;
+}
+
+function overtimeBuildOptionalPropertySelect(array $config): array
+{
+    $propertyCodes = [
+        'REQ_PROP_PAYMENT_TYPE',
+        'REQ_PROP_PAY_TYPE',
+        'REQ_PROP_PAYMENT_KIND',
+    ];
+
+    $select = [];
+    foreach ($propertyCodes as $configKey) {
+        $code = trim((string)($config[$configKey] ?? ''));
+        if ($code !== '') {
+            $select[] = 'PROPERTY_' . $code;
+        }
+    }
+
+    return array_values(array_unique($select));
+}
+
+function overtimeResolvePaymentTypeNameByItem(array $item, array $config): string
+{
+    $paymentPropertyCode = '';
+    foreach (['REQ_PROP_PAYMENT_TYPE', 'REQ_PROP_PAY_TYPE', 'REQ_PROP_PAYMENT_KIND'] as $configKey) {
+        $candidate = trim((string)($config[$configKey] ?? ''));
+        if ($candidate !== '') {
+            $paymentPropertyCode = $candidate;
+            break;
+        }
+    }
+
+    if ($paymentPropertyCode === '') {
+        return 'Не указан';
+    }
+
+    $rawValue = overtimeExtractPropertyValue($item, $paymentPropertyCode);
+    if ($rawValue === null || $rawValue === '') {
+        return 'Не указан';
+    }
+
+    if (!is_numeric($rawValue)) {
+        return trim((string)$rawValue) ?: 'Не указан';
+    }
+
+    $paymentTypeId = (int)$rawValue;
+    if ($paymentTypeId <= 0) {
+        return 'Не указан';
+    }
+
+    $paymentTypeIblockId = (int)($config['IBLOCK_PAYMENT_TYPES'] ?? $config['IBLOCK_PAY_TYPES'] ?? 0);
+    if ($paymentTypeIblockId <= 0) {
+        return (string)$paymentTypeId;
+    }
+
+    $name = overtimeGetElementNameById($paymentTypeIblockId, $paymentTypeId);
+    return $name !== '' ? $name : (string)$paymentTypeId;
 }
 
 function overtimeExtractPropertyValue(array $item, string $propertyCode)
@@ -200,7 +262,10 @@ function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): 
         return '';
     }
 
-    if ($workTypeId !== (int)$config['WORK_TYPE_OVERTIME_ID']) {
+    $isOvertime = $workTypeId === (int)$config['WORK_TYPE_OVERTIME_ID'];
+    $isWeekend = isset($config['WORK_TYPE_WEEKEND_ID']) && $workTypeId === (int)$config['WORK_TYPE_WEEKEND_ID'];
+
+    if (!$isOvertime && !$isWeekend) {
         return '';
     }
 
@@ -228,11 +293,11 @@ function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): 
 
     $segment = [
         'type_id' => $workTypeId,
-        'type_name' => 'Сверхурочная работа',
+        'type_name' => $isWeekend ? 'Работа в выходной день' : 'Сверхурочная работа',
         'start' => $start,
         'end' => $end,
         'hours' => overtimeGetHoursDiff($start, $end),
-        'day_type' => 'workday',
+        'day_type' => $isWeekend ? 'weekend' : 'workday',
     ];
 
     $paymentBreakdown = overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
@@ -354,6 +419,13 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-title {font-size:18px; margin-bottom:12px;}
     .overtime-view-subtitle {font-size:16px; margin:16px 0 10px;}
     .overtime-view-calc {border:1px solid #e4e8ee; border-radius:6px; padding:12px; background:#fff; overflow:auto;}
+    .overtime-view-main-calc {border-color:#c9defa; background:#f7fbff;}
+    .overtime-view-linked-wrap {margin-top:18px; border-top:1px dashed #d8dee8; padding-top:14px;}
+    .overtime-view-linked-details {border:1px solid #e5e9f0; border-radius:6px; background:#fbfcfe; margin-bottom:10px;}
+    .overtime-view-linked-summary {cursor:pointer; padding:8px 12px; font-size:13px; color:#4b5563; user-select:none;}
+    .overtime-view-linked-body {padding:0 12px 12px;}
+    .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
+    .overtime-view-linked-calc {font-size:13px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
@@ -384,21 +456,38 @@ $APPLICATION->SetTitle('Просмотр заявки');
                     <div class="overtime-view-meta-label">Сотрудник</div>
                     <div class="overtime-view-meta-value"><?= overtimeH($viewData['employee_name']) ?></div>
                 </div>
+                <div class="overtime-view-meta-item">
+                    <div class="overtime-view-meta-label">Тип оплаты</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['payment_type_name']) ?></div>
+                </div>
             </div>
 
             <div class="overtime-view-subtitle">Расчетная часть</div>
-            <div class="overtime-view-calc">
+            <div class="overtime-view-calc overtime-view-main-calc">
                 <?= $viewData['calculation_html'] !== '' ? $viewData['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
             </div>
 
             <?php if (!empty($linkedCalculations)): ?>
-                <div class="overtime-view-subtitle">Расчетная часть связанных заявок</div>
-                <?php foreach ($linkedCalculations as $linked): ?>
-                    <div class="overtime-view-subtitle" style="font-size:14px; margin-top:12px;">Заявка #<?= (int)$linked['id'] ?> — <?= overtimeH($linked['employee_name']) ?></div>
-                    <div class="overtime-view-calc">
-                        <?= $linked['calculation_html'] !== '' ? $linked['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
-                    </div>
-                <?php endforeach; ?>
+                <div class="overtime-view-linked-wrap">
+                    <details class="overtime-view-linked-details">
+                        <summary class="overtime-view-linked-summary">
+                            Расчет по связанным заявкам (<?= count($linkedCalculations) ?>)
+                        </summary>
+                        <div class="overtime-view-linked-body">
+                            <?php foreach ($linkedCalculations as $linked): ?>
+                                <div class="overtime-view-linked-item-title">
+                                    Заявка #<?= (int)$linked['id'] ?> — <?= overtimeH($linked['name']) ?>
+                                </div>
+                                <div class="overtime-view-meta-label" style="margin-bottom:6px;">
+                                    Сотрудник: <?= overtimeH($linked['employee_name']) ?> · Тип оплаты: <?= overtimeH($linked['payment_type_name']) ?>
+                                </div>
+                                <div class="overtime-view-calc overtime-view-linked-calc">
+                                    <?= $linked['calculation_html'] !== '' ? $linked['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </details>
+                </div>
             <?php endif; ?>
 
             <?php if ($viewData['group_id'] > 0): ?>
