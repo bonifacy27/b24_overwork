@@ -97,6 +97,11 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         }
     }
 
+    $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+    if ($calculationHtml === '') {
+        $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
+    }
+
     return [
         'id' => $requestId,
         'name' => (string)$item['NAME'],
@@ -139,6 +144,11 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
     while ($item = $res->Fetch()) {
         $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
         $employee = overtimeGetUserDataById($employeeId);
+
+        $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+        if ($calculationHtml === '') {
+            $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
+        }
 
         $result[] = [
             'id' => (int)$item['ID'],
