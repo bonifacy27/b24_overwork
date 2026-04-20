@@ -57,6 +57,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
         'PROPERTY_' . $config['REQ_PROP_START'],
         'PROPERTY_' . $config['REQ_PROP_END'],
+        'PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'],
         'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
     ];
@@ -96,6 +97,9 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     }
 
     $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+    if ($calculationHtml === '') {
+        $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
+    }
 
     return [
         'id' => $requestId,
@@ -131,6 +135,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
             'PROPERTY_' . $config['REQ_PROP_START'],
             'PROPERTY_' . $config['REQ_PROP_END'],
+            'PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'],
         ]
     );
 
@@ -138,11 +143,16 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
         $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
         $employee = overtimeGetUserDataById($employeeId);
 
+        $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+        if ($calculationHtml === '') {
+            $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
+        }
+
         $result[] = [
             'id' => (int)$item['ID'],
             'name' => (string)$item['NAME'],
             'employee_name' => $employee['name'] ?: 'Не указан',
-            'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
+            'calculation_html' => $calculationHtml,
         ];
     }
 
@@ -162,32 +172,59 @@ function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): 
         return '';
     }
 
-    $startRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? ''));
-    $endRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? ''));
-    if ($startRaw === '' || $endRaw === '') {
+    $start = overtimeParseRequestDateTimeValue($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? null);
+    $end = overtimeParseRequestDateTimeValue($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? null);
+    if ($start === null || $end === null) {
         return '';
     }
 
-    $startTs = strtotime($startRaw);
-    $endTs = strtotime($endRaw);
-    if ($startTs === false || $endTs === false || $startTs >= $endTs) {
+    if (strtotime($start->format('Y-m-d H:i:s')) >= strtotime($end->format('Y-m-d H:i:s'))) {
         return '';
     }
 
     $segment = [
         'type_id' => $workTypeId,
         'type_name' => 'Сверхурочная работа',
-        'start' => new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $startTs), 'd.m.Y H:i:s'),
-        'end' => new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $endTs), 'd.m.Y H:i:s'),
-        'hours' => overtimeGetHoursDiff(
-            new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $startTs), 'd.m.Y H:i:s'),
-            new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $endTs), 'd.m.Y H:i:s')
-        ),
+        'start' => $start,
+        'end' => $end,
+        'hours' => overtimeGetHoursDiff($start, $end),
         'day_type' => 'workday',
     ];
 
     $paymentBreakdown = overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
     return overtimeBuildCalculationHtmlReport($paymentBreakdown);
+}
+
+function overtimeParseRequestDateTimeValue($value): ?\Bitrix\Main\Type\DateTime
+{
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return null;
+    }
+
+    $formats = [
+        'd.m.Y H:i:s',
+        'd.m.Y H:i',
+        'Y-m-d H:i:s',
+        'Y-m-d H:i',
+    ];
+
+    foreach ($formats as $format) {
+        try {
+            $dt = new \Bitrix\Main\Type\DateTime($raw, $format);
+            if ($dt instanceof \Bitrix\Main\Type\DateTime) {
+                return $dt;
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    $ts = strtotime($raw);
+    if ($ts === false) {
+        return null;
+    }
+
+    return new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $ts), 'd.m.Y H:i:s');
 }
 
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
