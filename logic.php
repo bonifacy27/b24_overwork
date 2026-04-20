@@ -629,9 +629,80 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
         'existing_by_day' => $existingByDay,
         'rows' => $rows,
         'summary' => $summary,
+        'hours_15' => round(array_reduce($firstTwoSlots, static function ($carry, $slot) {
+            return $carry + (float)$slot['hours'];
+        }, 0.0), 2),
+        'hours_20' => round(array_reduce($doubleSlots, static function ($carry, $slot) {
+            return $carry + (float)$slot['hours'];
+        }, 0.0), 2),
+        'night_hours_20' => round(array_reduce($nightSlots, static function ($carry, $slot) {
+            return $carry + (float)$slot['hours'];
+        }, 0.0), 2),
         'tk_hours' => round($tkHours, 2),
         'premium_hours' => round($premiumHours, 2),
     ];
+}
+
+function overtimeBuildCalculationHtmlReport(array $paymentBreakdown): string
+{
+    if (empty($paymentBreakdown['rows']) && empty($paymentBreakdown['summary'])) {
+        return '';
+    }
+
+    $html = '<h3>Расчет часов для оплаты</h3>';
+    $html .= '<table border="1" cellpadding="6" cellspacing="0">';
+    $html .= '<thead><tr><th>Показатель</th><th>Часы</th><th>Интервал</th><th>Основание</th></tr></thead><tbody>';
+
+    foreach (($paymentBreakdown['rows'] ?? []) as $row) {
+        $html .= '<tr>';
+        $html .= '<td>' . overtimeH((string)($row['title'] ?? '')) . '</td>';
+        $html .= '<td>' . overtimeH((string)($row['hours'] ?? '')) . '</td>';
+        $html .= '<td>' . overtimeH((string)($row['interval'] ?? '')) . '</td>';
+        $html .= '<td>' . overtimeH((string)($row['basis'] ?? '')) . '</td>';
+        $html .= '</tr>';
+    }
+
+    foreach (($paymentBreakdown['summary'] ?? []) as $row) {
+        $html .= '<tr>';
+        $html .= '<td><strong>' . overtimeH((string)($row['title'] ?? '')) . '</strong></td>';
+        $html .= '<td><strong>' . overtimeH((string)($row['hours'] ?? '')) . '</strong></td>';
+        $html .= '<td>' . overtimeH((string)($row['interval'] ?? '')) . '</td>';
+        $html .= '<td>' . overtimeH((string)($row['basis'] ?? '')) . '</td>';
+        $html .= '</tr>';
+    }
+
+    $html .= '</tbody></table>';
+
+    return $html;
+}
+
+function overtimeResolveSubtypeId(array $segment, float $totalTkHours, float $totalPremiumHours, array $config): int
+{
+    if ((int)$segment['type_id'] === (int)$config['WORK_TYPE_DUTY_ID']) {
+        return (int)($config['SUBTYPE_DUTY_CB_ID'] ?? 0);
+    }
+
+    if ((int)$segment['type_id'] === (int)$config['WORK_TYPE_WEEKEND_ID']) {
+        return (int)($config['SUBTYPE_WEEKEND_CB_ID'] ?? 0);
+    }
+
+    if ((int)$segment['type_id'] !== (int)$config['WORK_TYPE_OVERTIME_ID']) {
+        return 0;
+    }
+
+    if ($totalTkHours <= 0 && $totalPremiumHours > 0) {
+        return (int)($config['SUBTYPE_OVERTIME_CB_ID'] ?? 0);
+    }
+
+    if ($totalTkHours > 0 && $totalPremiumHours > 0) {
+        return (int)($config['SUBTYPE_OVERTIME_CB_KA_ID'] ?? 0);
+    }
+
+    if ($totalTkHours > 0 && $totalPremiumHours <= 0) {
+        return (int)($config['SUBTYPE_OVERTIME_KA_ID'] ?? 0);
+    }
+
+    return 0;
 }
 
 function overtimeIsDutyRequestedAndAllowed(bool $isDuty, array $config): bool
@@ -1129,6 +1200,22 @@ function overtimeCreateEmployeeRequestPack(
         $totalPremiumHours = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
             ? (float)($paymentBreakdown['premium_hours'] ?? 0)
             : 0;
+        $overtimeTotalHours = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+            ? (float)$segment['hours']
+            : 0;
+        $hours15 = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+            ? (float)($paymentBreakdown['hours_15'] ?? 0)
+            : 0;
+        $hours20 = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+            ? (float)($paymentBreakdown['hours_20'] ?? 0)
+            : 0;
+        $nightHours20 = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+            ? (float)($paymentBreakdown['night_hours_20'] ?? 0)
+            : 0;
+        $subtypeId = overtimeResolveSubtypeId($segment, $totalTkHours, $totalPremiumHours, $config);
+        $calculationHtml = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+            ? overtimeBuildCalculationHtmlReport($paymentBreakdown)
+            : '';
 
         $propertyValues = [
             $config['REQ_PROP_EMPLOYEE'] => $employeeId,
@@ -1142,9 +1229,26 @@ function overtimeCreateEmployeeRequestPack(
             $config['REQ_PROP_WORK_START_TIME'] => $segment['start']->format('H:i'),
             $config['REQ_PROP_WORK_END_TIME'] => $segment['end']->format('H:i'),
             $config['REQ_PROP_TOTAL_HOURS'] => (string)$segment['hours'],
+            $config['REQ_PROP_OVERTIME_TOTAL_HOURS'] => $overtimeTotalHours,
+            $config['REQ_PROP_HOURS_15'] => $hours15,
+            $config['REQ_PROP_HOURS_20'] => $hours20,
+            $config['REQ_PROP_NIGHT_HOURS_20'] => $nightHours20,
             $config['REQ_PROP_TOTAL_OT_HOURS'] => $totalTkHours,
             $config['REQ_PROP_TOTAL_PREMIUM_HOURS'] => $totalPremiumHours,
         ];
+
+        if ($subtypeId > 0 && !empty($config['REQ_PROP_SUBTYPE'])) {
+            $propertyValues[$config['REQ_PROP_SUBTYPE']] = $subtypeId;
+        }
+
+        if ($calculationHtml !== '' && !empty($config['REQ_PROP_CALCULATION_HTML'])) {
+            $propertyValues[$config['REQ_PROP_CALCULATION_HTML']] = [
+                'VALUE' => [
+                    'TYPE' => 'HTML',
+                    'TEXT' => $calculationHtml,
+                ],
+            ];
+        }
 
         if ($groupId > 0 && !empty($config['REQ_PROP_GROUP_LINK'])) {
             $propertyValues[$config['REQ_PROP_GROUP_LINK']] = $groupId;
