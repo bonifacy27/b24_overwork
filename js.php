@@ -594,7 +594,7 @@ BX.ready(function () {
             const payload = collectPayload();
 
             BX.ajax({
-                url: window.location.pathname,
+                url: window.location.pathname + window.location.search,
                 method: 'POST',
                 dataType: 'json',
                 data: {
