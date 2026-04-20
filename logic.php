@@ -481,6 +481,37 @@ function overtimeCheckLateSubmissionWarning(array $segments, array $config): arr
 
 function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $config): array
 {
+    if ((int)$segment['type_id'] === (int)$config['WORK_TYPE_WEEKEND_ID']) {
+        $segmentHours = round((float)$segment['hours'], 2);
+        $interval = overtimeFormatDebugInterval($segment['start'], $segment['end']);
+
+        return [
+            'registry_hours_before' => 0.0,
+            'existing_by_day' => [],
+            'rows' => [
+                [
+                    'title' => 'Общее количество часов',
+                    'hours' => $segmentHours,
+                    'interval' => $interval,
+                    'basis' => 'расчет общего периода работы в выходной день по заявке',
+                ],
+            ],
+            'summary' => [
+                [
+                    'title' => 'ИТОГО часы для оплаты единовременной премией',
+                    'hours' => $segmentHours,
+                    'interval' => $interval,
+                    'basis' => 'все часы работы в выходной день оплачиваются единовременной премией',
+                ],
+            ],
+            'hours_15' => 0.0,
+            'hours_20' => 0.0,
+            'night_hours_20' => 0.0,
+            'tk_hours' => $segmentHours,
+            'premium_hours' => $segmentHours,
+        ];
+    }
+
     if ((int)$segment['type_id'] !== (int)$config['WORK_TYPE_OVERTIME_ID']) {
         return [];
     }
@@ -1194,13 +1225,17 @@ function overtimeCreateEmployeeRequestPack(
         ];
 
         $paymentBreakdown = overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
-        $totalTkHours = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+        $supportsCalculatedHours = in_array((int)$segment['type_id'], [
+            (int)$config['WORK_TYPE_OVERTIME_ID'],
+            (int)$config['WORK_TYPE_WEEKEND_ID'],
+        ], true);
+        $totalTkHours = $supportsCalculatedHours
             ? (float)($paymentBreakdown['tk_hours'] ?? 0)
             : 0;
-        $totalPremiumHours = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+        $totalPremiumHours = $supportsCalculatedHours
             ? (float)($paymentBreakdown['premium_hours'] ?? 0)
             : 0;
-        $overtimeTotalHours = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
+        $overtimeTotalHours = $supportsCalculatedHours
             ? (float)$segment['hours']
             : 0;
         $hours15 = (int)$segment['type_id'] === (int)$config['WORK_TYPE_OVERTIME_ID']
