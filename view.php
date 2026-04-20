@@ -55,8 +55,10 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'NAME',
         'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
         'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
-        'PROPERTY_' . $config['REQ_PROP_START'],
-        'PROPERTY_' . $config['REQ_PROP_END'],
+        'PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'],
+        'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
+        'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
+        'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
         'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
     ];
@@ -127,8 +129,10 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'NAME',
             'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
             'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
-            'PROPERTY_' . $config['REQ_PROP_START'],
-            'PROPERTY_' . $config['REQ_PROP_END'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
         ]
     );
 
@@ -190,8 +194,20 @@ function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): 
         return '';
     }
 
-    $start = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_START']));
-    $end = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_END']));
+    $startDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_DATE']);
+    $startTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_TIME']);
+    $endDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_DATE']);
+    $endTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_TIME']);
+
+    $start = overtimeBuildDateTimeFromDateAndTime($startDate, $startTime);
+    $end = overtimeBuildDateTimeFromDateAndTime($endDate, $endTime);
+
+    // Fallback на старые поля, если дата/время работ в заявке не заполнены.
+    if ($start === null || $end === null) {
+        $start = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_START']));
+        $end = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_END']));
+    }
+
     if ($start === null || $end === null) {
         return '';
     }
@@ -211,6 +227,73 @@ function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): 
 
     $paymentBreakdown = overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
     return overtimeBuildCalculationHtmlReport($paymentBreakdown);
+}
+
+function overtimeNormalizeTimeValue($value): string
+{
+    $time = trim((string)$value);
+    if ($time === '') {
+        return '';
+    }
+
+    if (preg_match('/^\d{1,2}:\d{2}$/', $time)) {
+        return $time . ':00';
+    }
+
+    if (preg_match('/^\d{1,2}:\d{2}:\d{2}$/', $time)) {
+        return $time;
+    }
+
+    $ts = strtotime($time);
+    if ($ts === false) {
+        return '';
+    }
+
+    return date('H:i:s', $ts);
+}
+
+function overtimeBuildDateTimeFromDateAndTime($dateValue, $timeValue): ?\Bitrix\Main\Type\DateTime
+{
+    $dateRaw = trim((string)$dateValue);
+    $timeRaw = overtimeNormalizeTimeValue($timeValue);
+
+    if ($dateRaw === '' || $timeRaw === '') {
+        return null;
+    }
+
+    $date = overtimeParseRequestDateValue($dateRaw);
+    if ($date === null) {
+        return null;
+    }
+
+    return overtimeParseRequestDateTimeValue($date . ' ' . $timeRaw);
+}
+
+function overtimeParseRequestDateValue(string $rawDate): ?string
+{
+    $rawDate = trim($rawDate);
+    if ($rawDate === '') {
+        return null;
+    }
+
+    $formats = [
+        'd.m.Y',
+        'Y-m-d',
+    ];
+
+    foreach ($formats as $format) {
+        $dt = \DateTime::createFromFormat($format, $rawDate);
+        if ($dt instanceof \DateTime) {
+            return $dt->format('d.m.Y');
+        }
+    }
+
+    $ts = strtotime($rawDate);
+    if ($ts === false) {
+        return null;
+    }
+
+    return date('d.m.Y', $ts);
 }
 
 function overtimeParseRequestDateTimeValue($value): ?\Bitrix\Main\Type\DateTime
