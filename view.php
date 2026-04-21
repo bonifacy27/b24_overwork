@@ -506,11 +506,21 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
 
         $activityName = trim((string)($task['ACTIVITY_NAME'] ?? ''));
         $taskName = trim((string)($task['NAME'] ?? ''));
-        if ($activityName !== 'Утверждение' && $taskName !== 'Утверждение') {
-            continue;
-        }
+        $activityNameLower = mb_strtolower($activityName, 'UTF-8');
+        $taskNameLower = mb_strtolower($taskName, 'UTF-8');
 
-        return $task;
+        $looksLikeApprovalTask = (
+            $activityNameLower === 'утверждение'
+            || $taskNameLower === 'утверждение'
+            || mb_strpos($activityNameLower, 'утвержд') !== false
+            || mb_strpos($taskNameLower, 'утвержд') !== false
+            || mb_strpos($activityNameLower, 'согласован') !== false
+            || mb_strpos($taskNameLower, 'согласован') !== false
+        );
+
+        if ($looksLikeApprovalTask) {
+            return $task;
+        }
     }
 
     return null;
