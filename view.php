@@ -1,6 +1,7 @@
 <?php
 use Bitrix\Main\Context;
 use Bitrix\Main\Loader;
+use Bitrix\Main\Application;
 
 require_once $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
@@ -457,8 +458,252 @@ function overtimeHighlightCalculationRows(string $html): string
     }, $html);
 }
 
+function overtimeExtractRequestIdFromDocumentId(string $documentId, int $iblockId): int
+{
+    $documentId = trim($documentId);
+    if ($documentId === '') {
+        return 0;
+    }
+
+    $patternByIblock = '/(?:^|_)' . preg_quote((string)$iblockId, '/') . '_([0-9]+)$/';
+    if ($iblockId > 0 && preg_match($patternByIblock, $documentId, $matches)) {
+        return (int)$matches[1];
+    }
+
+    if (preg_match('/([0-9]+)\D*$/', $documentId, $matches)) {
+        return (int)$matches[1];
+    }
+
+    return 0;
+}
+
+function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $iblockId): ?array
+{
+    if ($requestId <= 0 || $userId <= 0 || $iblockId <= 0) {
+        return null;
+    }
+
+    if (!Loader::includeModule('bizproc') || !class_exists('CBPTaskService')) {
+        return null;
+    }
+
+    $res = CBPTaskService::GetList(
+        ['ID' => 'DESC'],
+        [
+            'USER_ID' => $userId,
+            'USER_STATUS' => CBPTaskUserStatus::Waiting,
+        ],
+        false,
+        false,
+        ['ID', 'NAME', 'DOCUMENT_ID', 'WORKFLOW_ID', 'ACTIVITY_NAME']
+    );
+
+    while ($task = $res->GetNext()) {
+        $taskRequestId = overtimeExtractRequestIdFromDocumentId((string)($task['DOCUMENT_ID'] ?? ''), $iblockId);
+        if ($taskRequestId !== $requestId) {
+            continue;
+        }
+
+        $activityName = trim((string)($task['ACTIVITY_NAME'] ?? ''));
+        $taskName = trim((string)($task['NAME'] ?? ''));
+        if ($activityName !== 'Утверждение' && $taskName !== 'Утверждение') {
+            continue;
+        }
+
+        return $task;
+    }
+
+    return null;
+}
+
+function overtimeTaskIsRunning(int $taskId): bool
+{
+    if ($taskId <= 0 || !class_exists('CBPTaskService')) {
+        return false;
+    }
+
+    $res = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'STATUS']);
+    if (!is_object($res)) {
+        return false;
+    }
+
+    $task = $res->GetNext();
+    if (!$task) {
+        return false;
+    }
+
+    return (int)($task['STATUS'] ?? 0) === (int)CBPTaskStatus::Running;
+}
+
+function overtimeFlattenBizprocErrors(array $errors): string
+{
+    $messages = [];
+    foreach ($errors as $error) {
+        if (is_string($error)) {
+            $message = trim($error);
+            if ($message !== '') {
+                $messages[] = $message;
+            }
+            continue;
+        }
+
+        if (is_array($error)) {
+            $message = trim((string)($error['message'] ?? $error['MESSAGE'] ?? ''));
+            if ($message !== '') {
+                $messages[] = $message;
+            }
+        }
+    }
+
+    $messages = array_values(array_unique($messages));
+    return implode(' ', $messages);
+}
+
+function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 'approve', string $comment = ''): array
+{
+    $taskId = (int)($task['ID'] ?? 0);
+    if ($taskId <= 0 || $userId <= 0) {
+        return ['OK' => false, 'ERROR' => 'Некорректные входные данные для завершения задачи БП.'];
+    }
+
+    $errors = [];
+    $aliases = [
+        'yes' => 'approve', 'ok' => 'approve',
+        'no' => 'nonapprove', 'cancel' => 'nonapprove',
+        'reject' => 'nonapprove', 'decline' => 'nonapprove',
+    ];
+    $code = strtolower(trim($action));
+    if ($code === '') {
+        $code = 'approve';
+    }
+    if (isset($aliases[$code])) {
+        $code = $aliases[$code];
+    }
+
+    try {
+        if (method_exists('CBPDocument', 'PostTaskForm')) {
+            $fields1 = [
+                'USER_ID' => $userId,
+                'REAL_USER_ID' => $userId,
+                'COMMENT' => $comment,
+                'ACTION' => $code,
+                $code => 'Y',
+            ];
+            $tmpErr = [];
+            CBPDocument::PostTaskForm($taskId, $userId, $fields1, $tmpErr);
+            if (!empty($tmpErr)) {
+                $errors = array_merge($errors, $tmpErr);
+            }
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
+            }
+        }
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+    }
+
+    try {
+        if (method_exists('CBPDocument', 'PostTaskForm')) {
+            $fields2 = [
+                'USER_ID' => $userId,
+                'REAL_USER_ID' => $userId,
+                'COMMENT' => $comment,
+                $code => 'Y',
+            ];
+            $tmpErr2 = [];
+            CBPDocument::PostTaskForm($taskId, $userId, $fields2, $tmpErr2);
+            if (!empty($tmpErr2)) {
+                $errors = array_merge($errors, $tmpErr2);
+            }
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
+            }
+        }
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+    }
+
+    try {
+        $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
+        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['NAME'] ?? '');
+        if ($workflowId !== '' && $activity !== '' && method_exists('CBPDocument', 'SendExternalEvent')) {
+            $isYes = in_array($code, ['approve', 'accepted', 'accept', 'ok', 'yes', 'y', 'agree'], true);
+            $isNo = in_array($code, ['cancel', 'rejected', 'reject', 'no', 'n', 'disagree', 'decline', 'deny', 'refuse', 'nonapprove'], true);
+            $payloads = [];
+
+            if ($isYes || $isNo) {
+                $approveCode = $isYes ? 'Y' : 'N';
+                $payloads[] = ['APPROVE' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
+                $payloads[] = ['RESULT' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
+            } else {
+                $payloads[] = ['COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
+            }
+
+            foreach ($payloads as $payload) {
+                $extErr = [];
+                CBPDocument::SendExternalEvent($workflowId, $activity, $payload, $extErr);
+                if (!empty($extErr)) {
+                    $errors = array_merge($errors, $extErr);
+                }
+                if (!overtimeTaskIsRunning($taskId)) {
+                    return ['OK' => true, 'ERROR' => ''];
+                }
+            }
+        }
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+    }
+
+    try {
+        if (method_exists('CBPTaskService', 'DoTask')) {
+            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $code, $code => 'Y', 'COMMENT' => $comment]);
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
+            }
+        }
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+    }
+
+    $flatError = overtimeFlattenBizprocErrors($errors);
+    if ($flatError === '') {
+        $flatError = 'Задание осталось активным после всех попыток завершения.';
+    }
+
+    return ['OK' => false, 'ERROR' => $flatError];
+}
+
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
+$currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
+$approvalTask = null;
+$bpActionError = '';
+
+if ($viewData && $currentUserId > 0) {
+    $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
+}
+
+if (
+    $approvalTask
+    && $request->isPost()
+    && check_bitrix_sessid()
+) {
+    $postAction = trim((string)$request->getPost('bp_action'));
+    if ($postAction === 'approve' || $postAction === 'reject') {
+        $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
+        $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction);
+
+        if (!empty($completionResult['OK'])) {
+            LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
+        } else {
+            $bpActionError = (string)($completionResult['ERROR'] ?? 'Не удалось выполнить задание бизнес-процесса.');
+        }
+    }
+}
+
+if ($viewData && $currentUserId > 0) {
+    $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
+}
 
 require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
 $APPLICATION->SetTitle('Просмотр заявки');
@@ -486,6 +731,10 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
     .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
+    .overtime-view-approval {border:1px solid #d7e3f7; border-radius:8px; padding:14px; background:#f5f9ff; margin-top:20px;}
+    .overtime-view-approval-title {font-size:16px; margin-bottom:10px; font-weight:600;}
+    .overtime-view-approval-actions {display:flex; gap:10px; flex-wrap:wrap;}
+    .overtime-btn-danger {background:#d1242f; border-color:#d1242f; color:#fff;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
 </style>
@@ -569,6 +818,29 @@ $APPLICATION->SetTitle('Просмотр заявки');
                     Открыть группу заявок #<?= (int)$viewData['group_id'] ?>
                 </a>
             <?php endif; ?>
+        <?php endif; ?>
+
+        <?php if ($approvalTask): ?>
+            <div class="overtime-view-approval">
+                <div class="overtime-view-approval-title">Согласование заявки</div>
+                <?php if ($bpActionError !== ''): ?>
+                    <div class="ui-alert ui-alert-danger" style="margin-bottom:10px;">
+                        <span class="ui-alert-message"><?= overtimeH($bpActionError) ?></span>
+                    </div>
+                <?php endif; ?>
+                <div class="overtime-view-approval-actions">
+                    <form method="post" style="margin:0;">
+                        <?= bitrix_sessid_post() ?>
+                        <input type="hidden" name="bp_action" value="approve">
+                        <button type="submit" class="overtime-btn overtime-btn-primary">Согласовать</button>
+                    </form>
+                    <form method="post" style="margin:0;">
+                        <?= bitrix_sessid_post() ?>
+                        <input type="hidden" name="bp_action" value="reject">
+                        <button type="submit" class="overtime-btn overtime-btn-danger">Отклонить</button>
+                    </form>
+                </div>
+            </div>
         <?php endif; ?>
 
         <div class="overtime-view-actions">
