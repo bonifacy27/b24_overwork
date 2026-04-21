@@ -770,15 +770,8 @@ usort($rowsSorted, function ($a, $b) use ($sortKey, $dir) {
 
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
     if (!class_exists(Spreadsheet::class)) {
-        $autoloadPaths = [
-            $_SERVER['DOCUMENT_ROOT'] . '/vendor/autoload.php',
-            __DIR__ . '/vendor/autoload.php',
-        ];
-        foreach ($autoloadPaths as $autoloadPath) {
-            if (is_file($autoloadPath)) {
-                require_once $autoloadPath;
-                break;
-            }
+        if (is_file('/home/bitrix/www/vendor2/autoload.php')) {
+            require '/home/bitrix/www/vendor2/autoload.php';
         }
     }
 
