@@ -12,6 +12,9 @@
  */
 
 use Bitrix\Main\Loader;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 
 require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/header.php");
 $APPLICATION->SetTitle("Заявки на сверхурочную работу / работу в выходной / дежурство");
@@ -766,13 +769,30 @@ usort($rowsSorted, function ($a, $b) use ($sortKey, $dir) {
 });
 
 if (isset($_GET['export']) && $_GET['export'] === 'excel') {
-    $fileName = 'overtime_registry_' . date('Y-m-d_H-i-s') . '.csv';
-    header('Content-Type: text/csv; charset=UTF-8');
-    header('Content-Disposition: attachment; filename="' . $fileName . '"');
+    if (!class_exists(Spreadsheet::class)) {
+        $autoloadPaths = [
+            $_SERVER['DOCUMENT_ROOT'] . '/vendor/autoload.php',
+            __DIR__ . '/vendor/autoload.php',
+        ];
+        foreach ($autoloadPaths as $autoloadPath) {
+            if (is_file($autoloadPath)) {
+                require_once $autoloadPath;
+                break;
+            }
+        }
+    }
 
-    $out = fopen('php://output', 'w');
-    fwrite($out, "\xEF\xBB\xBF");
-    fputcsv($out, [
+    if (!class_exists(Spreadsheet::class) || !class_exists(Xlsx::class) || !class_exists(XlsxWriter::class)) {
+        ShowError('Не удалось загрузить библиотеку PhpSpreadsheet для экспорта в Excel.');
+        require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
+        exit;
+    }
+
+    $spreadsheet = new Spreadsheet();
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->setTitle('Реестр заявок');
+
+    $headers = [
         '№ заявки',
         'ФИО',
         'Периоды работы',
@@ -780,21 +800,35 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         'Обоснование',
         'ИТОГО сверхурочных часов по ТК РФ',
         'ИТОГО часы для оплаты единовременной премией',
-    ], ';');
+    ];
 
-    foreach ($rowsSorted as $row) {
-        fputcsv($out, [
-            (int)$row['ID'],
-            (string)$row['FIO'],
-            trim((string)$row['START'] . ' — ' . (string)$row['END']),
-            (string)$row['TIP_RABOTY'],
-            (string)$row['OBOSNOVANIE'],
-            number_format((float)$row['HOURS_TK'], 2, ',', ''),
-            number_format((float)$row['HOURS_BONUS'], 2, ',', ''),
-        ], ';');
+    foreach ($headers as $index => $headerTitle) {
+        $sheet->setCellValueByColumnAndRow($index + 1, 1, $headerTitle);
     }
 
-    fclose($out);
+    $rowNum = 2;
+    foreach ($rowsSorted as $row) {
+        $sheet->setCellValueByColumnAndRow(1, $rowNum, (int)$row['ID']);
+        $sheet->setCellValueByColumnAndRow(2, $rowNum, (string)$row['FIO']);
+        $sheet->setCellValueByColumnAndRow(3, $rowNum, trim((string)$row['START'] . ' — ' . (string)$row['END']));
+        $sheet->setCellValueByColumnAndRow(4, $rowNum, (string)$row['TIP_RABOTY']);
+        $sheet->setCellValueByColumnAndRow(5, $rowNum, (string)$row['OBOSNOVANIE']);
+        $sheet->setCellValueByColumnAndRow(6, $rowNum, (float)$row['HOURS_TK']);
+        $sheet->setCellValueByColumnAndRow(7, $rowNum, (float)$row['HOURS_BONUS']);
+        $rowNum++;
+    }
+
+    foreach (range('A', 'G') as $colLetter) {
+        $sheet->getColumnDimension($colLetter)->setAutoSize(true);
+    }
+
+    $fileName = 'overtime_registry_' . date('Y-m-d_H-i-s') . '.xlsx';
+    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    header('Content-Disposition: attachment; filename="' . $fileName . '"');
+    header('Cache-Control: max-age=0');
+
+    $writer = new XlsxWriter($spreadsheet);
+    $writer->save('php://output');
     require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
     exit;
 }
