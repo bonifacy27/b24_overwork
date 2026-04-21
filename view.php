@@ -61,6 +61,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
         'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
+        'PROPERTY_' . $config['REQ_PROP_JUSTIFICATION'],
     ];
     $select = array_merge($select, overtimeBuildOptionalPropertySelect($config));
 
@@ -83,6 +84,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
     $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
     $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
+    $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
 
     $employee = overtimeGetUserDataById($employeeId);
 
@@ -110,6 +112,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'employee_name' => $employee['name'] ?: 'Не указан',
         'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], $workTypeId),
         'payment_type_name' => $paymentTypeName,
+        'justification' => $justification,
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
@@ -403,6 +406,57 @@ function overtimeParseRequestDateTimeValue($value): ?\Bitrix\Main\Type\DateTime
     return new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $ts), 'd.m.Y H:i:s');
 }
 
+function overtimeHighlightCalculationRows(string $html): string
+{
+    if (trim($html) === '') {
+        return $html;
+    }
+
+    $targets = [
+        'ИТОГО сверхурочных часов по ТК РФ',
+        'ИТОГО часы для оплаты единовременной премией',
+    ];
+
+    return (string)preg_replace_callback('/<tr\b[^>]*>.*?<\/tr>/isu', static function (array $matches) use ($targets) {
+        $rowHtml = $matches[0];
+        $rowText = trim(html_entity_decode(strip_tags($rowHtml), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+        $isTargetRow = false;
+        foreach ($targets as $target) {
+            if (mb_stripos($rowText, $target) !== false) {
+                $isTargetRow = true;
+                break;
+            }
+        }
+
+        if (!$isTargetRow) {
+            return $rowHtml;
+        }
+
+        preg_match_all('/-?\d+(?:[.,]\d+)?/u', $rowText, $hoursMatches);
+        $hasPositiveHours = false;
+        foreach (($hoursMatches[0] ?? []) as $rawValue) {
+            $hours = (float)str_replace(',', '.', $rawValue);
+            if ($hours > 0) {
+                $hasPositiveHours = true;
+                break;
+            }
+        }
+
+        if (!$hasPositiveHours) {
+            return $rowHtml;
+        }
+
+        if (preg_match('/\bclass\s*=\s*"([^"]*)"/iu', $rowHtml, $classMatch)) {
+            $classes = trim($classMatch[1]);
+            $newClassAttr = 'class="' . trim($classes . ' overtime-view-highlight-row') . '"';
+            return preg_replace('/\bclass\s*=\s*"[^"]*"/iu', $newClassAttr, $rowHtml, 1) ?? $rowHtml;
+        }
+
+        return preg_replace('/^<tr\b/iu', '<tr class="overtime-view-highlight-row"', $rowHtml, 1) ?? $rowHtml;
+    }, $html);
+}
+
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
 
@@ -426,6 +480,11 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-body {padding:0 12px 12px;}
     .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
     .overtime-view-linked-calc {font-size:13px;}
+    .overtime-view-highlight-row {background:#fff4cc !important; font-weight:700; font-size:14px;}
+    .overtime-view-justification {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc; white-space:pre-wrap; line-height:1.45;}
+    .overtime-view-justification-details {border:1px solid #e5e9f0; border-radius:6px; background:#fbfcfe; margin-bottom:8px;}
+    .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
+    .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
@@ -462,9 +521,18 @@ $APPLICATION->SetTitle('Просмотр заявки');
                 </div>
             </div>
 
+            <details class="overtime-view-justification-details">
+                <summary class="overtime-view-justification-summary">Обоснование</summary>
+                <div class="overtime-view-justification-body">
+                    <div class="overtime-view-justification">
+                        <?= $viewData['justification'] !== '' ? nl2br(overtimeH($viewData['justification'])) : '<i>Не заполнено</i>' ?>
+                    </div>
+                </div>
+            </details>
+
             <div class="overtime-view-subtitle">Расчетная часть</div>
             <div class="overtime-view-calc overtime-view-main-calc">
-                <?= $viewData['calculation_html'] !== '' ? $viewData['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
+                <?= $viewData['calculation_html'] !== '' ? overtimeHighlightCalculationRows($viewData['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
             </div>
 
             <?php if (!empty($linkedCalculations)): ?>
@@ -482,7 +550,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
                                     Сотрудник: <?= overtimeH($linked['employee_name']) ?> · Тип оплаты: <?= overtimeH($linked['payment_type_name']) ?>
                                 </div>
                                 <div class="overtime-view-calc overtime-view-linked-calc">
-                                    <?= $linked['calculation_html'] !== '' ? $linked['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
+                                    <?= $linked['calculation_html'] !== '' ? overtimeHighlightCalculationRows($linked['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
                                 </div>
                             <?php endforeach; ?>
                         </div>
