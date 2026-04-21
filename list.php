@@ -16,12 +16,20 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 
-require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/header.php");
-$APPLICATION->SetTitle("Заявки на сверхурочную работу / работу в выходной / дежурство");
+$isExcelExport = isset($_GET['export']) && $_GET['export'] === 'excel';
+
+if ($isExcelExport) {
+    require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/modules/main/include/prolog_before.php");
+} else {
+    require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/header.php");
+    $APPLICATION->SetTitle("Заявки на сверхурочную работу / работу в выходной / дежурство");
+}
 
 if (!Loader::includeModule("iblock")) {
     ShowError("Не удалось подключить модуль iblock");
-    require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
+    if (!$isExcelExport) {
+        require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
+    }
     exit;
 }
 
@@ -768,7 +776,7 @@ usort($rowsSorted, function ($a, $b) use ($sortKey, $dir) {
     return ($dir === 'ASC') ? $result : -$result;
 });
 
-if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+if ($isExcelExport) {
     if (!class_exists(Spreadsheet::class)) {
         if (is_file('/home/bitrix/www/vendor2/autoload.php')) {
             require '/home/bitrix/www/vendor2/autoload.php';
@@ -777,7 +785,9 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 
     if (!class_exists(Spreadsheet::class) || !class_exists(Xlsx::class) || !class_exists(XlsxWriter::class)) {
         ShowError('Не удалось загрузить библиотеку PhpSpreadsheet для экспорта в Excel.');
-        require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
+        if (!$isExcelExport) {
+            require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
+        }
         exit;
     }
 
@@ -815,6 +825,10 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
         $sheet->getColumnDimension($colLetter)->setAutoSize(true);
     }
 
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+
     $fileName = 'overtime_registry_' . date('Y-m-d_H-i-s') . '.xlsx';
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="' . $fileName . '"');
@@ -822,7 +836,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
 
     $writer = new XlsxWriter($spreadsheet);
     $writer->save('php://output');
-    require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
     exit;
 }
 
