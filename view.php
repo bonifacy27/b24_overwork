@@ -403,6 +403,57 @@ function overtimeParseRequestDateTimeValue($value): ?\Bitrix\Main\Type\DateTime
     return new \Bitrix\Main\Type\DateTime(date('d.m.Y H:i:s', $ts), 'd.m.Y H:i:s');
 }
 
+function overtimeHighlightCalculationRows(string $html): string
+{
+    if (trim($html) === '') {
+        return $html;
+    }
+
+    $targets = [
+        'ИТОГО сверхурочных часов по ТК РФ',
+        'ИТОГО часы для оплаты единовременной премией',
+    ];
+
+    return (string)preg_replace_callback('/<tr\b[^>]*>.*?<\/tr>/isu', static function (array $matches) use ($targets) {
+        $rowHtml = $matches[0];
+        $rowText = trim(html_entity_decode(strip_tags($rowHtml), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+        $isTargetRow = false;
+        foreach ($targets as $target) {
+            if (mb_stripos($rowText, $target) !== false) {
+                $isTargetRow = true;
+                break;
+            }
+        }
+
+        if (!$isTargetRow) {
+            return $rowHtml;
+        }
+
+        preg_match_all('/-?\d+(?:[.,]\d+)?/u', $rowText, $hoursMatches);
+        $hasPositiveHours = false;
+        foreach (($hoursMatches[0] ?? []) as $rawValue) {
+            $hours = (float)str_replace(',', '.', $rawValue);
+            if ($hours > 0) {
+                $hasPositiveHours = true;
+                break;
+            }
+        }
+
+        if (!$hasPositiveHours) {
+            return $rowHtml;
+        }
+
+        if (preg_match('/\bclass\s*=\s*"([^"]*)"/iu', $rowHtml, $classMatch)) {
+            $classes = trim($classMatch[1]);
+            $newClassAttr = 'class="' . trim($classes . ' overtime-view-highlight-row') . '"';
+            return preg_replace('/\bclass\s*=\s*"[^"]*"/iu', $newClassAttr, $rowHtml, 1) ?? $rowHtml;
+        }
+
+        return preg_replace('/^<tr\b/iu', '<tr class="overtime-view-highlight-row"', $rowHtml, 1) ?? $rowHtml;
+    }, $html);
+}
+
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
 
@@ -426,6 +477,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-body {padding:0 12px 12px;}
     .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
     .overtime-view-linked-calc {font-size:13px;}
+    .overtime-view-highlight-row {background:#fff4cc !important; font-weight:700; font-size:14px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
@@ -464,7 +516,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
 
             <div class="overtime-view-subtitle">Расчетная часть</div>
             <div class="overtime-view-calc overtime-view-main-calc">
-                <?= $viewData['calculation_html'] !== '' ? $viewData['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
+                <?= $viewData['calculation_html'] !== '' ? overtimeHighlightCalculationRows($viewData['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
             </div>
 
             <?php if (!empty($linkedCalculations)): ?>
@@ -482,7 +534,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
                                     Сотрудник: <?= overtimeH($linked['employee_name']) ?> · Тип оплаты: <?= overtimeH($linked['payment_type_name']) ?>
                                 </div>
                                 <div class="overtime-view-calc overtime-view-linked-calc">
-                                    <?= $linked['calculation_html'] !== '' ? $linked['calculation_html'] : '<i>Расчет отсутствует</i>' ?>
+                                    <?= $linked['calculation_html'] !== '' ? overtimeHighlightCalculationRows($linked['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
                                 </div>
                             <?php endforeach; ?>
                         </div>
