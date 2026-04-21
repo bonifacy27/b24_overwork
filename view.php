@@ -490,30 +490,129 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
     $res = CBPTaskService::GetList(
         ['ID' => 'DESC'],
         [
-            'USER_ID' => $userId,
             'USER_STATUS' => CBPTaskUserStatus::Waiting,
         ],
         false,
         false,
-        ['ID', 'NAME', 'DOCUMENT_ID', 'WORKFLOW_ID', 'ACTIVITY_NAME']
+        ['ID', 'NAME', 'DOCUMENT_ID', 'WORKFLOW_ID', 'ACTIVITY_NAME', 'USER_ID', 'USERS', 'PARAMETERS']
     );
 
     while ($task = $res->GetNext()) {
+        if (!overtimeBizprocTaskIsForUser($task, $userId)) {
+            continue;
+        }
+
         $taskRequestId = overtimeExtractRequestIdFromDocumentId((string)($task['DOCUMENT_ID'] ?? ''), $iblockId);
         if ($taskRequestId !== $requestId) {
             continue;
         }
 
+        [$approveCaption, $rejectCaption] = overtimeGetTaskCaptions($task, 'Согласовать', 'Отклонить');
+        $approveCaption = mb_strtolower(trim($approveCaption), 'UTF-8');
+        $rejectCaption = mb_strtolower(trim($rejectCaption), 'UTF-8');
+        if ($approveCaption !== 'согласовать' || $rejectCaption !== 'отклонить') {
+            continue;
+        }
+
         $approveCode = overtimeFindTaskActionCodeByButtonCaption((int)$task['ID'], 'согласовать');
         $rejectCode = overtimeFindTaskActionCodeByButtonCaption((int)$task['ID'], 'отклонить');
-        if ($approveCode !== '' && $rejectCode !== '') {
-            $task['APPROVE_ACTION_CODE'] = $approveCode;
-            $task['REJECT_ACTION_CODE'] = $rejectCode;
-            return $task;
+        $task['APPROVE_ACTION_CODE'] = $approveCode !== '' ? $approveCode : 'approve';
+        $task['REJECT_ACTION_CODE'] = $rejectCode !== '' ? $rejectCode : 'nonapprove';
+        return $task;
+    }
+
+    return null;
+}
+
+function overtimeBizprocTaskIsForUser(array $task, int $userId): bool
+{
+    if ($userId <= 0) {
+        return false;
+    }
+
+    $rawUserId = (string)($task['USER_ID'] ?? '');
+    $scalarUserId = (int)preg_replace('/\D+/u', '', $rawUserId);
+    if ($scalarUserId > 0) {
+        return $scalarUserId === $userId;
+    }
+
+    $users = $task['USERS'] ?? null;
+    if (is_string($users) && $users !== '') {
+        $parts = preg_split('/[,\s;|]+/u', $users) ?: [];
+        foreach ($parts as $part) {
+            $normalized = (int)preg_replace('/\D+/u', '', (string)$part);
+            if ($normalized === $userId) {
+                return true;
+            }
+        }
+    }
+
+    if (is_array($users)) {
+        foreach ($users as $value) {
+            $normalized = (int)preg_replace('/\D+/u', '', (string)$value);
+            if ($normalized === $userId) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+function overtimeExtractTaskParameters($raw): array
+{
+    if (is_array($raw)) {
+        return $raw;
+    }
+
+    if (!is_string($raw) || trim($raw) === '') {
+        return [];
+    }
+
+    $unserialized = @unserialize($raw, ['allowed_classes' => false]);
+    if (is_array($unserialized)) {
+        return $unserialized;
+    }
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function overtimeDeepFindFirstString(array $haystack, array $keys): ?string
+{
+    foreach ($keys as $key) {
+        if (isset($haystack[$key]) && is_string($haystack[$key]) && trim($haystack[$key]) !== '') {
+            return trim($haystack[$key]);
+        }
+    }
+
+    foreach ($haystack as $value) {
+        if (is_array($value)) {
+            $found = overtimeDeepFindFirstString($value, $keys);
+            if ($found !== null) {
+                return $found;
+            }
         }
     }
 
     return null;
+}
+
+function overtimeGetTaskCaptions(array $task, string $defaultApprove = 'Согласовать', string $defaultReject = 'Отклонить'): array
+{
+    $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? null);
+
+    $approve = overtimeDeepFindFirstString($params, [
+        'TaskButton1Message', 'APPROVE_BUTTON', 'ApproveButton', 'APPROVEBUTTON', 'YES_BUTTON', 'ApproveText', 'APPROVE_TEXT',
+    ]);
+    $reject = overtimeDeepFindFirstString($params, [
+        'TaskButton2Message', 'NONAPPROVE_BUTTON', 'NonApproveButton', 'REJECT_BUTTON', 'RejectButton', 'DECLINE_BUTTON', 'DeclineButton', 'NO_BUTTON', 'REJECT_TEXT', 'NONAPPROVE_TEXT',
+    ]);
+
+    return [
+        $approve !== null && $approve !== '' ? $approve : $defaultApprove,
+        $reject !== null && $reject !== '' ? $reject : $defaultReject,
+    ];
 }
 
 function overtimeFindTaskActionCodeByButtonCaption(int $taskId, string $caption): string
