@@ -234,8 +234,12 @@ function extractRequestIdFromDocumentIdCustom($documentId, $iblockId)
         return 0;
     }
 
-    $pattern = '/(?:^|_)' . preg_quote((string)(int)$iblockId, '/') . '_([0-9]+)$/';
-    if (preg_match($pattern, $documentId, $m)) {
+    $patternByIblock = '/(?:^|_)' . preg_quote((string)(int)$iblockId, '/') . '_([0-9]+)$/';
+    if ((int)$iblockId > 0 && preg_match($patternByIblock, $documentId, $m)) {
+        return (int)$m[1];
+    }
+
+    if (preg_match('/([0-9]+)\D*$/', $documentId, $m)) {
         return (int)$m[1];
     }
 
