@@ -28,6 +28,7 @@ $GROUP_ID         = 87;
 $IBLOCK_ID        = 391;
 $IBLOCK_GROUPS_ID = 397;
 $CREATE_URL       = "cr.php";
+$LIST_PAGE_URL    = "/forms/hr_administration/overtime/list.php";
 
 $PROP_MAP = [
     3080 => ['code' => 'TIP_RABOTY',                   'title' => 'Тип работы'],
@@ -211,9 +212,72 @@ function buildElementUrlCustom($groupId, $iblockId, $elementId)
     return "/workgroups/group/" . (int)$groupId . "/lists/" . (int)$iblockId . "/element/0/" . (int)$elementId . "/?list_section_id=";
 }
 
+function buildRequestViewUrlCustom($elementId)
+{
+    return "view.php?id=" . (int)$elementId;
+}
+
+function buildBizprocTaskUrlCustom($taskId, $backUrl)
+{
+    return "/company/personal/bizproc/" . (int)$taskId . "/?back_url=" . rawurlencode((string)$backUrl);
+}
+
 function buildListUrlCustom($groupId, $iblockId)
 {
     return "/workgroups/group/" . (int)$groupId . "/lists/" . (int)$iblockId . "/view/0/?list_section_id=";
+}
+
+function extractRequestIdFromDocumentIdCustom($documentId, $iblockId)
+{
+    $documentId = trim((string)$documentId);
+    if ($documentId === '') {
+        return 0;
+    }
+
+    $pattern = '/(?:^|_)' . preg_quote((string)(int)$iblockId, '/') . '_([0-9]+)$/';
+    if (preg_match($pattern, $documentId, $m)) {
+        return (int)$m[1];
+    }
+
+    return 0;
+}
+
+function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $iblockId)
+{
+    $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
+    $userId = (int)$userId;
+    $iblockId = (int)$iblockId;
+
+    if (empty($requestIds) || $userId <= 0 || $iblockId <= 0) {
+        return [];
+    }
+
+    if (!Loader::includeModule('bizproc') || !class_exists('CBPTaskService')) {
+        return [];
+    }
+
+    $map = [];
+    $res = CBPTaskService::GetList(
+        ['ID' => 'DESC'],
+        [
+            'USER_ID'     => $userId,
+            'USER_STATUS' => CBPTaskUserStatus::Waiting,
+        ],
+        false,
+        false,
+        ['ID', 'DOCUMENT_ID']
+    );
+
+    while ($task = $res->GetNext()) {
+        $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
+        if ($requestId <= 0 || !in_array($requestId, $requestIds, true) || isset($map[$requestId])) {
+            continue;
+        }
+
+        $map[$requestId] = (int)$task['ID'];
+    }
+
+    return $map;
 }
 
 function renderHistoryHtmlCustom($historyRaw)
@@ -552,6 +616,18 @@ while ($ob = $rsItems->GetNextElement()) {
         'GROUP_MEMBERS'   => $groupMembers,
         'OPEN_URL'        => buildElementUrlCustom($GROUP_ID, $IBLOCK_ID, $id),
     ];
+}
+
+global $USER;
+$taskMap = loadCurrentUserBizprocTasksMapCustom(
+    array_keys($rows),
+    is_object($USER) ? (int)$USER->GetID() : 0,
+    $IBLOCK_ID
+);
+
+foreach ($rows as $id => $rowData) {
+    $rows[$id]['TASK_ID'] = (int)($taskMap[$id] ?? 0);
+    $rows[$id]['VIEW_URL'] = buildRequestViewUrlCustom($id);
 }
 
 /* ------------------------- сортировка ------------------------- */
@@ -899,6 +975,13 @@ foreach ($rowsSorted as $row) {
         margin-left: auto;
         flex: 0 0 auto;
     }
+
+    .actions-cell {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
 </style>
 
 <div class="container-fluid page-wrap">
@@ -1027,7 +1110,7 @@ foreach ($rowsSorted as $row) {
                         <th>Тип оплаты</th>
                         <th><?= $makeSortLink('status', 'Статус + история') ?></th>
                         <th>Групповая заявка</th>
-                        <th>Открыть</th>
+                        <th>Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1093,7 +1176,12 @@ foreach ($rowsSorted as $row) {
                                 </td>
 
                                 <td class="nowrap">
-                                    <a href="<?= h($a['OPEN_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                    <div class="actions-cell">
+                                        <a href="<?= h($a['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                        <?php if ((int)$a['TASK_ID'] > 0): ?>
+                                            <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$a['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
 
@@ -1141,7 +1229,12 @@ foreach ($rowsSorted as $row) {
                                 </td>
 
                                 <td class="nowrap pair-divider-cell">
-                                    <a href="<?= h($b['OPEN_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                    <div class="actions-cell">
+                                        <a href="<?= h($b['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                        <?php if ((int)$b['TASK_ID'] > 0): ?>
+                                            <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$b['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
 
@@ -1192,7 +1285,12 @@ foreach ($rowsSorted as $row) {
                                 </td>
 
                                 <td class="nowrap">
-                                    <a href="<?= h($row['OPEN_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                    <div class="actions-cell">
+                                        <a href="<?= h($row['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                        <?php if ((int)$row['TASK_ID'] > 0): ?>
+                                            <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$row['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endif; ?>
