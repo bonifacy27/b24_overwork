@@ -504,26 +504,68 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
             continue;
         }
 
-        $activityName = trim((string)($task['ACTIVITY_NAME'] ?? ''));
-        $taskName = trim((string)($task['NAME'] ?? ''));
-        $activityNameLower = mb_strtolower($activityName, 'UTF-8');
-        $taskNameLower = mb_strtolower($taskName, 'UTF-8');
-
-        $looksLikeApprovalTask = (
-            $activityNameLower === 'утверждение'
-            || $taskNameLower === 'утверждение'
-            || mb_strpos($activityNameLower, 'утвержд') !== false
-            || mb_strpos($taskNameLower, 'утвержд') !== false
-            || mb_strpos($activityNameLower, 'согласован') !== false
-            || mb_strpos($taskNameLower, 'согласован') !== false
-        );
-
-        if ($looksLikeApprovalTask) {
+        $approveCode = overtimeFindTaskActionCodeByButtonCaption((int)$task['ID'], 'согласовать');
+        $rejectCode = overtimeFindTaskActionCodeByButtonCaption((int)$task['ID'], 'отклонить');
+        if ($approveCode !== '' && $rejectCode !== '') {
+            $task['APPROVE_ACTION_CODE'] = $approveCode;
+            $task['REJECT_ACTION_CODE'] = $rejectCode;
             return $task;
         }
     }
 
     return null;
+}
+
+function overtimeFindTaskActionCodeByButtonCaption(int $taskId, string $caption): string
+{
+    if ($taskId <= 0 || $caption === '') {
+        return '';
+    }
+
+    $controls = [];
+    try {
+        if (method_exists('CBPDocument', 'GetTaskControls')) {
+            $controls = (array)CBPDocument::GetTaskControls($taskId);
+        }
+    } catch (\Throwable $e) {
+    }
+
+    if (empty($controls)) {
+        try {
+            if (method_exists('CBPTaskService', 'GetTaskControls')) {
+                $controls = (array)CBPTaskService::GetTaskControls($taskId);
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    $target = mb_strtolower(trim($caption), 'UTF-8');
+    foreach ($controls as $controlCode => $controlData) {
+        $label = '';
+        if (is_array($controlData)) {
+            $label = (string)($controlData['TEXT'] ?? $controlData['LABEL'] ?? $controlData['NAME'] ?? '');
+        } elseif (is_string($controlData)) {
+            $label = $controlData;
+        }
+
+        $label = mb_strtolower(trim($label), 'UTF-8');
+        if ($label === '' || $label !== $target) {
+            continue;
+        }
+
+        if (is_string($controlCode) && $controlCode !== '') {
+            return $controlCode;
+        }
+
+        if (is_array($controlData)) {
+            $code = trim((string)($controlData['NAME'] ?? $controlData['ID'] ?? ''));
+            if ($code !== '') {
+                return $code;
+            }
+        }
+    }
+
+    return '';
 }
 
 function overtimeTaskIsRunning(int $taskId): bool
@@ -700,7 +742,9 @@ if (
 ) {
     $postAction = trim((string)$request->getPost('bp_action'));
     if ($postAction === 'approve' || $postAction === 'reject') {
-        $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
+        $completionAction = $postAction === 'approve'
+            ? (string)($approvalTask['APPROVE_ACTION_CODE'] ?? 'approve')
+            : (string)($approvalTask['REJECT_ACTION_CODE'] ?? 'nonapprove');
         $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction);
 
         if (!empty($completionResult['OK'])) {
