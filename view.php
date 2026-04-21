@@ -514,10 +514,6 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
             continue;
         }
 
-        $approveCode = overtimeFindTaskActionCodeByButtonCaption((int)$task['ID'], 'согласовать');
-        $rejectCode = overtimeFindTaskActionCodeByButtonCaption((int)$task['ID'], 'отклонить');
-        $task['APPROVE_ACTION_CODE'] = $approveCode !== '' ? $approveCode : 'approve';
-        $task['REJECT_ACTION_CODE'] = $rejectCode !== '' ? $rejectCode : 'nonapprove';
         return $task;
     }
 
@@ -841,15 +837,18 @@ if (
 ) {
     $postAction = trim((string)$request->getPost('bp_action'));
     if ($postAction === 'approve' || $postAction === 'reject') {
-        $completionAction = $postAction === 'approve'
-            ? (string)($approvalTask['APPROVE_ACTION_CODE'] ?? 'approve')
-            : (string)($approvalTask['REJECT_ACTION_CODE'] ?? 'nonapprove');
-        $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction);
-
-        if (!empty($completionResult['OK'])) {
-            LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
+        $bpComment = trim((string)$request->getPost('bp_comment'));
+        if ($postAction === 'reject' && $bpComment === '') {
+            $bpActionError = 'Для отклонения заявки необходимо заполнить комментарий.';
         } else {
-            $bpActionError = (string)($completionResult['ERROR'] ?? 'Не удалось выполнить задание бизнес-процесса.');
+            $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
+            $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment);
+
+            if (!empty($completionResult['OK'])) {
+                LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
+            } else {
+                $bpActionError = (string)($completionResult['ERROR'] ?? 'Не удалось выполнить задание бизнес-процесса.');
+            }
         }
     }
 }
@@ -888,7 +887,9 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-approval-title {font-size:16px; margin-bottom:10px; font-weight:600;}
     .overtime-view-approval-actions {display:flex; gap:10px; flex-wrap:wrap;}
     .overtime-btn-danger {background:#d1242f; border-color:#d1242f; color:#fff;}
-    .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937;}
+    .overtime-view-approval-comment {margin-bottom:10px;}
+    .overtime-view-approval-comment textarea {width:100%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
+    .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
 </style>
 
@@ -981,18 +982,18 @@ $APPLICATION->SetTitle('Просмотр заявки');
                         <span class="ui-alert-message"><?= overtimeH($bpActionError) ?></span>
                     </div>
                 <?php endif; ?>
-                <div class="overtime-view-approval-actions">
-                    <form method="post" style="margin:0;">
-                        <?= bitrix_sessid_post() ?>
+                <form method="post" style="margin:0;">
+                    <?= bitrix_sessid_post() ?>
+                    <div class="overtime-view-approval-comment">
+                        <div class="overtime-view-meta-label" style="margin-bottom:6px;">Комментарий (обязателен при отклонении)</div>
+                        <textarea name="bp_comment" id="bp-comment-field"></textarea>
+                    </div>
+                    <div class="overtime-view-approval-actions">
                         <input type="hidden" name="bp_action" value="approve">
-                        <button type="submit" class="overtime-btn overtime-btn-primary">Согласовать</button>
-                    </form>
-                    <form method="post" style="margin:0;">
-                        <?= bitrix_sessid_post() ?>
-                        <input type="hidden" name="bp_action" value="reject">
-                        <button type="submit" class="overtime-btn overtime-btn-danger">Отклонить</button>
-                    </form>
-                </div>
+                        <button type="submit" class="overtime-btn overtime-btn-primary" onclick="this.form.bp_action.value='approve'; return true;">Согласовать</button>
+                        <button type="submit" class="overtime-btn overtime-btn-danger" onclick="this.form.bp_action.value='reject'; if(!document.getElementById('bp-comment-field').value.trim()){alert('Для отклонения заявки заполните комментарий.'); document.getElementById('bp-comment-field').focus(); return false;} return true;">Отклонить</button>
+                    </div>
+                </form>
             </div>
         <?php endif; ?>
 
