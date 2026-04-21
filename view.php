@@ -727,6 +727,7 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         $code = $aliases[$code];
     }
 
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
     $validationError = overtimeValidateCommentByTaskParameters($task, $code, $comment);
     if ($validationError !== null) {
         return ['OK' => false, 'ERROR' => $validationError];
@@ -754,22 +755,111 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
 
     try {
         CBPRuntime::SendExternalEvent($workflowId, $activityName, $payload);
+=======
+    try {
+        if (method_exists('CBPDocument', 'PostTaskForm')) {
+            $fields1 = [
+                'USER_ID' => $userId,
+                'REAL_USER_ID' => $userId,
+                'COMMENT' => $comment,
+                'ACTION' => $code,
+                $code => 'Y',
+            ];
+            $tmpErr = [];
+            CBPDocument::PostTaskForm($taskId, $userId, $fields1, $tmpErr);
+            if (!empty($tmpErr)) {
+                $errors = array_merge($errors, $tmpErr);
+            }
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
+            }
+        }
     } catch (\Throwable $e) {
         $errors[] = ['message' => $e->getMessage()];
     }
 
+    try {
+        if (method_exists('CBPDocument', 'PostTaskForm')) {
+            $fields2 = [
+                'USER_ID' => $userId,
+                'REAL_USER_ID' => $userId,
+                'COMMENT' => $comment,
+                $code => 'Y',
+            ];
+            $tmpErr2 = [];
+            CBPDocument::PostTaskForm($taskId, $userId, $fields2, $tmpErr2);
+            if (!empty($tmpErr2)) {
+                $errors = array_merge($errors, $tmpErr2);
+            }
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
+            }
+        }
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+    }
+
+    try {
+        $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
+        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['NAME'] ?? '');
+        if ($workflowId !== '' && $activity !== '' && method_exists('CBPDocument', 'SendExternalEvent')) {
+            $isYes = in_array($code, ['approve', 'accepted', 'accept', 'ok', 'yes', 'y', 'agree'], true);
+            $isNo = in_array($code, ['cancel', 'rejected', 'reject', 'no', 'n', 'disagree', 'decline', 'deny', 'refuse', 'nonapprove'], true);
+            $payloads = [];
+
+            if ($isYes || $isNo) {
+                $approveCode = $isYes ? 'Y' : 'N';
+                $payloads[] = ['APPROVE' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
+                $payloads[] = ['RESULT' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
+            } else {
+                $payloads[] = ['COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
+            }
+
+            foreach ($payloads as $payload) {
+                $extErr = [];
+                CBPDocument::SendExternalEvent($workflowId, $activity, $payload, $extErr);
+                if (!empty($extErr)) {
+                    $errors = array_merge($errors, $extErr);
+                }
+                if (!overtimeTaskIsRunning($taskId)) {
+                    return ['OK' => true, 'ERROR' => ''];
+                }
+            }
+        }
+>>>>>>> main
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+    }
+
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
     if (!overtimeTaskIsRunning($taskId)) {
         return ['OK' => true, 'ERROR' => ''];
+=======
+    try {
+        if (method_exists('CBPTaskService', 'DoTask')) {
+            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $code, $code => 'Y', 'COMMENT' => $comment]);
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
+            }
+        }
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+>>>>>>> main
     }
 
     $flatError = overtimeFlattenBizprocErrors($errors);
     if ($flatError === '') {
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
         $flatError = 'Задание осталось активным после попытки завершения.';
+=======
+        $flatError = 'Задание осталось активным после всех попыток завершения.';
+>>>>>>> main
     }
 
     return ['OK' => false, 'ERROR' => $flatError];
 }
 
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
 function overtimeValidateCommentByTaskParameters(array $task, string $action, string $comment): ?string
 {
     $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? []);
@@ -803,11 +893,14 @@ function overtimeValidateCommentByTaskParameters(array $task, string $action, st
     return 'Поле "' . $label . '" обязательно для выбранного действия.';
 }
 
+=======
+>>>>>>> main
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
 $bpActionError = '';
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
 $bpCommentLabel = 'Комментарий';
 
 if ($viewData && $currentUserId > 0) {
@@ -816,6 +909,11 @@ if ($viewData && $currentUserId > 0) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
     }
+=======
+
+if ($viewData && $currentUserId > 0) {
+    $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
+>>>>>>> main
 }
 
 if (
@@ -824,6 +922,7 @@ if (
     && check_bitrix_sessid()
 ) {
     $postAction = trim((string)$request->getPost('bp_action'));
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
     if ($postAction === 'approve' || $postAction === 'nonapprove') {
         $bpComment = trim((string)$request->getPost('bp_comment'));
         $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
@@ -833,16 +932,34 @@ if (
             LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
         } else {
             $bpActionError = (string)($completionResult['ERROR'] ?? 'Не удалось выполнить задание бизнес-процесса.');
+=======
+    if ($postAction === 'approve' || $postAction === 'reject') {
+        $bpComment = trim((string)$request->getPost('bp_comment'));
+        if ($postAction === 'reject' && $bpComment === '') {
+            $bpActionError = 'Для отклонения заявки необходимо заполнить комментарий.';
+        } else {
+            $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
+            $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment);
+
+            if (!empty($completionResult['OK'])) {
+                LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
+            } else {
+                $bpActionError = (string)($completionResult['ERROR'] ?? 'Не удалось выполнить задание бизнес-процесса.');
+            }
+>>>>>>> main
         }
     }
 }
 
 if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
     }
+=======
+>>>>>>> main
 }
 
 require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
@@ -973,13 +1090,21 @@ $APPLICATION->SetTitle('Просмотр заявки');
                 <form method="post" style="margin:0;">
                     <?= bitrix_sessid_post() ?>
                     <div class="overtime-view-approval-comment">
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
                         <div class="overtime-view-meta-label" style="margin-bottom:6px;"><?= overtimeH($bpCommentLabel) ?></div>
+=======
+                        <div class="overtime-view-meta-label" style="margin-bottom:6px;">Комментарий (обязателен при отклонении)</div>
+>>>>>>> main
                         <textarea name="bp_comment" id="bp-comment-field"></textarea>
                     </div>
                     <div class="overtime-view-approval-actions">
                         <input type="hidden" name="bp_action" value="approve">
                         <button type="submit" class="overtime-btn overtime-btn-primary" onclick="this.form.bp_action.value='approve'; return true;">Согласовать</button>
+<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
                         <button type="submit" class="overtime-btn overtime-btn-danger" onclick="this.form.bp_action.value='nonapprove'; return true;">Отклонить</button>
+=======
+                        <button type="submit" class="overtime-btn overtime-btn-danger" onclick="this.form.bp_action.value='reject'; if(!document.getElementById('bp-comment-field').value.trim()){alert('Для отклонения заявки заполните комментарий.'); document.getElementById('bp-comment-field').focus(); return false;} return true;">Отклонить</button>
+>>>>>>> main
                     </div>
                 </form>
             </div>
