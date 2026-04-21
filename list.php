@@ -227,6 +227,39 @@ function buildListUrlCustom($groupId, $iblockId)
     return "/workgroups/group/" . (int)$groupId . "/lists/" . (int)$iblockId . "/view/0/?list_section_id=";
 }
 
+function parseHoursNumericCustom($hoursRaw)
+{
+    $hoursRaw = trim((string)$hoursRaw);
+    if ($hoursRaw === '') {
+        return 0.0;
+    }
+
+    if (preg_match('/-?\d+(?:[.,]\d+)?/u', $hoursRaw, $m)) {
+        return (float)str_replace(',', '.', $m[0]);
+    }
+
+    return 0.0;
+}
+
+function getHoursByPaymentTypeCustom($hoursRaw, $paymentType, $mode)
+{
+    $hours = parseHoursNumericCustom($hoursRaw);
+    if ($hours <= 0) {
+        return 0.0;
+    }
+
+    $paymentKey = mb_strtolower(trim((string)$paymentType), 'UTF-8');
+    if ($mode === 'tk') {
+        return (mb_strpos($paymentKey, 'тк') !== false) ? $hours : 0.0;
+    }
+
+    if ($mode === 'bonus') {
+        return (mb_strpos($paymentKey, 'прем') !== false) ? $hours : 0.0;
+    }
+
+    return 0.0;
+}
+
 function extractRequestIdFromDocumentIdCustom($documentId, $iblockId)
 {
     $documentId = trim((string)$documentId);
@@ -279,6 +312,56 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
         }
 
         $map[$requestId] = (int)$task['ID'];
+    }
+
+    return $map;
+}
+
+function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
+{
+    $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
+    $iblockId = (int)$iblockId;
+
+    if (empty($requestIds) || $iblockId <= 0) {
+        return [];
+    }
+
+    if (!Loader::includeModule('bizproc') || !class_exists('CBPTaskService')) {
+        return [];
+    }
+
+    $map = [];
+    $res = CBPTaskService::GetList(
+        ['ID' => 'DESC'],
+        [
+            'USER_STATUS' => CBPTaskUserStatus::Waiting,
+        ],
+        false,
+        false,
+        ['ID', 'DOCUMENT_ID', 'USER_ID']
+    );
+
+    while ($task = $res->GetNext()) {
+        $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
+        if ($requestId <= 0 || !in_array($requestId, $requestIds, true)) {
+            continue;
+        }
+
+        $userId = (int)($task['USER_ID'] ?? 0);
+        if ($userId <= 0) {
+            continue;
+        }
+
+        if (!isset($map[$requestId])) {
+            $map[$requestId] = [];
+        }
+        $map[$requestId][$userId] = userNameById($userId);
+    }
+
+    foreach ($map as $requestId => $executors) {
+        $map[$requestId] = array_values(array_filter($executors, static function ($name) {
+            return trim((string)$name) !== '';
+        }));
     }
 
     return $map;
@@ -475,7 +558,7 @@ $filter = [
     'CHECK_PERMISSIONS' => 'Y',
 ];
 
-$arSelect = ['ID', 'NAME'];
+$arSelect = ['ID', 'NAME', 'CREATED_BY'];
 
 $rsItems = CIBlockElement::GetList(
     $order,
@@ -525,6 +608,7 @@ while ($ob = $rsItems->GetNextElement()) {
     $tipRaboty   = resolveEnumOrElementValue($v3080);
     $statusName  = resolveEnumOrElementValue($v3081);
     $paymentType = resolveEnumOrElementValue($v3087);
+    $initiatorName = userNameById((int)($f['CREATED_BY'] ?? 0));
 
     $statusId = is_array($v3081) ? 0 : (int)$v3081;
     if ($statusId > 0 && $statusName !== '') {
@@ -610,10 +694,13 @@ while ($ob = $rsItems->GetNextElement()) {
         'START_TS'        => $startTs,
         'HOURS'           => is_array($v3086) ? implode(', ', $v3086) : (string)$v3086,
         'TIP_OPLATY'      => $paymentType,
+        'HOURS_TK'        => getHoursByPaymentTypeCustom(is_array($v3086) ? implode(', ', $v3086) : (string)$v3086, $paymentType, 'tk'),
+        'HOURS_BONUS'     => getHoursByPaymentTypeCustom(is_array($v3086) ? implode(', ', $v3086) : (string)$v3086, $paymentType, 'bonus'),
         'STATUS_ID'       => $statusId,
         'STATUS_NAME'     => $statusName,
         'STATUS_CLASS'    => getStatusClassCustom($statusName),
         'HISTORY_RAW'     => is_array($v3082) ? implode("\n", $v3082) : (string)$v3082,
+        'INITIATOR'       => $initiatorName,
         'RELATED_IDS'     => $relatedIds,
         'GROUP_ID'        => $groupId,
         'GROUP_INFO'      => $groupInfo,
@@ -632,6 +719,11 @@ $taskMap = loadCurrentUserBizprocTasksMapCustom(
 foreach ($rows as $id => $rowData) {
     $rows[$id]['TASK_ID'] = (int)($taskMap[$id] ?? 0);
     $rows[$id]['VIEW_URL'] = buildRequestViewUrlCustom($id);
+}
+
+$executorsMap = loadCurrentExecutorsMapCustom(array_keys($rows), $IBLOCK_ID);
+foreach ($rows as $id => $rowData) {
+    $rows[$id]['CURRENT_EXECUTORS'] = $executorsMap[$id] ?? [];
 }
 
 /* ------------------------- сортировка ------------------------- */
@@ -663,6 +755,40 @@ usort($rowsSorted, function ($a, $b) use ($sortKey, $dir) {
 
     return ($dir === 'ASC') ? $result : -$result;
 });
+
+if (isset($_GET['export']) && $_GET['export'] === 'excel') {
+    $fileName = 'overtime_registry_' . date('Y-m-d_H-i-s') . '.csv';
+    header('Content-Type: text/csv; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="' . $fileName . '"');
+
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, [
+        '№ заявки',
+        'ФИО',
+        'Периоды работы',
+        'Тип работ',
+        'Обоснование',
+        'ИТОГО сверхурочных часов по ТК РФ',
+        'ИТОГО часы для оплаты единовременной премией',
+    ], ';');
+
+    foreach ($rowsSorted as $row) {
+        fputcsv($out, [
+            (int)$row['ID'],
+            (string)$row['FIO'],
+            trim((string)$row['START'] . ' — ' . (string)$row['END']),
+            (string)$row['TIP_RABOTY'],
+            (string)$row['OBOSNOVANIE'],
+            number_format((float)$row['HOURS_TK'], 2, ',', ''),
+            number_format((float)$row['HOURS_BONUS'], 2, ',', ''),
+        ], ';');
+    }
+
+    fclose($out);
+    require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/footer.php");
+    exit;
+}
 
 /* ------------------------- группировка пар ------------------------- */
 
@@ -736,6 +862,9 @@ foreach ($rowsSorted as $row) {
         font-weight: 700;
         color: #0d6efd;
         text-decoration: none;
+        border: 0;
+        background: transparent;
+        padding: 0;
     }
     .number-link:hover {
         text-decoration: underline;
@@ -892,6 +1021,12 @@ foreach ($rowsSorted as $row) {
         font-weight: 600;
     }
 
+    .status-open-btn {
+        border: 0;
+        background: transparent;
+        padding: 0;
+    }
+
     .history-modal-body {
         padding: 16px;
         overflow-y: auto;
@@ -993,7 +1128,6 @@ foreach ($rowsSorted as $row) {
 
     <div class="d-flex flex-wrap align-items-center mb-3">
         <a href="<?= h($CREATE_URL) ?>" class="btn btn-success mr-3 mb-2">Создать заявку</a>
-        <a href="<?= h(buildListUrlCustom($GROUP_ID, $IBLOCK_GROUPS_ID)) ?>" class="btn btn-outline-secondary mb-2">Открыть список групп заявок</a>
     </div>
 
     <?php if ($groupFilter > 0): ?>
@@ -1062,6 +1196,18 @@ foreach ($rowsSorted as $row) {
 
             <div class="filter-actions">
                 <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+                <a href="<?= h('?' . http_build_query(array_filter([
+                    'q'            => $q,
+                    'date_from'    => $dateFrom,
+                    'date_to'      => $dateTo,
+                    'status'       => !empty($statusInput) ? $statusInput : null,
+                    'group_filter' => $groupFilter > 0 ? $groupFilter : null,
+                    'sort'         => $sortKey,
+                    'dir'          => $dir,
+                    'export'       => 'excel',
+                ], static function ($v) {
+                    return $v !== null && $v !== '';
+                }))) ?>" class="btn btn-outline-success btn-sm">Excel</a>
                 <a href="<?= h($APPLICATION->GetCurPage()) ?>" class="btn btn-secondary btn-sm">Сбросить</a>
             </div>
         </div>
@@ -1107,7 +1253,6 @@ foreach ($rowsSorted as $row) {
                         <th><?= $makeSortLink('id', '№ заявки') ?></th>
                         <th><?= $makeSortLink('fio', 'ФИО сотрудника') ?></th>
                         <th>Тип заявки</th>
-                        <th>Обоснование</th>
                         <th><?= $makeSortLink('start', 'Начало работ') ?></th>
                         <th>Окончание работ</th>
                         <th>Часы</th>
@@ -1129,9 +1274,22 @@ foreach ($rowsSorted as $row) {
                             ?>
                             <tr class="pair-top-row <?= h($pairVariantClass) ?>">
                                 <td class="nowrap">
-                                    <a class="number-link" href="<?= h($a['OPEN_URL']) ?>" target="_blank" rel="noopener">
+                                    <button
+                                        type="button"
+                                        class="number-link js-request-btn"
+                                        data-request-id="request-<?= (int)$a['ID'] ?>"
+                                    >
                                         #<?= (int)$a['ID'] ?>
-                                    </a>
+                                    </button>
+                                    <div id="request-<?= (int)$a['ID'] ?>" class="d-none">
+                                        <ul class="list-unstyled mb-0">
+                                            <li><strong>ФИО сотрудника:</strong> <?= h($a['FIO']) ?></li>
+                                            <li><strong>Тип работ:</strong> <?= h($a['TIP_RABOTY']) ?></li>
+                                            <li><strong>Периоды работы:</strong> <?= h($a['START']) ?> — <?= h($a['END']) ?></li>
+                                            <li><strong>Обоснование:</strong><br><?= nl2br(h($a['OBOSNOVANIE'])) ?></li>
+                                            <li><strong>Инициатор заявки:</strong> <?= h($a['INITIATOR'] !== '' ? $a['INITIATOR'] : '—') ?></li>
+                                        </ul>
+                                    </div>
                                 </td>
 
                                 <td rowspan="2" class="shared-cell">
@@ -1139,11 +1297,6 @@ foreach ($rowsSorted as $row) {
                                 </td>
 
                                 <td><?= h($a['TIP_RABOTY']) ?></td>
-
-                                <td rowspan="2" class="shared-cell">
-                                    <?= nl2br(h($displayRow['COMMON_OBOS'])) ?>
-                                </td>
-
                                 <td class="nowrap"><?= h($a['START']) ?></td>
                                 <td class="nowrap"><?= h($a['END']) ?></td>
                                 <td class="nowrap"><?= h($a['HOURS']) ?></td>
@@ -1151,7 +1304,20 @@ foreach ($rowsSorted as $row) {
 
                                 <td>
                                     <?php if ($a['STATUS_NAME'] !== ''): ?>
-                                        <span class="status-pill <?= h($a['STATUS_CLASS']) ?>"><?= h($a['STATUS_NAME']) ?></span>
+                                        <button type="button" class="status-open-btn js-executors-btn" data-executors-id="executors-<?= (int)$a['ID'] ?>">
+                                            <span class="status-pill <?= h($a['STATUS_CLASS']) ?>"><?= h($a['STATUS_NAME']) ?></span>
+                                        </button>
+                                        <div id="executors-<?= (int)$a['ID'] ?>" class="d-none">
+                                            <?php if (!empty($a['CURRENT_EXECUTORS'])): ?>
+                                                <ul class="mb-0">
+                                                    <?php foreach ($a['CURRENT_EXECUTORS'] as $executorName): ?>
+                                                        <li><?= h($executorName) ?></li>
+                                                    <?php endforeach; ?>
+                                                </ul>
+                                            <?php else: ?>
+                                                <div class="text-muted">Текущие исполнители не найдены.</div>
+                                            <?php endif; ?>
+                                        </div>
                                     <?php else: ?>
                                         <span class="text-muted">—</span>
                                     <?php endif; ?>
@@ -1191,9 +1357,22 @@ foreach ($rowsSorted as $row) {
 
                             <tr class="pair-bottom-row <?= h($pairVariantClass) ?>">
                                 <td class="nowrap">
-                                    <a class="number-link" href="<?= h($b['OPEN_URL']) ?>" target="_blank" rel="noopener">
+                                    <button
+                                        type="button"
+                                        class="number-link js-request-btn"
+                                        data-request-id="request-<?= (int)$b['ID'] ?>"
+                                    >
                                         #<?= (int)$b['ID'] ?>
-                                    </a>
+                                    </button>
+                                    <div id="request-<?= (int)$b['ID'] ?>" class="d-none">
+                                        <ul class="list-unstyled mb-0">
+                                            <li><strong>ФИО сотрудника:</strong> <?= h($b['FIO']) ?></li>
+                                            <li><strong>Тип работ:</strong> <?= h($b['TIP_RABOTY']) ?></li>
+                                            <li><strong>Периоды работы:</strong> <?= h($b['START']) ?> — <?= h($b['END']) ?></li>
+                                            <li><strong>Обоснование:</strong><br><?= nl2br(h($b['OBOSNOVANIE'])) ?></li>
+                                            <li><strong>Инициатор заявки:</strong> <?= h($b['INITIATOR'] !== '' ? $b['INITIATOR'] : '—') ?></li>
+                                        </ul>
+                                    </div>
                                 </td>
 
                                 <td class="pair-divider-cell"><?= h($b['TIP_RABOTY']) ?></td>
@@ -1204,7 +1383,20 @@ foreach ($rowsSorted as $row) {
 
                                 <td class="pair-divider-cell">
                                     <?php if ($b['STATUS_NAME'] !== ''): ?>
-                                        <span class="status-pill <?= h($b['STATUS_CLASS']) ?>"><?= h($b['STATUS_NAME']) ?></span>
+                                        <button type="button" class="status-open-btn js-executors-btn" data-executors-id="executors-<?= (int)$b['ID'] ?>">
+                                            <span class="status-pill <?= h($b['STATUS_CLASS']) ?>"><?= h($b['STATUS_NAME']) ?></span>
+                                        </button>
+                                        <div id="executors-<?= (int)$b['ID'] ?>" class="d-none">
+                                            <?php if (!empty($b['CURRENT_EXECUTORS'])): ?>
+                                                <ul class="mb-0">
+                                                    <?php foreach ($b['CURRENT_EXECUTORS'] as $executorName): ?>
+                                                        <li><?= h($executorName) ?></li>
+                                                    <?php endforeach; ?>
+                                                </ul>
+                                            <?php else: ?>
+                                                <div class="text-muted">Текущие исполнители не найдены.</div>
+                                            <?php endif; ?>
+                                        </div>
                                     <?php else: ?>
                                         <span class="text-muted">—</span>
                                     <?php endif; ?>
@@ -1246,13 +1438,25 @@ foreach ($rowsSorted as $row) {
                             <?php $row = $displayRow['ITEMS'][0]; ?>
                             <tr>
                                 <td class="nowrap">
-                                    <a class="number-link" href="<?= h($row['OPEN_URL']) ?>" target="_blank" rel="noopener">
+                                    <button
+                                        type="button"
+                                        class="number-link js-request-btn"
+                                        data-request-id="request-<?= (int)$row['ID'] ?>"
+                                    >
                                         #<?= (int)$row['ID'] ?>
-                                    </a>
+                                    </button>
+                                    <div id="request-<?= (int)$row['ID'] ?>" class="d-none">
+                                        <ul class="list-unstyled mb-0">
+                                            <li><strong>ФИО сотрудника:</strong> <?= h($row['FIO']) ?></li>
+                                            <li><strong>Тип работ:</strong> <?= h($row['TIP_RABOTY']) ?></li>
+                                            <li><strong>Периоды работы:</strong> <?= h($row['START']) ?> — <?= h($row['END']) ?></li>
+                                            <li><strong>Обоснование:</strong><br><?= nl2br(h($row['OBOSNOVANIE'])) ?></li>
+                                            <li><strong>Инициатор заявки:</strong> <?= h($row['INITIATOR'] !== '' ? $row['INITIATOR'] : '—') ?></li>
+                                        </ul>
+                                    </div>
                                 </td>
                                 <td><?= h($row['FIO']) ?></td>
                                 <td><?= h($row['TIP_RABOTY']) ?></td>
-                                <td><?= nl2br(h($row['OBOSNOVANIE'])) ?></td>
                                 <td class="nowrap"><?= h($row['START']) ?></td>
                                 <td class="nowrap"><?= h($row['END']) ?></td>
                                 <td class="nowrap"><?= h($row['HOURS']) ?></td>
@@ -1260,7 +1464,20 @@ foreach ($rowsSorted as $row) {
 
                                 <td>
                                     <?php if ($row['STATUS_NAME'] !== ''): ?>
-                                        <span class="status-pill <?= h($row['STATUS_CLASS']) ?>"><?= h($row['STATUS_NAME']) ?></span>
+                                        <button type="button" class="status-open-btn js-executors-btn" data-executors-id="executors-<?= (int)$row['ID'] ?>">
+                                            <span class="status-pill <?= h($row['STATUS_CLASS']) ?>"><?= h($row['STATUS_NAME']) ?></span>
+                                        </button>
+                                        <div id="executors-<?= (int)$row['ID'] ?>" class="d-none">
+                                            <?php if (!empty($row['CURRENT_EXECUTORS'])): ?>
+                                                <ul class="mb-0">
+                                                    <?php foreach ($row['CURRENT_EXECUTORS'] as $executorName): ?>
+                                                        <li><?= h($executorName) ?></li>
+                                                    <?php endforeach; ?>
+                                                </ul>
+                                            <?php else: ?>
+                                                <div class="text-muted">Текущие исполнители не найдены.</div>
+                                            <?php endif; ?>
+                                        </div>
                                     <?php else: ?>
                                         <span class="text-muted">—</span>
                                     <?php endif; ?>
@@ -1308,7 +1525,7 @@ foreach ($rowsSorted as $row) {
 <div id="history-modal-backdrop" class="history-modal-backdrop">
     <div class="history-modal">
         <div class="history-modal-header">
-            <div class="history-modal-title">История заявки</div>
+            <div class="history-modal-title" id="history-modal-title">Информация</div>
             <button type="button" class="history-modal-close js-history-close">&times;</button>
         </div>
         <div class="history-modal-body" id="history-modal-body"></div>
@@ -1319,12 +1536,14 @@ foreach ($rowsSorted as $row) {
 (function() {
     var backdrop = document.getElementById('history-modal-backdrop');
     var bodyEl = document.getElementById('history-modal-body');
+    var titleEl = document.getElementById('history-modal-title');
 
-    if (!backdrop || !bodyEl) {
+    if (!backdrop || !bodyEl || !titleEl) {
         return;
     }
 
-    function openHistory(html) {
+    function openModal(title, html) {
+        titleEl.textContent = title;
         bodyEl.innerHTML = html;
         backdrop.style.display = 'flex';
         document.body.style.overflow = 'hidden';
@@ -1342,7 +1561,27 @@ foreach ($rowsSorted as $row) {
             var id = btn.getAttribute('data-history-id');
             var container = document.getElementById(id);
             if (container) {
-                openHistory(container.innerHTML);
+                openModal('История заявки', container.innerHTML);
+            }
+            return;
+        }
+
+        var requestBtn = e.target.closest ? e.target.closest('.js-request-btn') : null;
+        if (requestBtn) {
+            var requestId = requestBtn.getAttribute('data-request-id');
+            var requestContainer = document.getElementById(requestId);
+            if (requestContainer) {
+                openModal('Сведения о заявке', requestContainer.innerHTML);
+            }
+            return;
+        }
+
+        var executorsBtn = e.target.closest ? e.target.closest('.js-executors-btn') : null;
+        if (executorsBtn) {
+            var executorsId = executorsBtn.getAttribute('data-executors-id');
+            var executorsContainer = document.getElementById(executorsId);
+            if (executorsContainer) {
+                openModal('Текущие исполнители', executorsContainer.innerHTML);
             }
             return;
         }
