@@ -482,6 +482,9 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-calc {font-size:13px;}
     .overtime-view-highlight-row {background:#fff4cc !important; font-weight:700; font-size:14px;}
     .overtime-view-justification {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc; white-space:pre-wrap; line-height:1.45;}
+    .overtime-view-justification-details {border:1px solid #e5e9f0; border-radius:6px; background:#fbfcfe; margin-bottom:8px;}
+    .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
+    .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
@@ -518,10 +521,14 @@ $APPLICATION->SetTitle('Просмотр заявки');
                 </div>
             </div>
 
-            <div class="overtime-view-subtitle">Обоснование</div>
-            <div class="overtime-view-justification">
-                <?= $viewData['justification'] !== '' ? nl2br(overtimeH($viewData['justification'])) : '<i>Не заполнено</i>' ?>
-            </div>
+            <details class="overtime-view-justification-details">
+                <summary class="overtime-view-justification-summary">Обоснование</summary>
+                <div class="overtime-view-justification-body">
+                    <div class="overtime-view-justification">
+                        <?= $viewData['justification'] !== '' ? nl2br(overtimeH($viewData['justification'])) : '<i>Не заполнено</i>' ?>
+                    </div>
+                </div>
+            </details>
 
             <div class="overtime-view-subtitle">Расчетная часть</div>
             <div class="overtime-view-calc overtime-view-main-calc">
