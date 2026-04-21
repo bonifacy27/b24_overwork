@@ -531,6 +531,7 @@ $dateFrom     = trim((string)($_GET['date_from'] ?? ''));
 $dateTo       = trim((string)($_GET['date_to'] ?? ''));
 $groupFilter  = (int)($_GET['group_filter'] ?? 0);
 $statusInput  = $_GET['status'] ?? [];
+$inWorkOnly   = (string)($_GET['in_work'] ?? '') === 'Y';
 
 if (!is_array($statusInput)) {
     $statusInput = [$statusInput];
@@ -719,6 +720,14 @@ $taskMap = loadCurrentUserBizprocTasksMapCustom(
 foreach ($rows as $id => $rowData) {
     $rows[$id]['TASK_ID'] = (int)($taskMap[$id] ?? 0);
     $rows[$id]['VIEW_URL'] = buildRequestViewUrlCustom($id);
+}
+
+if ($inWorkOnly) {
+    foreach ($rows as $id => $rowData) {
+        if ((int)$rowData['TASK_ID'] <= 0) {
+            unset($rows[$id]);
+        }
+    }
 }
 
 $executorsMap = loadCurrentExecutorsMapCustom(array_keys($rows), $IBLOCK_ID);
@@ -1194,6 +1203,13 @@ foreach ($rowsSorted as $row) {
                 </div>
             </div>
 
+            <div class="filter-item">
+                <label class="status-chip">
+                    <input type="checkbox" name="in_work" value="Y" <?= $inWorkOnly ? 'checked' : '' ?>>
+                    <span>В работе</span>
+                </label>
+            </div>
+
             <div class="filter-actions">
                 <button type="submit" class="btn btn-primary btn-sm">Применить</button>
                 <a href="<?= h('?' . http_build_query(array_filter([
@@ -1201,6 +1217,7 @@ foreach ($rowsSorted as $row) {
                     'date_from'    => $dateFrom,
                     'date_to'      => $dateTo,
                     'status'       => !empty($statusInput) ? $statusInput : null,
+                    'in_work'      => $inWorkOnly ? 'Y' : null,
                     'group_filter' => $groupFilter > 0 ? $groupFilter : null,
                     'sort'         => $sortKey,
                     'dir'          => $dir,
@@ -1219,7 +1236,7 @@ foreach ($rowsSorted as $row) {
         <?php
         $dirOpposite = ($dir === 'ASC') ? 'DESC' : 'ASC';
 
-        $makeSortLink = function ($key, $title) use ($sortKey, $dir, $dirOpposite, $q, $dateFrom, $dateTo, $statusInput, $groupFilter) {
+        $makeSortLink = function ($key, $title) use ($sortKey, $dir, $dirOpposite, $q, $dateFrom, $dateTo, $statusInput, $groupFilter, $inWorkOnly) {
             $isActive = ($sortKey === $key);
 
             $params = [
@@ -1228,6 +1245,7 @@ foreach ($rowsSorted as $row) {
                 'date_to'     => $dateTo,
                 'sort'        => $key,
                 'dir'         => $isActive ? $dirOpposite : 'ASC',
+                'in_work'     => $inWorkOnly ? 'Y' : '',
                 'group_filter'=> $groupFilter > 0 ? $groupFilter : '',
             ];
 
