@@ -16,7 +16,7 @@ BX.ready(function () {
 
     let lastPreviewResponse = null;
     let previewTimer = null;
-    const todayDate = '<?= date('Y-m-d') ?>';
+    const minAllowedDate = '<?= date('Y-m-d', strtotime('+1 day')) ?>';
 
     function escapeHtml(text) {
         const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
@@ -1008,9 +1008,9 @@ BX.ready(function () {
                 </div>
                 <div class="overtime-subtitle">Выберите периоды работы</div>
                 <div class="overtime-grid-4">
-                    <div class="overtime-field"><label>Дата начала</label><input type="date" name="rows_diff[${idx}][date_start]" class="diff-date-start" min="${todayDate}"></div>
+                    <div class="overtime-field"><label>Дата начала</label><input type="date" name="rows_diff[${idx}][date_start]" class="diff-date-start" min="${minAllowedDate}"></div>
                     <div class="overtime-field"><label>Время начала</label><select name="rows_diff[${idx}][time_start]" class="diff-time-start">${options}</select></div>
-                    <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end" min="${todayDate}"></div>
+                    <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end" min="${minAllowedDate}"></div>
                     <div class="overtime-field"><label>Время окончания</label><select name="rows_diff[${idx}][time_end]" class="diff-time-end">${options}</select></div>
                 </div>
                 <div class="overtime-preview-box row-preview" id="diff_preview_${idx}"></div>

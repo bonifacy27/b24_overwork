@@ -100,7 +100,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                 <div class="overtime-grid-4">
                     <div class="overtime-field">
                         <label>Дата начала</label>
-                        <input type="date" name="single[date_start]" id="single_date_start" min="<?= date('Y-m-d') ?>" value="<?= overtimeH($formData['single']['date_start']) ?>">
+                        <input type="date" name="single[date_start]" id="single_date_start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['single']['date_start']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -115,7 +115,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
                     <div class="overtime-field">
                         <label>Дата окончания</label>
-                        <input type="date" name="single[date_end]" id="single_date_end" min="<?= date('Y-m-d') ?>" value="<?= overtimeH($formData['single']['date_end']) ?>">
+                        <input type="date" name="single[date_end]" id="single_date_end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['single']['date_end']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -167,7 +167,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                 <div class="overtime-grid-4">
                     <div class="overtime-field">
                         <label>Дата начала</label>
-                        <input type="date" name="common[date_start]" id="same_date_start" min="<?= date('Y-m-d') ?>" value="<?= overtimeH($formData['common']['date_start']) ?>">
+                        <input type="date" name="common[date_start]" id="same_date_start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['common']['date_start']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -182,7 +182,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
                     <div class="overtime-field">
                         <label>Дата окончания</label>
-                        <input type="date" name="common[date_end]" id="same_date_end" min="<?= date('Y-m-d') ?>" value="<?= overtimeH($formData['common']['date_end']) ?>">
+                        <input type="date" name="common[date_end]" id="same_date_end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['common']['date_end']) ?>">
                     </div>
 
                     <div class="overtime-field">
@@ -303,7 +303,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                             <div class="overtime-grid-4">
                                 <div class="overtime-field">
                                     <label>Дата начала</label>
-                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_start]" class="diff-date-start" min="<?= date('Y-m-d') ?>" value="<?= overtimeH($row['date_start']) ?>">
+                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_start]" class="diff-date-start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($row['date_start']) ?>">
                                 </div>
 
                                 <div class="overtime-field">
@@ -318,7 +318,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
                                 <div class="overtime-field">
                                     <label>Дата окончания</label>
-                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_end]" class="diff-date-end" min="<?= date('Y-m-d') ?>" value="<?= overtimeH($row['date_end']) ?>">
+                                    <input type="date" name="rows_diff[<?= (int)$index ?>][date_end]" class="diff-date-end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($row['date_end']) ?>">
                                 </div>
 
                                 <div class="overtime-field">
