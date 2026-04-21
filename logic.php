@@ -803,11 +803,11 @@ function overtimeValidateCreatorEmployeeAccess(int $employeeId, array $config): 
 
 function overtimeValidatePastDateRestriction(int $employeeId, DateTime $start, DateTime $end, array $config): array
 {
-    $today = date('Y-m-d');
+    $minAllowedDate = date('Y-m-d', strtotime('+1 day'));
     $startDate = $start->format('Y-m-d');
     $endDate = $end->format('Y-m-d');
 
-    if ($startDate >= $today && $endDate >= $today) {
+    if ($startDate >= $minAllowedDate && $endDate >= $minAllowedDate) {
         return ['allowed' => true, 'error' => ''];
     }
 
@@ -817,7 +817,7 @@ function overtimeValidatePastDateRestriction(int $employeeId, DateTime $start, D
 
     return [
         'allowed' => false,
-        'error' => 'Дата работ не может быть в прошлом. Выбор периода возможен только с текущей даты.',
+        'error' => 'Дата работ не может быть ранее завтрашнего дня. Выбор периода возможен только с завтрашней даты.',
     ];
 }
 
