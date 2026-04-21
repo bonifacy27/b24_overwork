@@ -518,14 +518,14 @@ $APPLICATION->SetTitle('Просмотр заявки');
                 </div>
             </div>
 
-            <div class="overtime-view-subtitle">Расчетная часть</div>
-            <div class="overtime-view-calc overtime-view-main-calc">
-                <?= $viewData['calculation_html'] !== '' ? overtimeHighlightCalculationRows($viewData['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
-            </div>
-
             <div class="overtime-view-subtitle">Обоснование</div>
             <div class="overtime-view-justification">
                 <?= $viewData['justification'] !== '' ? nl2br(overtimeH($viewData['justification'])) : '<i>Не заполнено</i>' ?>
+            </div>
+
+            <div class="overtime-view-subtitle">Расчетная часть</div>
+            <div class="overtime-view-calc overtime-view-main-calc">
+                <?= $viewData['calculation_html'] !== '' ? overtimeHighlightCalculationRows($viewData['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
             </div>
 
             <?php if (!empty($linkedCalculations)): ?>
