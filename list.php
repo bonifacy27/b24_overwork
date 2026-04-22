@@ -70,17 +70,25 @@ function h($s)
 
 function userNameById($userId)
 {
+    static $userNameCache = [];
+
     $userId = (int)$userId;
     if ($userId <= 0) {
         return '';
     }
 
+    if (array_key_exists($userId, $userNameCache)) {
+        return $userNameCache[$userId];
+    }
+
     $rsUser = CUser::GetByID($userId);
     if ($arUser = $rsUser->Fetch()) {
         $name = trim($arUser["LAST_NAME"] . " " . $arUser["NAME"] . " " . $arUser["SECOND_NAME"]);
-        return $name ?: $arUser["LOGIN"];
+        $userNameCache[$userId] = $name ?: $arUser["LOGIN"];
+        return $userNameCache[$userId];
     }
 
+    $userNameCache[$userId] = '';
     return '';
 }
 
@@ -293,10 +301,11 @@ function extractRequestIdFromDocumentIdCustom($documentId, $iblockId)
 function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $iblockId)
 {
     $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
+    $requestIdsMap = array_fill_keys($requestIds, true);
     $userId = (int)$userId;
     $iblockId = (int)$iblockId;
 
-    if (empty($requestIds) || $userId <= 0 || $iblockId <= 0) {
+    if (empty($requestIdsMap) || $userId <= 0 || $iblockId <= 0) {
         return [];
     }
 
@@ -318,7 +327,7 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
 
     while ($task = $res->GetNext()) {
         $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
-        if ($requestId <= 0 || !in_array($requestId, $requestIds, true) || isset($map[$requestId])) {
+        if ($requestId <= 0 || !isset($requestIdsMap[$requestId]) || isset($map[$requestId])) {
             continue;
         }
 
@@ -331,9 +340,10 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
 function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
 {
     $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
+    $requestIdsMap = array_fill_keys($requestIds, true);
     $iblockId = (int)$iblockId;
 
-    if (empty($requestIds) || $iblockId <= 0) {
+    if (empty($requestIdsMap) || $iblockId <= 0) {
         return [];
     }
 
@@ -354,7 +364,7 @@ function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
 
     while ($task = $res->GetNext()) {
         $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
-        if ($requestId <= 0 || !in_array($requestId, $requestIds, true)) {
+        if ($requestId <= 0 || !isset($requestIdsMap[$requestId])) {
             continue;
         }
 
@@ -548,6 +558,9 @@ if (!is_array($statusInput)) {
     $statusInput = [$statusInput];
 }
 $statusInput = array_values(array_filter(array_map('intval', $statusInput)));
+$qLower = ($q !== '') ? mb_strtolower($q, 'UTF-8') : '';
+$dateFromNorm = ($dateFrom !== '') ? normalizeDateCustom($dateFrom) : '';
+$dateToNorm = ($dateTo !== '') ? normalizeDateCustom($dateTo) : '';
 
 /* ------------------------- сортировка ------------------------- */
 
@@ -666,24 +679,18 @@ while ($ob = $rsItems->GetNextElement()) {
         'UTF-8'
     );
 
-    if ($q !== '' && mb_stripos($searchText, mb_strtolower($q, 'UTF-8')) === false) {
+    if ($qLower !== '' && mb_stripos($searchText, $qLower) === false) {
         continue;
     }
 
     $rowDateNorm = normalizeDateCustom($v3113);
 
-    if ($dateFrom !== '') {
-        $dateFromNorm = normalizeDateCustom($dateFrom);
-        if ($dateFromNorm !== '' && $rowDateNorm !== '' && $rowDateNorm < $dateFromNorm) {
-            continue;
-        }
+    if ($dateFromNorm !== '' && $rowDateNorm !== '' && $rowDateNorm < $dateFromNorm) {
+        continue;
     }
 
-    if ($dateTo !== '') {
-        $dateToNorm = normalizeDateCustom($dateTo);
-        if ($dateToNorm !== '' && $rowDateNorm !== '' && $rowDateNorm > $dateToNorm) {
-            continue;
-        }
+    if ($dateToNorm !== '' && $rowDateNorm !== '' && $rowDateNorm > $dateToNorm) {
+        continue;
     }
 
     if (!empty($statusInput) && !in_array($statusId, $statusInput, true)) {
