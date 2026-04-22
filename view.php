@@ -170,6 +170,56 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
     return $result;
 }
 
+function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId, array $config): array
+{
+    if ($groupId <= 0) {
+        return [];
+    }
+
+    $result = [];
+    $res = CIBlockElement::GetList(
+        ['ID' => 'ASC'],
+        [
+            'IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'],
+            'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] => $groupId,
+            '!ID' => $currentRequestId,
+        ],
+        false,
+        false,
+        [
+            'ID',
+            'NAME',
+            'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
+            ...overtimeBuildOptionalPropertySelect($config),
+        ]
+    );
+
+    while ($item = $res->Fetch()) {
+        $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
+        $employee = overtimeGetUserDataById($employeeId);
+
+        $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+        if ($calculationHtml === '') {
+            $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
+        }
+
+        $result[] = [
+            'id' => (int)$item['ID'],
+            'name' => (string)$item['NAME'],
+            'employee_name' => $employee['name'] ?: 'Не указан',
+            'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
+            'calculation_html' => $calculationHtml,
+        ];
+    }
+
+    return $result;
+}
+
 function overtimeBuildOptionalPropertySelect(array $config): array
 {
     $propertyCodes = [
@@ -822,6 +872,7 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
 
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
+$groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((int)$viewData['group_id'], (int)$viewData['id'], $overtimeConfig) : [];
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
 $bpActionError = '';
@@ -963,14 +1014,27 @@ $APPLICATION->SetTitle('Просмотр заявки');
 
             <?php if ($viewData['group_id'] > 0): ?>
                 <div class="overtime-view-subtitle">Групповая заявка</div>
-                <a
-                    class="overtime-btn"
-                    href="https://ourtricolortv.nsc.ru/forms/hr_administration/overtime/list.php?group_filter=<?= (int)$viewData['group_id'] ?>"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                >
-                    Открыть группу заявок #<?= (int)$viewData['group_id'] ?>
-                </a>
+                <?php if (!empty($groupCalculations)): ?>
+                    <div class="overtime-view-linked-wrap">
+                        <?php foreach ($groupCalculations as $groupRequest): ?>
+                            <details class="overtime-view-linked-details">
+                                <summary class="overtime-view-linked-summary">
+                                    Заявка #<?= (int)$groupRequest['id'] ?> — <?= overtimeH($groupRequest['name']) ?>
+                                </summary>
+                                <div class="overtime-view-linked-body">
+                                    <div class="overtime-view-meta-label" style="margin-bottom:6px;">
+                                        Сотрудник: <?= overtimeH($groupRequest['employee_name']) ?> · Тип оплаты: <?= overtimeH($groupRequest['payment_type_name']) ?>
+                                    </div>
+                                    <div class="overtime-view-calc overtime-view-linked-calc">
+                                        <?= $groupRequest['calculation_html'] !== '' ? overtimeHighlightCalculationRows($groupRequest['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
+                                    </div>
+                                </div>
+                            </details>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <div class="overtime-view-meta-label">Других заявок в группе нет.</div>
+                <?php endif; ?>
             <?php endif; ?>
         <?php endif; ?>
 
