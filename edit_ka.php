@@ -170,6 +170,11 @@ if ($adminName === '') {
     $adminName = 'Пользователь #' . $currentUserId;
 }
 
+$overtimeConfig['CURRENT_USER_ID'] = $currentUserId;
+$overtimeConfig['ALLOW_DUTY'] = overtimeCanCurrentUserUseDuty($currentUserId, $overtimeConfig);
+$overtimeConfig['CREATOR_ACCESS_MAP'] = overtimeGetCreatorAccessMap($currentUserId, $overtimeConfig);
+$overtimeConfig['SKIP_CREATOR_ACCESS_CHECK'] = true;
+
 $errors = [];
 $successMessage = '';
 $previewRows = [];

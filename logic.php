@@ -773,6 +773,20 @@ function overtimeBuildSplitWarning(array $segments, array $config): array
 
 function overtimeValidateCreatorEmployeeAccess(int $employeeId, array $config): array
 {
+    if (!empty($config['SKIP_CREATOR_ACCESS_CHECK'])) {
+        if ($employeeId <= 0) {
+            return [
+                'allowed' => false,
+                'error' => 'Не выбран сотрудник.',
+            ];
+        }
+
+        return [
+            'allowed' => true,
+            'error' => '',
+        ];
+    }
+
     $creatorId = (int)($config['CURRENT_USER_ID'] ?? 0);
     if ($creatorId <= 0) {
         return [
