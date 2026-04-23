@@ -516,7 +516,8 @@ function overtimeHighlightCalculationRows(string $html): string
             return $rowHtml;
         }
 
-        preg_match_all('/-?\d+(?:[.,]\d+)?/u', $rowText, $hoursMatches);
+        $hoursText = str_replace($targetText, '', $rowText);
+        preg_match_all('/-?\d+(?:[.,]\d+)?/u', $hoursText, $hoursMatches);
         $hasNonZeroHours = false;
         foreach (($hoursMatches[0] ?? []) as $rawValue) {
             $hours = (float)str_replace(',', '.', $rawValue);
@@ -531,9 +532,23 @@ function overtimeHighlightCalculationRows(string $html): string
         }
 
         if ($marker !== '' && $targetText !== '') {
-            $replacement = $targetText . ' <span class="overtime-view-marker">— ' . htmlspecialcharsbx($marker) . '</span>';
+            $replacement = $targetText . ' <span class="overtime-view-marker">' . htmlspecialcharsbx($marker) . '</span>';
             $rowHtml = str_replace($targetText, $replacement, $rowHtml);
         }
+
+        $rowHtml = preg_replace_callback('/<(td|th)\b([^>]*)>/iu', static function (array $cellMatches) {
+            $tag = $cellMatches[1];
+            $attrs = $cellMatches[2];
+
+            if (preg_match('/\bclass\s*=\s*"([^"]*)"/iu', $attrs, $classMatch)) {
+                $updatedClasses = trim($classMatch[1] . ' overtime-view-highlight-cell');
+                $attrs = preg_replace('/\bclass\s*=\s*"[^"]*"/iu', 'class="' . $updatedClasses . '"', $attrs, 1) ?? $attrs;
+            } else {
+                $attrs = trim($attrs . ' class="overtime-view-highlight-cell"');
+            }
+
+            return '<' . $tag . ($attrs !== '' ? ' ' . $attrs : '') . '>';
+        }, $rowHtml) ?? $rowHtml;
 
         if (preg_match('/\bclass\s*=\s*"([^"]*)"/iu', $rowHtml, $classMatch)) {
             $classes = trim($classMatch[1]);
@@ -1008,7 +1023,8 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-body {padding:0 12px 12px;}
     .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
     .overtime-view-linked-calc {font-size:13px;}
-    .overtime-view-highlight-row {background:#fff4cc !important; font-weight:700; font-size:14px;}
+    .overtime-view-highlight-row {font-weight:700; font-size:14px;}
+    .overtime-view-highlight-cell {background:#fff4cc !important;}
     .overtime-view-marker {display:inline-block; margin-left:6px; padding:1px 6px; border-radius:10px; background:#d1242f; color:#fff; font-size:11px; font-weight:700; letter-spacing:.2px;}
     .overtime-view-justification {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc; white-space:pre-wrap; line-height:1.45;}
     .overtime-view-justification-details {border:1px solid #e5e9f0; border-radius:6px; background:#fbfcfe; margin-bottom:8px;}
