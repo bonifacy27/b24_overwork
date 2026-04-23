@@ -60,6 +60,16 @@ function overtimeGetEnumValueById(int $enumId): string
 
 function overtimeResolvePropertyDisplayValue(array $item, string $propertyCode): string
 {
+    $enumValue = trim((string)($item['PROPERTY_' . $propertyCode . '_ENUM'] ?? ''));
+    if ($enumValue !== '') {
+        return $enumValue;
+    }
+
+    $valueEnum = trim((string)($item['PROPERTY_' . $propertyCode . '_VALUE_ENUM'] ?? ''));
+    if ($valueEnum !== '') {
+        return $valueEnum;
+    }
+
     $value = $item['PROPERTY_' . $propertyCode . '_VALUE'] ?? null;
 
     if (is_array($value)) {
@@ -78,6 +88,18 @@ function overtimeResolvePropertyDisplayValue(array $item, string $propertyCode):
     if (is_string($value)) {
         $value = trim($value);
         if ($value !== '') {
+            if (is_numeric($value) && (int)$value > 0) {
+                $enumValue = overtimeGetEnumValueById((int)$value);
+                if ($enumValue !== '') {
+                    return $enumValue;
+                }
+
+                $elementName = overtimeGetElementName((int)$value);
+                if ($elementName !== '') {
+                    return $elementName;
+                }
+            }
+
             return $value;
         }
     }
@@ -195,6 +217,7 @@ $initiatorName = overtimeGetUserNameById($initiatorId);
 $employeeName = overtimeGetUserNameById($employeeId);
 $workTypeName = overtimeGetElementName($workTypeId);
 $paymentTypeName = overtimeResolvePaymentTypeNameFromRequest((array)$sourceRequest, $overtimeConfig);
+$justificationText = trim((string)($sourceRequest['PROPERTY_' . $overtimeConfig['REQ_PROP_JUSTIFICATION'] . '_VALUE'] ?? ''));
 
 $periodParts = overtimeBuildRequestPeriodParts((array)$sourceRequest, $overtimeConfig);
 $sourceDateStartInput = (string)$periodParts['date_start_input'];
@@ -306,12 +329,12 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
                 $now = date('d.m.Y H:i:s');
                 overtimeAppendRequestHistory(
                     $requestId,
-                    $now . ' перенесена в заявку #' . $newRequestId . ' (' . $adminName . ')',
+                    $now . ' Перенесена в заявку #' . $newRequestId . ' (' . $adminName . ')',
                     $overtimeConfig
                 );
                 overtimeAppendRequestHistory(
                     $newRequestId,
-                    $now . ' создана переносом после редактирования заявки #' . $requestId . ' (' . $adminName . ')',
+                    $now . ' Создана перенесом после редактирования заявки #' . $requestId . ' (' . $adminName . ')',
                     $overtimeConfig
                 );
 
@@ -350,6 +373,7 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
             <div><b>Сотрудник:</b> <?= htmlspecialcharsbx($employeeName ?: 'Не указан') ?></div>
             <div><b>Тип работы:</b> <?= htmlspecialcharsbx($workTypeName ?: 'Не указан') ?></div>
             <div><b>Тип оплаты:</b> <?= htmlspecialcharsbx($paymentTypeName ?: 'Не указан') ?></div>
+            <div><b>Обоснование:</b> <?= nl2br(htmlspecialcharsbx($justificationText !== '' ? $justificationText : 'Не указано')) ?></div>
             <div><b>Дата/время начала работ:</b> <?= htmlspecialcharsbx(overtimeFormatDateRu($sourceDateStartInput) . ' ' . $sourceTimeStart) ?></div>
             <div><b>Дата/время окончания работ:</b> <?= htmlspecialcharsbx(overtimeFormatDateRu($sourceDateEndInput) . ' ' . $sourceTimeEnd) ?></div>
         </div>
