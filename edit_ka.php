@@ -366,14 +366,24 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
                 }
 
                 $now = date('d.m.Y H:i:s');
+                $oldPeriodText = overtimeFormatDateRu($sourceDateStartInput) . ' ' . $sourceTimeStart
+                    . ' — ' . overtimeFormatDateRu($sourceDateEndInput) . ' ' . $sourceTimeEnd;
+                $newPeriodText = overtimeFormatDateRu($editDateStart) . ' ' . $sourceTimeStart
+                    . ' — ' . overtimeFormatDateRu($editDateEnd) . ' ' . $sourceTimeEnd;
                 overtimeAppendRequestHistory(
                     $requestId,
-                    $now . ' Перенесена в заявку #' . $newRequestId . ' (' . $adminName . ')',
+                    $now
+                    . ' Перенесена в заявку #' . $newRequestId
+                    . ' (' . $adminName . ')'
+                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText,
                     $overtimeConfig
                 );
                 overtimeAppendRequestHistory(
                     $newRequestId,
-                    $now . ' Создана перенесом после редактирования заявки #' . $requestId . ' (' . $adminName . ')',
+                    $now
+                    . ' Создана перенесом после редактирования заявки #' . $requestId
+                    . ' (' . $adminName . ')'
+                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText,
                     $overtimeConfig
                 );
 
