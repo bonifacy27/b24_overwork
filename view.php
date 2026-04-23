@@ -517,16 +517,16 @@ function overtimeHighlightCalculationRows(string $html): string
         }
 
         preg_match_all('/-?\d+(?:[.,]\d+)?/u', $rowText, $hoursMatches);
-        $hasPositiveHours = false;
+        $hasNonZeroHours = false;
         foreach (($hoursMatches[0] ?? []) as $rawValue) {
             $hours = (float)str_replace(',', '.', $rawValue);
-            if ($hours > 0) {
-                $hasPositiveHours = true;
+            if ($hours != 0.0) {
+                $hasNonZeroHours = true;
                 break;
             }
         }
 
-        if (!$hasPositiveHours) {
+        if (!$hasNonZeroHours) {
             return $rowHtml;
         }
 
@@ -1009,7 +1009,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
     .overtime-view-linked-calc {font-size:13px;}
     .overtime-view-highlight-row {background:#fff4cc !important; font-weight:700; font-size:14px;}
-    .overtime-view-marker {display:inline-block; margin-left:6px; padding:1px 6px; border-radius:10px; background:#d97706; color:#fff; font-size:11px; font-weight:700; letter-spacing:.2px;}
+    .overtime-view-marker {display:inline-block; margin-left:6px; padding:1px 6px; border-radius:10px; background:#d1242f; color:#fff; font-size:11px; font-weight:700; letter-spacing:.2px;}
     .overtime-view-justification {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc; white-space:pre-wrap; line-height:1.45;}
     .overtime-view-justification-details {border:1px solid #e5e9f0; border-radius:6px; background:#fbfcfe; margin-bottom:8px;}
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
