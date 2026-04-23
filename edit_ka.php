@@ -197,6 +197,17 @@ function overtimeCalculateEndDateByStart(string $sourceStartDate, string $source
     return $newEnd->format('Y-m-d');
 }
 
+function overtimeGetDateDiffDays(string $sourceStartDate, string $sourceEndDate): int
+{
+    $sourceStart = DateTime::createFromFormat('Y-m-d', $sourceStartDate);
+    $sourceEnd = DateTime::createFromFormat('Y-m-d', $sourceEndDate);
+    if (!$sourceStart || !$sourceEnd) {
+        return 0;
+    }
+
+    return (int)$sourceStart->diff($sourceEnd)->format('%r%a');
+}
+
 function overtimeGetElementName(int $elementId): string
 {
     if ($elementId <= 0) {
@@ -251,6 +262,7 @@ $sourceDateStartInput = (string)$periodParts['date_start_input'];
 $sourceDateEndInput = (string)$periodParts['date_end_input'];
 $sourceTimeStart = (string)$periodParts['time_start'];
 $sourceTimeEnd = (string)$periodParts['time_end'];
+$sourceDateDiffDays = overtimeGetDateDiffDays($sourceDateStartInput, $sourceDateEndInput);
 
 $editDateStart = $sourceDateStartInput;
 $editDateEnd = overtimeCalculateEndDateByStart($sourceDateStartInput, $sourceDateEndInput, $editDateStart);
@@ -418,15 +430,15 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
                 <tr>
                     <td style="width:260px;">Новая дата начала работ</td>
                     <td>
-                        <input type="date" name="date_start" value="<?= htmlspecialcharsbx($editDateStart) ?>">
+                        <input type="date" id="date_start" name="date_start" value="<?= htmlspecialcharsbx($editDateStart) ?>" data-date-diff-days="<?= (int)$sourceDateDiffDays ?>">
                         <span style="margin-left:8px;color:#666;">время: <?= htmlspecialcharsbx($sourceTimeStart) ?></span>
                     </td>
                 </tr>
                 <tr>
                     <td>Новая дата окончания работ (авторасчет)</td>
                     <td>
-                        <input type="date" value="<?= htmlspecialcharsbx($editDateEnd) ?>" disabled>
-                        <input type="hidden" name="date_end" value="<?= htmlspecialcharsbx($editDateEnd) ?>">
+                        <input type="date" id="date_end_display" value="<?= htmlspecialcharsbx($editDateEnd) ?>" disabled>
+                        <input type="hidden" id="date_end" name="date_end" value="<?= htmlspecialcharsbx($editDateEnd) ?>">
                         <span style="margin-left:8px;color:#666;">время: <?= htmlspecialcharsbx($sourceTimeEnd) ?></span>
                     </td>
                 </tr>
@@ -484,5 +496,48 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
         </div>
     <?php endif; ?>
 </div>
+<script>
+    (function() {
+        var dateStart = document.getElementById('date_start');
+        var dateEndDisplay = document.getElementById('date_end_display');
+        var dateEndHidden = document.getElementById('date_end');
+        if (!dateStart || !dateEndDisplay || !dateEndHidden) {
+            return;
+        }
+
+        function pad(value) {
+            return value < 10 ? '0' + value : String(value);
+        }
+
+        function formatIsoDate(date) {
+            return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+        }
+
+        function recalculateEndDate() {
+            var startValue = dateStart.value;
+            if (!startValue) {
+                dateEndDisplay.value = '';
+                dateEndHidden.value = '';
+                return;
+            }
+
+            var diffDays = parseInt(dateStart.getAttribute('data-date-diff-days') || '0', 10);
+            var startDate = new Date(startValue + 'T00:00:00');
+            if (isNaN(startDate.getTime())) {
+                dateEndDisplay.value = '';
+                dateEndHidden.value = '';
+                return;
+            }
+
+            startDate.setDate(startDate.getDate() + diffDays);
+            var endValue = formatIsoDate(startDate);
+            dateEndDisplay.value = endValue;
+            dateEndHidden.value = endValue;
+        }
+
+        dateStart.addEventListener('change', recalculateEndDate);
+        recalculateEndDate();
+    })();
+</script>
 <?php
 require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
