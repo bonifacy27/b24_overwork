@@ -1026,7 +1026,7 @@ function overtimeCreateRequestElement(array $fields, array $propertyValues): int
     return $id;
 }
 
-function overtimeStartRequestWorkflow(int $requestId, array $config): ?string
+function overtimeStartRequestWorkflow(int $requestId, array $config, array $workflowParameters = []): ?string
 {
     $workflowTemplateId = (int)($config['REQUEST_WORKFLOW_TEMPLATE_ID'] ?? 0);
     if ($requestId <= 0 || $workflowTemplateId <= 0) {
@@ -1042,7 +1042,7 @@ function overtimeStartRequestWorkflow(int $requestId, array $config): ?string
     $workflowId = CBPDocument::StartWorkflow(
         $workflowTemplateId,
         $documentId,
-        [],
+        $workflowParameters,
         $workflowErrors
     );
 
@@ -1051,6 +1051,108 @@ function overtimeStartRequestWorkflow(int $requestId, array $config): ?string
     }
 
     return null;
+}
+
+function overtimeTerminateRequestWorkflows(int $requestId, string $reason = ''): ?string
+{
+    if ($requestId <= 0) {
+        return 'Не указан ID заявки для прерывания бизнес-процесса.';
+    }
+
+    if (!Loader::includeModule('bizproc')) {
+        return 'Не удалось подключить модуль bizproc.';
+    }
+
+    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
+    $states = CBPStateService::GetDocumentStates($documentId);
+    if (empty($states) || !is_array($states)) {
+        return null;
+    }
+
+    $errors = [];
+    foreach ($states as $state) {
+        $workflowId = (string)($state['ID'] ?? '');
+        if ($workflowId === '') {
+            continue;
+        }
+
+        $terminateErrors = [];
+        $result = CBPDocument::TerminateWorkflow($workflowId, $documentId, $terminateErrors, $reason);
+        if (!$result && !empty($terminateErrors)) {
+            $errors[] = overtimeFlattenBizprocErrors($terminateErrors);
+        }
+    }
+
+    if (!empty($errors)) {
+        $errors = array_values(array_filter(array_unique(array_map('trim', $errors))));
+        return empty($errors) ? null : implode(' ', $errors);
+    }
+
+    return null;
+}
+
+function overtimeGetRequestById(int $requestId, array $config): ?array
+{
+    if ($requestId <= 0) {
+        return null;
+    }
+
+    $select = [
+        'ID',
+        'NAME',
+        'CREATED_BY',
+        'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
+        'PROPERTY_' . $config['REQ_PROP_START'],
+        'PROPERTY_' . $config['REQ_PROP_END'],
+        'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
+        'PROPERTY_' . $config['REQ_PROP_PAYMENT_TYPE'],
+        'PROPERTY_' . $config['REQ_PROP_JUSTIFICATION'],
+        'PROPERTY_' . $config['REQ_PROP_JUST_FILE'],
+        'PROPERTY_' . $config['REQ_PROP_STATUS'],
+        'PROPERTY_' . $config['REQ_PROP_HISTORY'],
+    ];
+
+    $res = CIBlockElement::GetList(
+        [],
+        ['IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'], 'ID' => $requestId],
+        false,
+        false,
+        $select
+    );
+
+    $item = $res->Fetch();
+    return $item ?: null;
+}
+
+function overtimeAppendRequestHistory(int $requestId, string $message, array $config): void
+{
+    $propCode = trim((string)($config['REQ_PROP_HISTORY'] ?? ''));
+    if ($requestId <= 0 || $propCode === '' || trim($message) === '') {
+        return;
+    }
+
+    $existing = [];
+    $propRes = CIBlockElement::GetProperty(
+        (int)$config['IBLOCK_REQUESTS'],
+        $requestId,
+        ['sort' => 'asc', 'id' => 'asc'],
+        ['CODE' => $propCode]
+    );
+
+    while ($prop = $propRes->Fetch()) {
+        $value = trim((string)($prop['VALUE'] ?? ''));
+        if ($value !== '') {
+            $existing[] = $value;
+        }
+    }
+
+    $existing[] = $message;
+
+    CIBlockElement::SetPropertyValuesEx(
+        $requestId,
+        (int)$config['IBLOCK_REQUESTS'],
+        [$propCode => $existing]
+    );
 }
 
 function overtimeBuildGroupRequestName(array $employeeIds): string
@@ -1169,7 +1271,8 @@ function overtimeCreateEmployeeRequestPack(
     bool $lateAck,
     int $createdBy,
     array $config,
-    int $groupId = 0
+    int $groupId = 0,
+    array $workflowParameters = []
 ): array {
     $segments = overtimeRestoreSegments($segmentsRaw);
     $errors = [];
@@ -1298,7 +1401,7 @@ function overtimeCreateEmployeeRequestPack(
         }
 
         $createdId = overtimeCreateRequestElement($fields, $propertyValues);
-        $workflowError = overtimeStartRequestWorkflow($createdId, $config);
+        $workflowError = overtimeStartRequestWorkflow($createdId, $config, $workflowParameters);
         if ($workflowError !== null) {
             $errors[] = 'Ошибка для заявки "' . $fields['NAME'] . '": ' . $workflowError;
             continue;
