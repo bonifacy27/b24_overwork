@@ -54,6 +54,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $select = [
         'ID',
         'NAME',
+        'CREATED_BY',
         'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
         'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
         'PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'],
@@ -88,6 +89,9 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
 
     $employee = overtimeGetUserDataById($employeeId);
+    $initiatorId = (int)($item['CREATED_BY'] ?? 0);
+    $initiator = overtimeGetUserDataById($initiatorId);
+    $workPeriod = overtimeBuildWorkPeriodTextByRequestItem($item, $config);
 
     $linkedValue = $item['PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'] . '_VALUE'] ?? [];
     if (!is_array($linkedValue)) {
@@ -110,8 +114,10 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     return [
         'id' => $requestId,
         'name' => (string)$item['NAME'],
+        'initiator_name' => $initiator['name'] ?: 'Не указан',
         'employee_name' => $employee['name'] ?: 'Не указан',
         'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], $workTypeId),
+        'work_period_text' => $workPeriod,
         'payment_type_name' => $paymentTypeName,
         'justification' => $justification,
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
@@ -305,6 +311,28 @@ function overtimeExtractScalarValue($value)
     }
 
     return null;
+}
+
+function overtimeBuildWorkPeriodTextByRequestItem(array $item, array $config): string
+{
+    $startDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_DATE']);
+    $startTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_TIME']);
+    $endDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_DATE']);
+    $endTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_TIME']);
+
+    $start = overtimeBuildDateTimeFromDateAndTime($startDate, $startTime);
+    $end = overtimeBuildDateTimeFromDateAndTime($endDate, $endTime);
+
+    if ($start === null || $end === null) {
+        $start = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_START']));
+        $end = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_END']));
+    }
+
+    if ($start === null || $end === null) {
+        return '';
+    }
+
+    return sprintf('(%s - %s)', $start->format('d.m.Y H:i'), $end->format('d.m.Y H:i'));
 }
 
 function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): string
@@ -1023,6 +1051,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-meta-item {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc;}
     .overtime-view-meta-label {font-size:12px; color:#6b7280; margin-bottom:4px;}
     .overtime-view-meta-value {font-size:15px; font-weight:600;}
+    .overtime-view-meta-note {font-size:12px; color:#6b7280; margin-top:4px;}
     .overtime-view-title {font-size:18px; margin-bottom:12px;}
     .overtime-view-subtitle {font-size:16px; margin:16px 0 10px;}
     .overtime-view-calc {border:1px solid #e4e8ee; border-radius:6px; padding:12px; background:#fff; overflow:auto;}
@@ -1063,12 +1092,15 @@ $APPLICATION->SetTitle('Просмотр заявки');
 
             <div class="overtime-view-meta">
                 <div class="overtime-view-meta-item">
-                    <div class="overtime-view-meta-label">Название заявки</div>
-                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['name']) ?></div>
+                    <div class="overtime-view-meta-label">Инициатор</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['initiator_name']) ?></div>
                 </div>
                 <div class="overtime-view-meta-item">
                     <div class="overtime-view-meta-label">Тип заявки</div>
                     <div class="overtime-view-meta-value"><?= overtimeH($viewData['work_type_name'] ?: 'Не указан') ?></div>
+                    <?php if ($viewData['work_period_text'] !== ''): ?>
+                        <div class="overtime-view-meta-note"><?= overtimeH($viewData['work_period_text']) ?></div>
+                    <?php endif; ?>
                 </div>
                 <div class="overtime-view-meta-item">
                     <div class="overtime-view-meta-label">Сотрудник</div>
