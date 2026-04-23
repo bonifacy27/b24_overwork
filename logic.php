@@ -1067,29 +1067,31 @@ function overtimeStartRequestWorkflow(int $requestId, array $config, array $work
     return null;
 }
 
-function overtimeFlattenBizprocErrors(array $errors): string
-{
-    $messages = [];
+if (!function_exists('overtimeFlattenBizprocErrors')) {
+    function overtimeFlattenBizprocErrors(array $errors): string
+    {
+        $messages = [];
 
-    foreach ($errors as $error) {
-        if (is_string($error)) {
-            $message = trim($error);
-            if ($message !== '') {
-                $messages[] = $message;
+        foreach ($errors as $error) {
+            if (is_string($error)) {
+                $message = trim($error);
+                if ($message !== '') {
+                    $messages[] = $message;
+                }
+                continue;
             }
-            continue;
+
+            if (is_array($error)) {
+                $message = trim((string)($error['message'] ?? $error['MESSAGE'] ?? ''));
+                if ($message !== '') {
+                    $messages[] = $message;
+                }
+            }
         }
 
-        if (is_array($error)) {
-            $message = trim((string)($error['message'] ?? $error['MESSAGE'] ?? ''));
-            if ($message !== '') {
-                $messages[] = $message;
-            }
-        }
+        $messages = array_values(array_unique($messages));
+        return implode(' ', $messages);
     }
-
-    $messages = array_values(array_unique($messages));
-    return implode(' ', $messages);
 }
 
 function overtimeTerminateRequestWorkflows(int $requestId, string $reason = ''): ?string
