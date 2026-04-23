@@ -54,6 +54,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $select = [
         'ID',
         'NAME',
+        'CREATED_BY',
         'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'],
         'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
         'PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'],
@@ -88,6 +89,9 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
 
     $employee = overtimeGetUserDataById($employeeId);
+    $initiatorId = (int)($item['CREATED_BY'] ?? 0);
+    $initiator = overtimeGetUserDataById($initiatorId);
+    $workPeriod = overtimeBuildWorkPeriodTextByRequestItem($item, $config);
 
     $linkedValue = $item['PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'] . '_VALUE'] ?? [];
     if (!is_array($linkedValue)) {
@@ -110,8 +114,10 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     return [
         'id' => $requestId,
         'name' => (string)$item['NAME'],
+        'initiator_name' => $initiator['name'] ?: 'Не указан',
         'employee_name' => $employee['name'] ?: 'Не указан',
         'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], $workTypeId),
+        'work_period_text' => $workPeriod,
         'payment_type_name' => $paymentTypeName,
         'justification' => $justification,
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
@@ -307,6 +313,28 @@ function overtimeExtractScalarValue($value)
     return null;
 }
 
+function overtimeBuildWorkPeriodTextByRequestItem(array $item, array $config): string
+{
+    $startDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_DATE']);
+    $startTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_TIME']);
+    $endDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_DATE']);
+    $endTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_TIME']);
+
+    $start = overtimeBuildDateTimeFromDateAndTime($startDate, $startTime);
+    $end = overtimeBuildDateTimeFromDateAndTime($endDate, $endTime);
+
+    if ($start === null || $end === null) {
+        $start = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_START']));
+        $end = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_END']));
+    }
+
+    if ($start === null || $end === null) {
+        return '';
+    }
+
+    return sprintf('(%s - %s)', $start->format('d.m.Y H:i'), $end->format('d.m.Y H:i'));
+}
+
 function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): string
 {
     $employeeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_EMPLOYEE']);
@@ -464,8 +492,8 @@ function overtimeHighlightCalculationRows(string $html): string
     }
 
     $targets = [
-        'ИТОГО сверхурочных часов по ТК РФ',
-        'ИТОГО часы для оплаты единовременной премией',
+        'ИТОГО сверхурочных часов по ТК РФ' => 'КА',
+        'ИТОГО часы для оплаты единовременной премией' => 'C&B',
     ];
 
     return (string)preg_replace_callback('/<tr\b[^>]*>.*?<\/tr>/isu', static function (array $matches) use ($targets) {
@@ -473,9 +501,13 @@ function overtimeHighlightCalculationRows(string $html): string
         $rowText = trim(html_entity_decode(strip_tags($rowHtml), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
 
         $isTargetRow = false;
-        foreach ($targets as $target) {
+        $marker = '';
+        $targetText = '';
+        foreach ($targets as $target => $targetMarker) {
             if (mb_stripos($rowText, $target) !== false) {
                 $isTargetRow = true;
+                $marker = $targetMarker;
+                $targetText = $target;
                 break;
             }
         }
@@ -485,17 +517,22 @@ function overtimeHighlightCalculationRows(string $html): string
         }
 
         preg_match_all('/-?\d+(?:[.,]\d+)?/u', $rowText, $hoursMatches);
-        $hasPositiveHours = false;
+        $hasNonZeroHours = false;
         foreach (($hoursMatches[0] ?? []) as $rawValue) {
             $hours = (float)str_replace(',', '.', $rawValue);
-            if ($hours > 0) {
-                $hasPositiveHours = true;
+            if ($hours != 0.0) {
+                $hasNonZeroHours = true;
                 break;
             }
         }
 
-        if (!$hasPositiveHours) {
+        if (!$hasNonZeroHours) {
             return $rowHtml;
+        }
+
+        if ($marker !== '' && $targetText !== '') {
+            $replacement = $targetText . ' <span class="overtime-view-marker">— ' . htmlspecialcharsbx($marker) . '</span>';
+            $rowHtml = str_replace($targetText, $replacement, $rowHtml);
         }
 
         if (preg_match('/\bclass\s*=\s*"([^"]*)"/iu', $rowHtml, $classMatch)) {
@@ -777,35 +814,11 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         $code = $aliases[$code];
     }
 
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
     $validationError = overtimeValidateCommentByTaskParameters($task, $code, $comment);
     if ($validationError !== null) {
         return ['OK' => false, 'ERROR' => $validationError];
     }
 
-    $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
-    $activityName = (string)($task['ACTIVITY_NAME'] ?? '');
-    if ($workflowId === '' || $activityName === '') {
-        return ['OK' => false, 'ERROR' => 'Не заполнены WORKFLOW_ID/ACTIVITY_NAME у задания.'];
-    }
-
-    $payload = [
-        'USER_ID' => $userId,
-        'REAL_USER_ID' => $userId,
-        'COMMENT' => $comment,
-    ];
-    if ($code === 'approve') {
-        $payload['APPROVE'] = true;
-    } elseif ($code === 'nonapprove' || $code === 'refine') {
-        $payload['APPROVE'] = false;
-        if ($code === 'refine') {
-            $payload['REFINE'] = 'Y';
-        }
-    }
-
-    try {
-        CBPRuntime::SendExternalEvent($workflowId, $activityName, $payload);
-=======
     try {
         if (method_exists('CBPDocument', 'PostTaskForm')) {
             $fields1 = [
@@ -876,15 +889,10 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
                 }
             }
         }
->>>>>>> main
     } catch (\Throwable $e) {
         $errors[] = ['message' => $e->getMessage()];
     }
 
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
-    if (!overtimeTaskIsRunning($taskId)) {
-        return ['OK' => true, 'ERROR' => ''];
-=======
     try {
         if (method_exists('CBPTaskService', 'DoTask')) {
             CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $code, $code => 'Y', 'COMMENT' => $comment]);
@@ -894,22 +902,16 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         }
     } catch (\Throwable $e) {
         $errors[] = ['message' => $e->getMessage()];
->>>>>>> main
     }
 
     $flatError = overtimeFlattenBizprocErrors($errors);
     if ($flatError === '') {
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
-        $flatError = 'Задание осталось активным после попытки завершения.';
-=======
         $flatError = 'Задание осталось активным после всех попыток завершения.';
->>>>>>> main
     }
 
     return ['OK' => false, 'ERROR' => $flatError];
 }
 
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
 function overtimeValidateCommentByTaskParameters(array $task, string $action, string $comment): ?string
 {
     $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? []);
@@ -942,16 +944,12 @@ function overtimeValidateCommentByTaskParameters(array $task, string $action, st
 
     return 'Поле "' . $label . '" обязательно для выбранного действия.';
 }
-
-=======
->>>>>>> main
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
 $groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((int)$viewData['group_id'], (int)$viewData['id'], $overtimeConfig) : [];
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
 $bpActionError = '';
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
 $bpCommentLabel = 'Комментарий';
 
 if ($viewData && $currentUserId > 0) {
@@ -960,11 +958,6 @@ if ($viewData && $currentUserId > 0) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
     }
-=======
-
-if ($viewData && $currentUserId > 0) {
-    $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
->>>>>>> main
 }
 
 if (
@@ -973,7 +966,6 @@ if (
     && check_bitrix_sessid()
 ) {
     $postAction = trim((string)$request->getPost('bp_action'));
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
     if ($postAction === 'approve' || $postAction === 'nonapprove') {
         $bpComment = trim((string)$request->getPost('bp_comment'));
         $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
@@ -983,34 +975,16 @@ if (
             LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
         } else {
             $bpActionError = (string)($completionResult['ERROR'] ?? 'Не удалось выполнить задание бизнес-процесса.');
-=======
-    if ($postAction === 'approve' || $postAction === 'reject') {
-        $bpComment = trim((string)$request->getPost('bp_comment'));
-        if ($postAction === 'reject' && $bpComment === '') {
-            $bpActionError = 'Для отклонения заявки необходимо заполнить комментарий.';
-        } else {
-            $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
-            $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment);
-
-            if (!empty($completionResult['OK'])) {
-                LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
-            } else {
-                $bpActionError = (string)($completionResult['ERROR'] ?? 'Не удалось выполнить задание бизнес-процесса.');
-            }
->>>>>>> main
         }
     }
 }
 
 if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
     }
-=======
->>>>>>> main
 }
 
 require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
@@ -1023,6 +997,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-meta-item {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc;}
     .overtime-view-meta-label {font-size:12px; color:#6b7280; margin-bottom:4px;}
     .overtime-view-meta-value {font-size:15px; font-weight:600;}
+    .overtime-view-meta-note {font-size:12px; color:#6b7280; margin-top:4px;}
     .overtime-view-title {font-size:18px; margin-bottom:12px;}
     .overtime-view-subtitle {font-size:16px; margin:16px 0 10px;}
     .overtime-view-calc {border:1px solid #e4e8ee; border-radius:6px; padding:12px; background:#fff; overflow:auto;}
@@ -1034,6 +1009,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
     .overtime-view-linked-calc {font-size:13px;}
     .overtime-view-highlight-row {background:#fff4cc !important; font-weight:700; font-size:14px;}
+    .overtime-view-marker {display:inline-block; margin-left:6px; padding:1px 6px; border-radius:10px; background:#d1242f; color:#fff; font-size:11px; font-weight:700; letter-spacing:.2px;}
     .overtime-view-justification {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc; white-space:pre-wrap; line-height:1.45;}
     .overtime-view-justification-details {border:1px solid #e5e9f0; border-radius:6px; background:#fbfcfe; margin-bottom:8px;}
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
@@ -1063,20 +1039,23 @@ $APPLICATION->SetTitle('Просмотр заявки');
 
             <div class="overtime-view-meta">
                 <div class="overtime-view-meta-item">
-                    <div class="overtime-view-meta-label">Название заявки</div>
-                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['name']) ?></div>
-                </div>
-                <div class="overtime-view-meta-item">
-                    <div class="overtime-view-meta-label">Тип заявки</div>
-                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['work_type_name'] ?: 'Не указан') ?></div>
-                </div>
-                <div class="overtime-view-meta-item">
                     <div class="overtime-view-meta-label">Сотрудник</div>
                     <div class="overtime-view-meta-value"><?= overtimeH($viewData['employee_name']) ?></div>
                 </div>
                 <div class="overtime-view-meta-item">
+                    <div class="overtime-view-meta-label">Тип заявки</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['work_type_name'] ?: 'Не указан') ?></div>
+                    <?php if ($viewData['work_period_text'] !== ''): ?>
+                        <div class="overtime-view-meta-note"><?= overtimeH($viewData['work_period_text']) ?></div>
+                    <?php endif; ?>
+                </div>
+                <div class="overtime-view-meta-item">
                     <div class="overtime-view-meta-label">Тип оплаты</div>
                     <div class="overtime-view-meta-value"><?= overtimeH($viewData['payment_type_name']) ?></div>
+                </div>
+                <div class="overtime-view-meta-item">
+                    <div class="overtime-view-meta-label">Инициатор</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['initiator_name']) ?></div>
                 </div>
             </div>
 
@@ -1154,21 +1133,13 @@ $APPLICATION->SetTitle('Просмотр заявки');
                 <form method="post" style="margin:0;">
                     <?= bitrix_sessid_post() ?>
                     <div class="overtime-view-approval-comment">
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
                         <div class="overtime-view-meta-label" style="margin-bottom:6px;"><?= overtimeH($bpCommentLabel) ?></div>
-=======
-                        <div class="overtime-view-meta-label" style="margin-bottom:6px;">Комментарий (обязателен при отклонении)</div>
->>>>>>> main
                         <textarea name="bp_comment" id="bp-comment-field"></textarea>
                     </div>
                     <div class="overtime-view-approval-actions">
                         <input type="hidden" name="bp_action" value="approve">
                         <button type="submit" class="overtime-btn overtime-btn-primary" onclick="this.form.bp_action.value='approve'; return true;">Согласовать</button>
-<<<<<<< codex/add-task-approval-buttons-to-view.php-npec6v
                         <button type="submit" class="overtime-btn overtime-btn-danger" onclick="this.form.bp_action.value='nonapprove'; return true;">Отклонить</button>
-=======
-                        <button type="submit" class="overtime-btn overtime-btn-danger" onclick="this.form.bp_action.value='reject'; if(!document.getElementById('bp-comment-field').value.trim()){alert('Для отклонения заявки заполните комментарий.'); document.getElementById('bp-comment-field').focus(); return false;} return true;">Отклонить</button>
->>>>>>> main
                     </div>
                 </form>
             </div>
