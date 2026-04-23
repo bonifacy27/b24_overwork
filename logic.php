@@ -817,6 +817,10 @@ function overtimeValidateCreatorEmployeeAccess(int $employeeId, array $config): 
 
 function overtimeValidatePastDateRestriction(int $employeeId, DateTime $start, DateTime $end, array $config): array
 {
+    if (!empty($config['SKIP_PAST_DATE_RESTRICTION'])) {
+        return ['allowed' => true, 'error' => ''];
+    }
+
     $minAllowedDate = date('Y-m-d', strtotime('+1 day'));
     $startDate = $start->format('Y-m-d');
     $endDate = $end->format('Y-m-d');

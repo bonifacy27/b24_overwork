@@ -171,6 +171,32 @@ function overtimeBuildRequestPeriodParts(array $item, array $config): array
     ];
 }
 
+function overtimeCalculateEndDateByStart(string $sourceStartDate, string $sourceEndDate, string $newStartDate): string
+{
+    if ($newStartDate === '') {
+        return '';
+    }
+
+    $newStart = DateTime::createFromFormat('Y-m-d', $newStartDate);
+    if (!$newStart) {
+        return '';
+    }
+
+    $sourceStart = DateTime::createFromFormat('Y-m-d', $sourceStartDate);
+    $sourceEnd = DateTime::createFromFormat('Y-m-d', $sourceEndDate);
+    if (!$sourceStart || !$sourceEnd) {
+        return $newStart->format('Y-m-d');
+    }
+
+    $daysDiff = (int)$sourceStart->diff($sourceEnd)->format('%r%a');
+    $newEnd = clone $newStart;
+    if ($daysDiff !== 0) {
+        $newEnd->modify(($daysDiff > 0 ? '+' : '') . $daysDiff . ' day');
+    }
+
+    return $newEnd->format('Y-m-d');
+}
+
 function overtimeGetElementName(int $elementId): string
 {
     if ($elementId <= 0) {
@@ -196,6 +222,7 @@ $overtimeConfig['CURRENT_USER_ID'] = $currentUserId;
 $overtimeConfig['ALLOW_DUTY'] = overtimeCanCurrentUserUseDuty($currentUserId, $overtimeConfig);
 $overtimeConfig['CREATOR_ACCESS_MAP'] = overtimeGetCreatorAccessMap($currentUserId, $overtimeConfig);
 $overtimeConfig['SKIP_CREATOR_ACCESS_CHECK'] = true;
+$overtimeConfig['SKIP_PAST_DATE_RESTRICTION'] = true;
 
 $errors = [];
 $successMessage = '';
@@ -226,14 +253,14 @@ $sourceTimeStart = (string)$periodParts['time_start'];
 $sourceTimeEnd = (string)$periodParts['time_end'];
 
 $editDateStart = $sourceDateStartInput;
-$editDateEnd = $sourceDateEndInput;
+$editDateEnd = overtimeCalculateEndDateByStart($sourceDateStartInput, $sourceDateEndInput, $editDateStart);
 
 if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bitrix_sessid()) {
     $editDateStart = overtimeNormalizeDateForInput((string)$request->getPost('date_start'));
-    $editDateEnd = overtimeNormalizeDateForInput((string)$request->getPost('date_end'));
+    $editDateEnd = overtimeCalculateEndDateByStart($sourceDateStartInput, $sourceDateEndInput, $editDateStart);
 
     if ($editDateStart === '' || $editDateEnd === '') {
-        $errors[] = 'Необходимо выбрать даты начала и окончания работ.';
+        $errors[] = 'Необходимо выбрать дату начала работ.';
     }
 
     $preview = [];
@@ -384,8 +411,8 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
             <?= bitrix_sessid_post() ?>
             <input type="hidden" name="action" value="edit_ka">
 
-            <h3 style="margin-top:0;">Перенос дат работ (редактируется только дата)</h3>
-            <p style="margin-top:0;color:#666;">Время начала/окончания сохраняется из исходной заявки.</p>
+            <h3 style="margin-top:0;">Перенос дат работ (редактируется только дата начала)</h3>
+            <p style="margin-top:0;color:#666;">Дата окончания рассчитывается автоматически по длительности исходной заявки. Время начала/окончания сохраняется из исходной заявки.</p>
 
             <table class="adm-detail-content-table edit-table" style="width:100%; max-width:700px;">
                 <tr>
@@ -396,9 +423,10 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
                     </td>
                 </tr>
                 <tr>
-                    <td>Новая дата окончания работ</td>
+                    <td>Новая дата окончания работ (авторасчет)</td>
                     <td>
-                        <input type="date" name="date_end" value="<?= htmlspecialcharsbx($editDateEnd) ?>">
+                        <input type="date" value="<?= htmlspecialcharsbx($editDateEnd) ?>" disabled>
+                        <input type="hidden" name="date_end" value="<?= htmlspecialcharsbx($editDateEnd) ?>">
                         <span style="margin-left:8px;color:#666;">время: <?= htmlspecialcharsbx($sourceTimeEnd) ?></span>
                     </td>
                 </tr>
