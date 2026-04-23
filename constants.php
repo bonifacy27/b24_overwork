@@ -22,6 +22,7 @@ $overtimeConfig = [
     'WORK_TYPE_DUTY_ID'     => 3537685,
 
     'STATUS_CANCELLED_ID'   => 3511775,
+    'STATUS_TRANSFERRED_ID' => 3580392,
 
     // Список пользователей, которым доступен флаг "Дежурство"
     'DUTY_ACCESS_PROP_EMPLOYEE' => 'SOTRUDNIK',
@@ -46,6 +47,7 @@ $overtimeConfig = [
     'REQ_PROP_WORK_TYPE'       => 'TIP_RABOTY',
     'REQ_PROP_PAYMENT_TYPE'    => 'TIP_OPLATY',
     'REQ_PROP_STATUS'          => 'STATUS',
+    'REQ_PROP_HISTORY'         => 'ISTORIYA',
     'REQ_PROP_LINKED_REQUESTS' => 'SVYAZANNYE_ZAYAVKI', // PROPERTY_3107
     'REQ_PROP_HOURS'           => 'KOLICHESTVO_CHASOV',
     'REQ_PROP_JUSTIFICATION'   => 'OBOSNOVANIE',
