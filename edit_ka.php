@@ -339,7 +339,9 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
                 );
 
                 if (empty($errors)) {
-                    $successMessage = 'Заявка #' . $requestId . ' перенесена в новую заявку #' . $newRequestId . '.';
+                    LocalRedirect(
+                        'list.php?transfer_done=Y&old_id=' . (int)$requestId . '&new_id=' . (int)$newRequestId
+                    );
                 }
             }
         }

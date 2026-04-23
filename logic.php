@@ -1193,10 +1193,18 @@ function overtimeAppendRequestHistory(int $requestId, string $message, array $co
 
     $existing[] = $message;
 
+    $propertyMeta = CIBlockProperty::GetList(
+        [],
+        ['IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'], 'CODE' => $propCode]
+    )->Fetch();
+
+    $isMultiple = (($propertyMeta['MULTIPLE'] ?? 'N') === 'Y');
+    $valueToSave = $isMultiple ? $existing : implode(PHP_EOL, $existing);
+
     CIBlockElement::SetPropertyValuesEx(
         $requestId,
         (int)$config['IBLOCK_REQUESTS'],
-        [$propCode => $existing]
+        [$propCode => $valueToSave]
     );
 }
 
