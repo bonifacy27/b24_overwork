@@ -58,6 +58,97 @@ function overtimeGetEnumValueById(int $enumId): string
     return $enum ? trim((string)$enum['VALUE']) : '';
 }
 
+function overtimeResolvePropertyDisplayValue(array $item, string $propertyCode): string
+{
+    $value = $item['PROPERTY_' . $propertyCode . '_VALUE'] ?? null;
+
+    if (is_array($value)) {
+        $parts = [];
+        foreach ($value as $v) {
+            $part = trim((string)$v);
+            if ($part !== '') {
+                $parts[] = $part;
+            }
+        }
+        if (!empty($parts)) {
+            return implode(', ', $parts);
+        }
+    }
+
+    if (is_string($value)) {
+        $value = trim($value);
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    if (is_numeric($value) && (int)$value > 0) {
+        $enumValue = overtimeGetEnumValueById((int)$value);
+        if ($enumValue !== '') {
+            return $enumValue;
+        }
+
+        $elementName = overtimeGetElementName((int)$value);
+        if ($elementName !== '') {
+            return $elementName;
+        }
+    }
+
+    return '';
+}
+
+function overtimeResolvePaymentTypeNameFromRequest(array $item, array $config): string
+{
+    $propertyCodes = [
+        (string)($config['REQ_PROP_PAYMENT_TYPE'] ?? ''),
+        (string)($config['REQ_PROP_PAY_TYPE'] ?? ''),
+        (string)($config['REQ_PROP_PAYMENT_KIND'] ?? ''),
+    ];
+
+    foreach ($propertyCodes as $propertyCode) {
+        $propertyCode = trim($propertyCode);
+        if ($propertyCode === '') {
+            continue;
+        }
+
+        $resolved = overtimeResolvePropertyDisplayValue($item, $propertyCode);
+        if ($resolved !== '') {
+            return $resolved;
+        }
+    }
+
+    return 'Не указан';
+}
+
+function overtimeBuildRequestPeriodParts(array $item, array $config): array
+{
+    $dateStart = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'] . '_VALUE'] ?? ''));
+    $timeStart = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'] . '_VALUE'] ?? ''));
+    $dateEnd = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'] . '_VALUE'] ?? ''));
+    $timeEnd = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'] . '_VALUE'] ?? ''));
+
+    if ($dateStart !== '' && $dateEnd !== '') {
+        return [
+            'date_start_input' => overtimeNormalizeDateForInput($dateStart),
+            'date_end_input' => overtimeNormalizeDateForInput($dateEnd),
+            'time_start' => $timeStart,
+            'time_end' => $timeEnd,
+        ];
+    }
+
+    $startRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? ''));
+    $endRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? ''));
+    $startTs = $startRaw !== '' ? strtotime($startRaw) : 0;
+    $endTs = $endRaw !== '' ? strtotime($endRaw) : 0;
+
+    return [
+        'date_start_input' => $startTs > 0 ? date('Y-m-d', $startTs) : '',
+        'date_end_input' => $endTs > 0 ? date('Y-m-d', $endTs) : '',
+        'time_start' => $startTs > 0 ? date('H:i', $startTs) : '',
+        'time_end' => $endTs > 0 ? date('H:i', $endTs) : '',
+    ];
+}
+
 function overtimeGetElementName(int $elementId): string
 {
     if ($elementId <= 0) {
@@ -98,17 +189,13 @@ $initiatorId = (int)($sourceRequest['CREATED_BY'] ?? 0);
 $initiatorName = overtimeGetUserNameById($initiatorId);
 $employeeName = overtimeGetUserNameById($employeeId);
 $workTypeName = overtimeGetElementName($workTypeId);
-$paymentTypeName = overtimeGetEnumValueById($paymentTypeId);
+$paymentTypeName = overtimeResolvePaymentTypeNameFromRequest((array)$sourceRequest, $overtimeConfig);
 
-$currentStart = (string)($sourceRequest['PROPERTY_' . $overtimeConfig['REQ_PROP_START'] . '_VALUE'] ?? '');
-$currentEnd = (string)($sourceRequest['PROPERTY_' . $overtimeConfig['REQ_PROP_END'] . '_VALUE'] ?? '');
-$currentStartTs = $currentStart !== '' ? strtotime($currentStart) : 0;
-$currentEndTs = $currentEnd !== '' ? strtotime($currentEnd) : 0;
-
-$sourceDateStartInput = $currentStartTs > 0 ? date('Y-m-d', $currentStartTs) : '';
-$sourceTimeStart = $currentStartTs > 0 ? date('H:i', $currentStartTs) : '';
-$sourceDateEndInput = $currentEndTs > 0 ? date('Y-m-d', $currentEndTs) : '';
-$sourceTimeEnd = $currentEndTs > 0 ? date('H:i', $currentEndTs) : '';
+$periodParts = overtimeBuildRequestPeriodParts((array)$sourceRequest, $overtimeConfig);
+$sourceDateStartInput = (string)$periodParts['date_start_input'];
+$sourceDateEndInput = (string)$periodParts['date_end_input'];
+$sourceTimeStart = (string)$periodParts['time_start'];
+$sourceTimeEnd = (string)$periodParts['time_end'];
 
 $editDateStart = $sourceDateStartInput;
 $editDateEnd = $sourceDateEndInput;
