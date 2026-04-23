@@ -492,8 +492,8 @@ function overtimeHighlightCalculationRows(string $html): string
     }
 
     $targets = [
-        'ИТОГО сверхурочных часов по ТК РФ',
-        'ИТОГО часы для оплаты единовременной премией',
+        'ИТОГО сверхурочных часов по ТК РФ' => 'КА',
+        'ИТОГО часы для оплаты единовременной премией' => 'C&B',
     ];
 
     return (string)preg_replace_callback('/<tr\b[^>]*>.*?<\/tr>/isu', static function (array $matches) use ($targets) {
@@ -501,9 +501,13 @@ function overtimeHighlightCalculationRows(string $html): string
         $rowText = trim(html_entity_decode(strip_tags($rowHtml), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
 
         $isTargetRow = false;
-        foreach ($targets as $target) {
+        $marker = '';
+        $targetText = '';
+        foreach ($targets as $target => $targetMarker) {
             if (mb_stripos($rowText, $target) !== false) {
                 $isTargetRow = true;
+                $marker = $targetMarker;
+                $targetText = $target;
                 break;
             }
         }
@@ -524,6 +528,11 @@ function overtimeHighlightCalculationRows(string $html): string
 
         if (!$hasPositiveHours) {
             return $rowHtml;
+        }
+
+        if ($marker !== '' && $targetText !== '') {
+            $replacement = $targetText . ' <span class="overtime-view-marker">— ' . htmlspecialcharsbx($marker) . '</span>';
+            $rowHtml = str_replace($targetText, $replacement, $rowHtml);
         }
 
         if (preg_match('/\bclass\s*=\s*"([^"]*)"/iu', $rowHtml, $classMatch)) {
@@ -1000,6 +1009,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
     .overtime-view-linked-calc {font-size:13px;}
     .overtime-view-highlight-row {background:#fff4cc !important; font-weight:700; font-size:14px;}
+    .overtime-view-marker {display:inline-block; margin-left:6px; padding:1px 6px; border-radius:10px; background:#d97706; color:#fff; font-size:11px; font-weight:700; letter-spacing:.2px;}
     .overtime-view-justification {padding:12px; border:1px solid #e4e8ee; border-radius:6px; background:#f8fafc; white-space:pre-wrap; line-height:1.45;}
     .overtime-view-justification-details {border:1px solid #e5e9f0; border-radius:6px; background:#fbfcfe; margin-bottom:8px;}
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
@@ -1029,8 +1039,8 @@ $APPLICATION->SetTitle('Просмотр заявки');
 
             <div class="overtime-view-meta">
                 <div class="overtime-view-meta-item">
-                    <div class="overtime-view-meta-label">Инициатор</div>
-                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['initiator_name']) ?></div>
+                    <div class="overtime-view-meta-label">Сотрудник</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['employee_name']) ?></div>
                 </div>
                 <div class="overtime-view-meta-item">
                     <div class="overtime-view-meta-label">Тип заявки</div>
@@ -1040,12 +1050,12 @@ $APPLICATION->SetTitle('Просмотр заявки');
                     <?php endif; ?>
                 </div>
                 <div class="overtime-view-meta-item">
-                    <div class="overtime-view-meta-label">Сотрудник</div>
-                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['employee_name']) ?></div>
-                </div>
-                <div class="overtime-view-meta-item">
                     <div class="overtime-view-meta-label">Тип оплаты</div>
                     <div class="overtime-view-meta-value"><?= overtimeH($viewData['payment_type_name']) ?></div>
+                </div>
+                <div class="overtime-view-meta-item">
+                    <div class="overtime-view-meta-label">Инициатор</div>
+                    <div class="overtime-view-meta-value"><?= overtimeH($viewData['initiator_name']) ?></div>
                 </div>
             </div>
 
