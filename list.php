@@ -17,6 +17,7 @@ use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx as XlsxWriter;
 
 $isExcelExport = isset($_GET['export']) && $_GET['export'] === 'excel';
+$isDiagEnabled = isset($_GET['diag']) && $_GET['diag'] === 'Y';
 
 if ($isExcelExport) {
     require($_SERVER["DOCUMENT_ROOT"] . "/bitrix/modules/main/include/prolog_before.php");
@@ -68,6 +69,59 @@ function h($s)
     return htmlspecialcharsbx((string)$s);
 }
 
+function profilerStartCustom($section)
+{
+    $section = trim((string)$section);
+    if ($section === '') {
+        return;
+    }
+
+    if (!isset($GLOBALS['overtimeProfiler'])) {
+        $GLOBALS['overtimeProfiler'] = ['timings' => [], 'counters' => []];
+    }
+
+    $GLOBALS['overtimeProfiler']['timings'][$section]['started_at'] = microtime(true);
+}
+
+function profilerStopCustom($section)
+{
+    $section = trim((string)$section);
+    if ($section === '') {
+        return;
+    }
+
+    if (!isset($GLOBALS['overtimeProfiler'])) {
+        $GLOBALS['overtimeProfiler'] = ['timings' => [], 'counters' => []];
+    }
+
+    $startedAt = (float)($GLOBALS['overtimeProfiler']['timings'][$section]['started_at'] ?? 0.0);
+    if ($startedAt <= 0) {
+        return;
+    }
+
+    $duration = microtime(true) - $startedAt;
+    $GLOBALS['overtimeProfiler']['timings'][$section]['duration'] =
+        (float)($GLOBALS['overtimeProfiler']['timings'][$section]['duration'] ?? 0.0) + $duration;
+    $GLOBALS['overtimeProfiler']['timings'][$section]['calls'] =
+        (int)($GLOBALS['overtimeProfiler']['timings'][$section]['calls'] ?? 0) + 1;
+    unset($GLOBALS['overtimeProfiler']['timings'][$section]['started_at']);
+}
+
+function profilerIncCounterCustom($key, $value = 1)
+{
+    $key = trim((string)$key);
+    if ($key === '') {
+        return;
+    }
+
+    if (!isset($GLOBALS['overtimeProfiler'])) {
+        $GLOBALS['overtimeProfiler'] = ['timings' => [], 'counters' => []];
+    }
+
+    $GLOBALS['overtimeProfiler']['counters'][$key] =
+        (int)($GLOBALS['overtimeProfiler']['counters'][$key] ?? 0) + (int)$value;
+}
+
 function userNameById($userId)
 {
     static $userNameCache = [];
@@ -78,9 +132,11 @@ function userNameById($userId)
     }
 
     if (array_key_exists($userId, $userNameCache)) {
+        profilerIncCounterCustom('user_cache_hits');
         return $userNameCache[$userId];
     }
 
+    profilerIncCounterCustom('user_db_queries');
     $rsUser = CUser::GetByID($userId);
     if ($arUser = $rsUser->Fetch()) {
         $name = trim($arUser["LAST_NAME"] . " " . $arUser["NAME"] . " " . $arUser["SECOND_NAME"]);
@@ -103,6 +159,7 @@ function propValueSafe(array $props, int $iblockId, int $elementId, int $propId,
     }
 
     $res = CIBlockElement::GetProperty($iblockId, $elementId, [], ["ID" => $propId]);
+    profilerIncCounterCustom('prop_fallback_queries');
     $vals = [];
     while ($ar = $res->Fetch()) {
         if ($ar["VALUE"] !== null && $ar["VALUE"] !== "") {
@@ -141,6 +198,7 @@ function resolveEnumOrElementValue($value)
 
     if ($intValue > 0) {
         if (!isset($enumCache[$intValue])) {
+            profilerIncCounterCustom('enum_db_queries');
             $enum = CIBlockPropertyEnum::GetByID($intValue);
             $enumCache[$intValue] = $enum ? $enum['VALUE'] : null;
         }
@@ -149,6 +207,7 @@ function resolveEnumOrElementValue($value)
         }
 
         if (!isset($elementCache[$intValue])) {
+            profilerIncCounterCustom('element_lookup_queries');
             $res = CIBlockElement::GetList([], ['ID' => $intValue], false, false, ['ID', 'NAME']);
             $row = $res->Fetch();
             $elementCache[$intValue] = $row ? $row['NAME'] : null;
@@ -298,6 +357,25 @@ function extractRequestIdFromDocumentIdCustom($documentId, $iblockId)
     return 0;
 }
 
+function buildDocumentIdsForRequestsCustom(array $requestIds, $iblockId)
+{
+    $iblockId = (int)$iblockId;
+    if ($iblockId <= 0) {
+        return [];
+    }
+
+    $documentIds = [];
+    foreach ($requestIds as $requestId) {
+        $requestId = (int)$requestId;
+        if ($requestId <= 0) {
+            continue;
+        }
+        $documentIds[] = 'iblock_' . $iblockId . '_' . $requestId;
+    }
+
+    return array_values(array_unique($documentIds));
+}
+
 function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $iblockId)
 {
     $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
@@ -314,11 +392,18 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
     }
 
     $map = [];
+    $documentIds = buildDocumentIdsForRequestsCustom(array_keys($requestIdsMap), $iblockId);
+    if (empty($documentIds)) {
+        return [];
+    }
+
+    profilerStartCustom('bizproc_current_user_tasks');
     $res = CBPTaskService::GetList(
         ['ID' => 'DESC'],
         [
             'USER_ID'     => $userId,
             'USER_STATUS' => CBPTaskUserStatus::Waiting,
+            'DOCUMENT_ID' => $documentIds,
         ],
         false,
         false,
@@ -326,6 +411,7 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
     );
 
     while ($task = $res->GetNext()) {
+        profilerIncCounterCustom('bizproc_tasks_scanned');
         $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
         if ($requestId <= 0 || !isset($requestIdsMap[$requestId]) || isset($map[$requestId])) {
             continue;
@@ -333,6 +419,7 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
 
         $map[$requestId] = (int)$task['ID'];
     }
+    profilerStopCustom('bizproc_current_user_tasks');
 
     return $map;
 }
@@ -352,10 +439,17 @@ function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
     }
 
     $map = [];
+    $documentIds = buildDocumentIdsForRequestsCustom(array_keys($requestIdsMap), $iblockId);
+    if (empty($documentIds)) {
+        return [];
+    }
+
+    profilerStartCustom('bizproc_current_executors');
     $res = CBPTaskService::GetList(
         ['ID' => 'DESC'],
         [
             'USER_STATUS' => CBPTaskUserStatus::Waiting,
+            'DOCUMENT_ID' => $documentIds,
         ],
         false,
         false,
@@ -363,6 +457,7 @@ function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
     );
 
     while ($task = $res->GetNext()) {
+        profilerIncCounterCustom('bizproc_tasks_scanned');
         $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
         if ($requestId <= 0 || !isset($requestIdsMap[$requestId])) {
             continue;
@@ -384,6 +479,7 @@ function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
             return trim((string)$name) !== '';
         }));
     }
+    profilerStopCustom('bizproc_current_executors');
 
     return $map;
 }
@@ -576,6 +672,7 @@ $dir     = (isset($_GET['dir']) && strtoupper($_GET['dir']) === 'ASC') ? 'ASC' :
 $order   = [$allowedSort[$sortKey] => $dir, 'ID' => 'DESC'];
 
 /* ------------------------- выборка ------------------------- */
+profilerStartCustom('total_backend');
 
 $filter = [
     'IBLOCK_ID'         => $IBLOCK_ID,
@@ -585,6 +682,7 @@ $filter = [
 
 $arSelect = ['ID', 'NAME', 'CREATED_BY'];
 
+profilerStartCustom('requests_list_query');
 $rsItems = CIBlockElement::GetList(
     $order,
     $filter,
@@ -592,17 +690,22 @@ $rsItems = CIBlockElement::GetList(
     ['nPageSize' => 200],
     $arSelect
 );
+profilerStopCustom('requests_list_query');
 
+profilerStartCustom('groups_map_load');
 $groupMap = loadGroupsMapCustom(
     $IBLOCK_GROUPS_ID,
     3111,
     'SVYAZANNYE_ZAYAVKI_GRUPPY'
 );
+profilerStopCustom('groups_map_load');
 
 $rows = [];
 $statusVariants = [];
 
+profilerStartCustom('requests_prepare_rows');
 while ($ob = $rsItems->GetNextElement()) {
+    profilerIncCounterCustom('rows_fetched');
     $f = $ob->GetFields();
     $p = $ob->GetProperties();
 
@@ -727,8 +830,10 @@ while ($ob = $rsItems->GetNextElement()) {
         'OPEN_URL'        => buildElementUrlCustom($GROUP_ID, $IBLOCK_ID, $id),
     ];
 }
+profilerStopCustom('requests_prepare_rows');
 
 global $USER;
+profilerStartCustom('bizproc_maps_load');
 $taskMap = loadCurrentUserBizprocTasksMapCustom(
     array_keys($rows),
     is_object($USER) ? (int)$USER->GetID() : 0,
@@ -752,11 +857,13 @@ $executorsMap = loadCurrentExecutorsMapCustom(array_keys($rows), $IBLOCK_ID);
 foreach ($rows as $id => $rowData) {
     $rows[$id]['CURRENT_EXECUTORS'] = $executorsMap[$id] ?? [];
 }
+profilerStopCustom('bizproc_maps_load');
 
 /* ------------------------- сортировка ------------------------- */
 
 $rowsSorted = array_values($rows);
 
+profilerStartCustom('rows_sorting');
 usort($rowsSorted, function ($a, $b) use ($sortKey, $dir) {
     $result = 0;
 
@@ -782,6 +889,7 @@ usort($rowsSorted, function ($a, $b) use ($sortKey, $dir) {
 
     return ($dir === 'ASC') ? $result : -$result;
 });
+profilerStopCustom('rows_sorting');
 
 if ($isExcelExport) {
     if (!class_exists(Spreadsheet::class)) {
@@ -851,6 +959,7 @@ if ($isExcelExport) {
 $displayRows = [];
 $usedIds = [];
 
+profilerStartCustom('display_rows_grouping');
 foreach ($rowsSorted as $row) {
     $id = (int)$row['ID'];
 
@@ -901,6 +1010,8 @@ foreach ($rowsSorted as $row) {
         $usedIds[$id] = true;
     }
 }
+profilerStopCustom('display_rows_grouping');
+profilerStopCustom('total_backend');
 
 ?>
 <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
@@ -1177,6 +1288,23 @@ foreach ($rowsSorted as $row) {
         flex-wrap: wrap;
         gap: 6px;
     }
+
+    .diag-box {
+        margin-bottom: 14px;
+        padding: 12px 14px;
+        border: 1px solid #ffe3a3;
+        background: #fff9e8;
+        border-radius: 8px;
+    }
+
+    .diag-table {
+        font-size: 13px;
+        margin-bottom: 8px;
+    }
+
+    .diag-table td, .diag-table th {
+        padding: 4px 8px;
+    }
 </style>
 
 <div class="container-fluid page-wrap">
@@ -1185,6 +1313,72 @@ foreach ($rowsSorted as $row) {
     <div class="d-flex flex-wrap align-items-center mb-3">
         <a href="<?= h($CREATE_URL) ?>" class="btn btn-success mr-3 mb-2">Создать заявку</a>
     </div>
+
+    <?php if ($isDiagEnabled): ?>
+        <?php
+        $diagTimings = $GLOBALS['overtimeProfiler']['timings'] ?? [];
+        $diagCounters = $GLOBALS['overtimeProfiler']['counters'] ?? [];
+
+        uasort($diagTimings, static function ($a, $b) {
+            return ((float)($b['duration'] ?? 0.0) <=> (float)($a['duration'] ?? 0.0));
+        });
+
+        $diagRecommendations = [];
+        if ((int)($diagCounters['bizproc_tasks_scanned'] ?? 0) > max(100, ((int)($diagCounters['rows_fetched'] ?? 0) * 4))) {
+            $diagRecommendations[] = 'Bizproc-задач обрабатывается слишком много: стоит ограничить фильтр по документам и/или вынести исполнителей в AJAX.';
+        }
+        if ((int)($diagCounters['prop_fallback_queries'] ?? 0) > 0) {
+            $diagRecommendations[] = 'Срабатывает fallback CIBlockElement::GetProperty: проверьте коды свойств и включите выборку нужных свойств в основном запросе.';
+        }
+        if ((int)($diagCounters['user_db_queries'] ?? 0) > max(10, (int)($diagCounters['rows_fetched'] ?? 0))) {
+            $diagRecommendations[] = 'Много запросов к CUser::GetByID: имеет смысл загрузить пользователей пачкой или сделать runtime-кеш на уровне страницы.';
+        }
+        ?>
+        <div class="diag-box">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Диагностика производительности</strong>
+                <span class="text-muted">Параметр: <code>?diag=Y</code></span>
+            </div>
+
+            <table class="table table-sm table-bordered diag-table">
+                <thead>
+                    <tr>
+                        <th>Участок</th>
+                        <th>Время, мс</th>
+                        <th>Вызовы</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($diagTimings as $section => $meta): ?>
+                        <tr>
+                            <td><?= h($section) ?></td>
+                            <td><?= number_format(((float)($meta['duration'] ?? 0.0)) * 1000, 2, '.', ' ') ?></td>
+                            <td><?= (int)($meta['calls'] ?? 0) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+
+            <div class="small text-muted mb-1">
+                Счетчики:
+                rows_fetched=<?= (int)($diagCounters['rows_fetched'] ?? 0) ?>,
+                bizproc_tasks_scanned=<?= (int)($diagCounters['bizproc_tasks_scanned'] ?? 0) ?>,
+                user_db_queries=<?= (int)($diagCounters['user_db_queries'] ?? 0) ?>,
+                user_cache_hits=<?= (int)($diagCounters['user_cache_hits'] ?? 0) ?>,
+                prop_fallback_queries=<?= (int)($diagCounters['prop_fallback_queries'] ?? 0) ?>.
+            </div>
+
+            <?php if (!empty($diagRecommendations)): ?>
+                <ul class="mb-0 pl-3">
+                    <?php foreach ($diagRecommendations as $recommendation): ?>
+                        <li><?= h($recommendation) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            <?php else: ?>
+                <div class="small text-muted">Явных аномалий не обнаружено — ориентируйтесь на самые долгие участки в таблице выше.</div>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
 
     <?php if ($groupFilter > 0): ?>
         <div class="active-group-filter-box">
@@ -1200,6 +1394,7 @@ foreach ($rowsSorted as $row) {
         <input type="hidden" name="group_filter" value="<?= $groupFilter > 0 ? (int)$groupFilter : '' ?>">
         <input type="hidden" name="sort" value="<?= h($sortKey) ?>">
         <input type="hidden" name="dir" value="<?= h($dir) ?>">
+        <input type="hidden" name="diag" value="<?= $isDiagEnabled ? 'Y' : '' ?>">
 
         <div class="filter-toolbar">
             <div class="filter-item search-item">
@@ -1268,6 +1463,7 @@ foreach ($rowsSorted as $row) {
                     'group_filter' => $groupFilter > 0 ? $groupFilter : null,
                     'sort'         => $sortKey,
                     'dir'          => $dir,
+                    'diag'         => $isDiagEnabled ? 'Y' : null,
                     'export'       => 'excel',
                 ], static function ($v) {
                     return $v !== null && $v !== '';
@@ -1283,7 +1479,7 @@ foreach ($rowsSorted as $row) {
         <?php
         $dirOpposite = ($dir === 'ASC') ? 'DESC' : 'ASC';
 
-        $makeSortLink = function ($key, $title) use ($sortKey, $dir, $dirOpposite, $q, $dateFrom, $dateTo, $statusInput, $groupFilter, $inWorkOnly) {
+        $makeSortLink = function ($key, $title) use ($sortKey, $dir, $dirOpposite, $q, $dateFrom, $dateTo, $statusInput, $groupFilter, $inWorkOnly, $isDiagEnabled) {
             $isActive = ($sortKey === $key);
 
             $params = [
@@ -1294,6 +1490,7 @@ foreach ($rowsSorted as $row) {
                 'dir'         => $isActive ? $dirOpposite : 'ASC',
                 'in_work'     => $inWorkOnly ? 'Y' : '',
                 'group_filter'=> $groupFilter > 0 ? $groupFilter : '',
+                'diag'        => $isDiagEnabled ? 'Y' : '',
             ];
 
             if (!empty($statusInput)) {
