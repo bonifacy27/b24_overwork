@@ -579,6 +579,19 @@ function overtimeExtractRequestIdFromDocumentId(string $documentId, int $iblockI
     return 0;
 }
 
+function overtimeGetDocumentIdCandidates(int $iblockId, int $requestId): array
+{
+    if ($iblockId <= 0 || $requestId <= 0) {
+        return [];
+    }
+
+    return [
+        ['lists', 'BizprocDocument', 'lists_' . $iblockId . '_' . $requestId],
+        ['iblock', 'CIBlockDocument', 'iblock_' . $iblockId . '_' . $requestId],
+        ['lists', 'Bitrix\Lists\BizprocDocumentLists', (string)$requestId],
+    ];
+}
+
 function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $iblockId): ?array
 {
     if ($requestId <= 0 || $userId <= 0 || $iblockId <= 0) {
@@ -589,6 +602,45 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
         return null;
     }
 
+    $select = ['ID', 'NAME', 'DOCUMENT_ID', 'WORKFLOW_ID', 'ACTIVITY_NAME', 'USER_ID', 'USERS', 'PARAMETERS'];
+
+    $checkTask = static function (array $task) use ($userId, $requestId, $iblockId): bool {
+        if (!overtimeBizprocTaskIsForUser($task, $userId)) {
+            return false;
+        }
+
+        $taskRequestId = overtimeExtractRequestIdFromDocumentId((string)($task['DOCUMENT_ID'] ?? ''), $iblockId);
+        if ($taskRequestId !== $requestId) {
+            return false;
+        }
+
+        [$approveCaption, $rejectCaption] = overtimeGetTaskCaptions($task, 'Согласовать', 'Отклонить');
+        $approveCaption = mb_strtolower(trim($approveCaption), 'UTF-8');
+        $rejectCaption = mb_strtolower(trim($rejectCaption), 'UTF-8');
+
+        return $approveCaption === 'согласовать' && $rejectCaption === 'отклонить';
+    };
+
+    foreach (overtimeGetDocumentIdCandidates($iblockId, $requestId) as $docIdCandidate) {
+        $res = CBPTaskService::GetList(
+            ['ID' => 'DESC'],
+            [
+                'DOCUMENT_ID' => $docIdCandidate,
+                'USER_STATUS' => CBPTaskUserStatus::Waiting,
+            ],
+            false,
+            false,
+            $select
+        );
+
+        while ($task = $res->GetNext()) {
+            if ($checkTask($task)) {
+                return $task;
+            }
+        }
+    }
+
+    // Fallback для нестандартных DOCUMENT_ID: сохраняем совместимость.
     $res = CBPTaskService::GetList(
         ['ID' => 'DESC'],
         [
@@ -596,27 +648,13 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
         ],
         false,
         false,
-        ['ID', 'NAME', 'DOCUMENT_ID', 'WORKFLOW_ID', 'ACTIVITY_NAME', 'USER_ID', 'USERS', 'PARAMETERS']
+        $select
     );
 
     while ($task = $res->GetNext()) {
-        if (!overtimeBizprocTaskIsForUser($task, $userId)) {
-            continue;
+        if ($checkTask($task)) {
+            return $task;
         }
-
-        $taskRequestId = overtimeExtractRequestIdFromDocumentId((string)($task['DOCUMENT_ID'] ?? ''), $iblockId);
-        if ($taskRequestId !== $requestId) {
-            continue;
-        }
-
-        [$approveCaption, $rejectCaption] = overtimeGetTaskCaptions($task, 'Согласовать', 'Отклонить');
-        $approveCaption = mb_strtolower(trim($approveCaption), 'UTF-8');
-        $rejectCaption = mb_strtolower(trim($rejectCaption), 'UTF-8');
-        if ($approveCaption !== 'согласовать' || $rejectCaption !== 'отклонить') {
-            continue;
-        }
-
-        return $task;
     }
 
     return null;
