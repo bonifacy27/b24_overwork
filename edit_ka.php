@@ -60,6 +60,16 @@ function overtimeGetEnumValueById(int $enumId): string
 
 function overtimeResolvePropertyDisplayValue(array $item, string $propertyCode): string
 {
+    $enumValue = trim((string)($item['PROPERTY_' . $propertyCode . '_ENUM'] ?? ''));
+    if ($enumValue !== '') {
+        return $enumValue;
+    }
+
+    $valueEnum = trim((string)($item['PROPERTY_' . $propertyCode . '_VALUE_ENUM'] ?? ''));
+    if ($valueEnum !== '') {
+        return $valueEnum;
+    }
+
     $value = $item['PROPERTY_' . $propertyCode . '_VALUE'] ?? null;
 
     if (is_array($value)) {
@@ -78,6 +88,18 @@ function overtimeResolvePropertyDisplayValue(array $item, string $propertyCode):
     if (is_string($value)) {
         $value = trim($value);
         if ($value !== '') {
+            if (is_numeric($value) && (int)$value > 0) {
+                $enumValue = overtimeGetEnumValueById((int)$value);
+                if ($enumValue !== '') {
+                    return $enumValue;
+                }
+
+                $elementName = overtimeGetElementName((int)$value);
+                if ($elementName !== '') {
+                    return $elementName;
+                }
+            }
+
             return $value;
         }
     }
@@ -149,6 +171,43 @@ function overtimeBuildRequestPeriodParts(array $item, array $config): array
     ];
 }
 
+function overtimeCalculateEndDateByStart(string $sourceStartDate, string $sourceEndDate, string $newStartDate): string
+{
+    if ($newStartDate === '') {
+        return '';
+    }
+
+    $newStart = DateTime::createFromFormat('Y-m-d', $newStartDate);
+    if (!$newStart) {
+        return '';
+    }
+
+    $sourceStart = DateTime::createFromFormat('Y-m-d', $sourceStartDate);
+    $sourceEnd = DateTime::createFromFormat('Y-m-d', $sourceEndDate);
+    if (!$sourceStart || !$sourceEnd) {
+        return $newStart->format('Y-m-d');
+    }
+
+    $daysDiff = (int)$sourceStart->diff($sourceEnd)->format('%r%a');
+    $newEnd = clone $newStart;
+    if ($daysDiff !== 0) {
+        $newEnd->modify(($daysDiff > 0 ? '+' : '') . $daysDiff . ' day');
+    }
+
+    return $newEnd->format('Y-m-d');
+}
+
+function overtimeGetDateDiffDays(string $sourceStartDate, string $sourceEndDate): int
+{
+    $sourceStart = DateTime::createFromFormat('Y-m-d', $sourceStartDate);
+    $sourceEnd = DateTime::createFromFormat('Y-m-d', $sourceEndDate);
+    if (!$sourceStart || !$sourceEnd) {
+        return 0;
+    }
+
+    return (int)$sourceStart->diff($sourceEnd)->format('%r%a');
+}
+
 function overtimeGetElementName(int $elementId): string
 {
     if ($elementId <= 0) {
@@ -174,6 +233,7 @@ $overtimeConfig['CURRENT_USER_ID'] = $currentUserId;
 $overtimeConfig['ALLOW_DUTY'] = overtimeCanCurrentUserUseDuty($currentUserId, $overtimeConfig);
 $overtimeConfig['CREATOR_ACCESS_MAP'] = overtimeGetCreatorAccessMap($currentUserId, $overtimeConfig);
 $overtimeConfig['SKIP_CREATOR_ACCESS_CHECK'] = true;
+$overtimeConfig['SKIP_PAST_DATE_RESTRICTION'] = true;
 
 $errors = [];
 $successMessage = '';
@@ -195,22 +255,24 @@ $initiatorName = overtimeGetUserNameById($initiatorId);
 $employeeName = overtimeGetUserNameById($employeeId);
 $workTypeName = overtimeGetElementName($workTypeId);
 $paymentTypeName = overtimeResolvePaymentTypeNameFromRequest((array)$sourceRequest, $overtimeConfig);
+$justificationText = trim((string)($sourceRequest['PROPERTY_' . $overtimeConfig['REQ_PROP_JUSTIFICATION'] . '_VALUE'] ?? ''));
 
 $periodParts = overtimeBuildRequestPeriodParts((array)$sourceRequest, $overtimeConfig);
 $sourceDateStartInput = (string)$periodParts['date_start_input'];
 $sourceDateEndInput = (string)$periodParts['date_end_input'];
 $sourceTimeStart = (string)$periodParts['time_start'];
 $sourceTimeEnd = (string)$periodParts['time_end'];
+$sourceDateDiffDays = overtimeGetDateDiffDays($sourceDateStartInput, $sourceDateEndInput);
 
 $editDateStart = $sourceDateStartInput;
-$editDateEnd = $sourceDateEndInput;
+$editDateEnd = overtimeCalculateEndDateByStart($sourceDateStartInput, $sourceDateEndInput, $editDateStart);
 
 if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bitrix_sessid()) {
     $editDateStart = overtimeNormalizeDateForInput((string)$request->getPost('date_start'));
-    $editDateEnd = overtimeNormalizeDateForInput((string)$request->getPost('date_end'));
+    $editDateEnd = overtimeCalculateEndDateByStart($sourceDateStartInput, $sourceDateEndInput, $editDateStart);
 
     if ($editDateStart === '' || $editDateEnd === '') {
-        $errors[] = 'Необходимо выбрать даты начала и окончания работ.';
+        $errors[] = 'Необходимо выбрать дату начала работ.';
     }
 
     $preview = [];
@@ -304,19 +366,31 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
                 }
 
                 $now = date('d.m.Y H:i:s');
+                $oldPeriodText = overtimeFormatDateRu($sourceDateStartInput) . ' ' . $sourceTimeStart
+                    . ' — ' . overtimeFormatDateRu($sourceDateEndInput) . ' ' . $sourceTimeEnd;
+                $newPeriodText = overtimeFormatDateRu($editDateStart) . ' ' . $sourceTimeStart
+                    . ' — ' . overtimeFormatDateRu($editDateEnd) . ' ' . $sourceTimeEnd;
                 overtimeAppendRequestHistory(
                     $requestId,
-                    $now . ' перенесена в заявку #' . $newRequestId . ' (' . $adminName . ')',
+                    $now
+                    . ' Перенесена в заявку #' . $newRequestId
+                    . ' (' . $adminName . ')'
+                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText,
                     $overtimeConfig
                 );
                 overtimeAppendRequestHistory(
                     $newRequestId,
-                    $now . ' создана переносом после редактирования заявки #' . $requestId . ' (' . $adminName . ')',
+                    $now
+                    . ' Создана перенесом после редактирования заявки #' . $requestId
+                    . ' (' . $adminName . ')'
+                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText,
                     $overtimeConfig
                 );
 
                 if (empty($errors)) {
-                    $successMessage = 'Заявка #' . $requestId . ' перенесена в новую заявку #' . $newRequestId . '.';
+                    LocalRedirect(
+                        'list.php?transfer_done=Y&old_id=' . (int)$requestId . '&new_id=' . (int)$newRequestId
+                    );
                 }
             }
         }
@@ -350,6 +424,7 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
             <div><b>Сотрудник:</b> <?= htmlspecialcharsbx($employeeName ?: 'Не указан') ?></div>
             <div><b>Тип работы:</b> <?= htmlspecialcharsbx($workTypeName ?: 'Не указан') ?></div>
             <div><b>Тип оплаты:</b> <?= htmlspecialcharsbx($paymentTypeName ?: 'Не указан') ?></div>
+            <div><b>Обоснование:</b> <?= nl2br(htmlspecialcharsbx($justificationText !== '' ? $justificationText : 'Не указано')) ?></div>
             <div><b>Дата/время начала работ:</b> <?= htmlspecialcharsbx(overtimeFormatDateRu($sourceDateStartInput) . ' ' . $sourceTimeStart) ?></div>
             <div><b>Дата/время окончания работ:</b> <?= htmlspecialcharsbx(overtimeFormatDateRu($sourceDateEndInput) . ' ' . $sourceTimeEnd) ?></div>
         </div>
@@ -358,21 +433,22 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
             <?= bitrix_sessid_post() ?>
             <input type="hidden" name="action" value="edit_ka">
 
-            <h3 style="margin-top:0;">Перенос дат работ (редактируется только дата)</h3>
-            <p style="margin-top:0;color:#666;">Время начала/окончания сохраняется из исходной заявки.</p>
+            <h3 style="margin-top:0;">Перенос дат работ (редактируется только дата начала)</h3>
+            <p style="margin-top:0;color:#666;">Дата окончания рассчитывается автоматически по длительности исходной заявки. Время начала/окончания сохраняется из исходной заявки.</p>
 
             <table class="adm-detail-content-table edit-table" style="width:100%; max-width:700px;">
                 <tr>
                     <td style="width:260px;">Новая дата начала работ</td>
                     <td>
-                        <input type="date" name="date_start" value="<?= htmlspecialcharsbx($editDateStart) ?>">
+                        <input type="date" id="date_start" name="date_start" value="<?= htmlspecialcharsbx($editDateStart) ?>" data-date-diff-days="<?= (int)$sourceDateDiffDays ?>">
                         <span style="margin-left:8px;color:#666;">время: <?= htmlspecialcharsbx($sourceTimeStart) ?></span>
                     </td>
                 </tr>
                 <tr>
-                    <td>Новая дата окончания работ</td>
+                    <td>Новая дата окончания работ (авторасчет)</td>
                     <td>
-                        <input type="date" name="date_end" value="<?= htmlspecialcharsbx($editDateEnd) ?>">
+                        <input type="date" id="date_end_display" value="<?= htmlspecialcharsbx($editDateEnd) ?>" disabled>
+                        <input type="hidden" id="date_end" name="date_end" value="<?= htmlspecialcharsbx($editDateEnd) ?>">
                         <span style="margin-left:8px;color:#666;">время: <?= htmlspecialcharsbx($sourceTimeEnd) ?></span>
                     </td>
                 </tr>
@@ -430,5 +506,48 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
         </div>
     <?php endif; ?>
 </div>
+<script>
+    (function() {
+        var dateStart = document.getElementById('date_start');
+        var dateEndDisplay = document.getElementById('date_end_display');
+        var dateEndHidden = document.getElementById('date_end');
+        if (!dateStart || !dateEndDisplay || !dateEndHidden) {
+            return;
+        }
+
+        function pad(value) {
+            return value < 10 ? '0' + value : String(value);
+        }
+
+        function formatIsoDate(date) {
+            return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate());
+        }
+
+        function recalculateEndDate() {
+            var startValue = dateStart.value;
+            if (!startValue) {
+                dateEndDisplay.value = '';
+                dateEndHidden.value = '';
+                return;
+            }
+
+            var diffDays = parseInt(dateStart.getAttribute('data-date-diff-days') || '0', 10);
+            var startDate = new Date(startValue + 'T00:00:00');
+            if (isNaN(startDate.getTime())) {
+                dateEndDisplay.value = '';
+                dateEndHidden.value = '';
+                return;
+            }
+
+            startDate.setDate(startDate.getDate() + diffDays);
+            var endValue = formatIsoDate(startDate);
+            dateEndDisplay.value = endValue;
+            dateEndHidden.value = endValue;
+        }
+
+        dateStart.addEventListener('change', recalculateEndDate);
+        recalculateEndDate();
+    })();
+</script>
 <?php
 require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
