@@ -397,27 +397,49 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
         return [];
     }
 
-    profilerStartCustom('bizproc_current_user_tasks');
-    $res = CBPTaskService::GetList(
-        ['ID' => 'DESC'],
-        [
-            'USER_ID'     => $userId,
-            'USER_STATUS' => CBPTaskUserStatus::Waiting,
-            'DOCUMENT_ID' => $documentIds,
-        ],
-        false,
-        false,
-        ['ID', 'DOCUMENT_ID']
-    );
+    $baseFilter = [
+        'USER_ID'     => $userId,
+        'USER_STATUS' => CBPTaskUserStatus::Waiting,
+    ];
 
-    while ($task = $res->GetNext()) {
-        profilerIncCounterCustom('bizproc_tasks_scanned');
-        $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
-        if ($requestId <= 0 || !isset($requestIdsMap[$requestId]) || isset($map[$requestId])) {
-            continue;
+    $filterVariants = [
+        $baseFilter + ['@DOCUMENT_ID' => $documentIds],
+        $baseFilter + ['DOCUMENT_ID' => $documentIds],
+        $baseFilter,
+    ];
+
+    profilerStartCustom('bizproc_current_user_tasks');
+    foreach ($filterVariants as $index => $filterVariant) {
+        $res = CBPTaskService::GetList(
+            ['ID' => 'DESC'],
+            $filterVariant,
+            false,
+            false,
+            ['ID', 'DOCUMENT_ID']
+        );
+
+        $foundByVariant = 0;
+        while ($task = $res->GetNext()) {
+            profilerIncCounterCustom('bizproc_tasks_scanned');
+            $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
+            if ($requestId <= 0 || !isset($requestIdsMap[$requestId]) || isset($map[$requestId])) {
+                continue;
+            }
+
+            $map[$requestId] = (int)$task['ID'];
+            $foundByVariant++;
+            if (count($map) >= count($requestIdsMap)) {
+                break 2;
+            }
         }
 
-        $map[$requestId] = (int)$task['ID'];
+        if ($foundByVariant > 0) {
+            break;
+        }
+
+        if ($index < 2) {
+            profilerIncCounterCustom('bizproc_filter_fallbacks');
+        }
     }
     profilerStopCustom('bizproc_current_user_tasks');
 
@@ -444,34 +466,52 @@ function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
         return [];
     }
 
+    $baseFilter = [
+        'USER_STATUS' => CBPTaskUserStatus::Waiting,
+    ];
+    $filterVariants = [
+        $baseFilter + ['@DOCUMENT_ID' => $documentIds],
+        $baseFilter + ['DOCUMENT_ID' => $documentIds],
+        $baseFilter,
+    ];
+
     profilerStartCustom('bizproc_current_executors');
-    $res = CBPTaskService::GetList(
-        ['ID' => 'DESC'],
-        [
-            'USER_STATUS' => CBPTaskUserStatus::Waiting,
-            'DOCUMENT_ID' => $documentIds,
-        ],
-        false,
-        false,
-        ['ID', 'DOCUMENT_ID', 'USER_ID']
-    );
+    foreach ($filterVariants as $index => $filterVariant) {
+        $res = CBPTaskService::GetList(
+            ['ID' => 'DESC'],
+            $filterVariant,
+            false,
+            false,
+            ['ID', 'DOCUMENT_ID', 'USER_ID']
+        );
 
-    while ($task = $res->GetNext()) {
-        profilerIncCounterCustom('bizproc_tasks_scanned');
-        $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
-        if ($requestId <= 0 || !isset($requestIdsMap[$requestId])) {
-            continue;
+        $foundByVariant = 0;
+        while ($task = $res->GetNext()) {
+            profilerIncCounterCustom('bizproc_tasks_scanned');
+            $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
+            if ($requestId <= 0 || !isset($requestIdsMap[$requestId])) {
+                continue;
+            }
+
+            $userId = (int)($task['USER_ID'] ?? 0);
+            if ($userId <= 0) {
+                continue;
+            }
+
+            if (!isset($map[$requestId])) {
+                $map[$requestId] = [];
+            }
+            $map[$requestId][$userId] = userNameById($userId);
+            $foundByVariant++;
         }
 
-        $userId = (int)($task['USER_ID'] ?? 0);
-        if ($userId <= 0) {
-            continue;
+        if ($foundByVariant > 0) {
+            break;
         }
 
-        if (!isset($map[$requestId])) {
-            $map[$requestId] = [];
+        if ($index < 2) {
+            profilerIncCounterCustom('bizproc_filter_fallbacks');
         }
-        $map[$requestId][$userId] = userNameById($userId);
     }
 
     foreach ($map as $requestId => $executors) {
@@ -1363,6 +1403,7 @@ profilerStopCustom('total_backend');
                 Счетчики:
                 rows_fetched=<?= (int)($diagCounters['rows_fetched'] ?? 0) ?>,
                 bizproc_tasks_scanned=<?= (int)($diagCounters['bizproc_tasks_scanned'] ?? 0) ?>,
+                bizproc_filter_fallbacks=<?= (int)($diagCounters['bizproc_filter_fallbacks'] ?? 0) ?>,
                 user_db_queries=<?= (int)($diagCounters['user_db_queries'] ?? 0) ?>,
                 user_cache_hits=<?= (int)($diagCounters['user_cache_hits'] ?? 0) ?>,
                 prop_fallback_queries=<?= (int)($diagCounters['prop_fallback_queries'] ?? 0) ?>.
