@@ -158,6 +158,21 @@ function propValueSafe(array $props, int $iblockId, int $elementId, int $propId,
         return $props[$propId]["VALUE"];
     }
 
+    foreach ($props as $propData) {
+        if (!is_array($propData)) {
+            continue;
+        }
+
+        $currentPropId = (int)($propData['ID'] ?? 0);
+        $currentPropCode = (string)($propData['CODE'] ?? '');
+        if (
+            ($propId > 0 && $currentPropId === $propId) ||
+            ($propCode !== '' && $currentPropCode === $propCode)
+        ) {
+            return $propData['VALUE'] ?? '';
+        }
+    }
+
     $res = CIBlockElement::GetProperty($iblockId, $elementId, [], ["ID" => $propId]);
     profilerIncCounterCustom('prop_fallback_queries');
     $vals = [];
@@ -376,6 +391,21 @@ function buildDocumentIdsForRequestsCustom(array $requestIds, $iblockId)
     return array_values(array_unique($documentIds));
 }
 
+function getDocumentIdCandidatesCustom($iblockId, $elementId)
+{
+    $iblockId = (int)$iblockId;
+    $elementId = (int)$elementId;
+    if ($iblockId <= 0 || $elementId <= 0) {
+        return [];
+    }
+
+    return [
+        ['lists', 'BizprocDocument', 'lists_' . $iblockId . '_' . $elementId],
+        ['iblock', 'CIBlockDocument', 'iblock_' . $iblockId . '_' . $elementId],
+        ['lists', 'Bitrix\Lists\BizprocDocumentLists', (string)$elementId],
+    ];
+}
+
 function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $iblockId)
 {
     $requestIds = array_values(array_unique(array_filter(array_map('intval', $requestIds))));
@@ -392,53 +422,43 @@ function loadCurrentUserBizprocTasksMapCustom(array $requestIds, $userId, $ibloc
     }
 
     $map = [];
-    $documentIds = buildDocumentIdsForRequestsCustom(array_keys($requestIdsMap), $iblockId);
-    if (empty($documentIds)) {
-        return [];
-    }
-
-    $baseFilter = [
-        'USER_ID'     => $userId,
-        'USER_STATUS' => CBPTaskUserStatus::Waiting,
-    ];
-
-    $filterVariants = [
-        $baseFilter + ['@DOCUMENT_ID' => $documentIds],
-        $baseFilter + ['DOCUMENT_ID' => $documentIds],
-        $baseFilter,
-    ];
-
     profilerStartCustom('bizproc_current_user_tasks');
-    foreach ($filterVariants as $index => $filterVariant) {
-        $res = CBPTaskService::GetList(
-            ['ID' => 'DESC'],
-            $filterVariant,
-            false,
-            false,
-            ['ID', 'DOCUMENT_ID']
-        );
+    foreach (array_keys($requestIdsMap) as $requestId) {
+        $docIdCandidates = getDocumentIdCandidatesCustom($iblockId, (int)$requestId);
+        foreach ($docIdCandidates as $docIdCandidate) {
+            $res = CBPTaskService::GetList(
+                ['ID' => 'DESC'],
+                [
+                    'DOCUMENT_ID' => $docIdCandidate,
+                    'USER_ID' => $userId,
+                    'USER_STATUS' => CBPTaskUserStatus::Waiting,
+                ],
+                false,
+                false,
+                ['ID', 'DOCUMENT_ID']
+            );
 
-        $foundByVariant = 0;
-        while ($task = $res->GetNext()) {
-            profilerIncCounterCustom('bizproc_tasks_scanned');
-            $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
-            if ($requestId <= 0 || !isset($requestIdsMap[$requestId]) || isset($map[$requestId])) {
-                continue;
+            $foundForRequest = false;
+            while ($task = $res->GetNext()) {
+                profilerIncCounterCustom('bizproc_tasks_scanned');
+                $taskId = (int)($task['ID'] ?? 0);
+                if ($taskId <= 0) {
+                    continue;
+                }
+                $map[(int)$requestId] = $taskId;
+                $foundForRequest = true;
+                break;
             }
 
-            $map[$requestId] = (int)$task['ID'];
-            $foundByVariant++;
-            if (count($map) >= count($requestIdsMap)) {
-                break 2;
+            if ($foundForRequest) {
+                break;
             }
-        }
 
-        if ($foundByVariant > 0) {
-            break;
-        }
-
-        if ($index < 2) {
             profilerIncCounterCustom('bizproc_filter_fallbacks');
+        }
+
+        if (count($map) >= count($requestIdsMap)) {
+            break;
         }
     }
     profilerStopCustom('bizproc_current_user_tasks');
@@ -461,55 +481,40 @@ function loadCurrentExecutorsMapCustom(array $requestIds, $iblockId)
     }
 
     $map = [];
-    $documentIds = buildDocumentIdsForRequestsCustom(array_keys($requestIdsMap), $iblockId);
-    if (empty($documentIds)) {
-        return [];
-    }
-
-    $baseFilter = [
-        'USER_STATUS' => CBPTaskUserStatus::Waiting,
-    ];
-    $filterVariants = [
-        $baseFilter + ['@DOCUMENT_ID' => $documentIds],
-        $baseFilter + ['DOCUMENT_ID' => $documentIds],
-        $baseFilter,
-    ];
-
     profilerStartCustom('bizproc_current_executors');
-    foreach ($filterVariants as $index => $filterVariant) {
-        $res = CBPTaskService::GetList(
-            ['ID' => 'DESC'],
-            $filterVariant,
-            false,
-            false,
-            ['ID', 'DOCUMENT_ID', 'USER_ID']
-        );
+    foreach (array_keys($requestIdsMap) as $requestId) {
+        $docIdCandidates = getDocumentIdCandidatesCustom($iblockId, (int)$requestId);
+        foreach ($docIdCandidates as $docIdCandidate) {
+            $res = CBPTaskService::GetList(
+                ['ID' => 'DESC'],
+                [
+                    'DOCUMENT_ID' => $docIdCandidate,
+                    'STATUS' => CBPTaskStatus::Running,
+                ],
+                false,
+                false,
+                ['ID', 'DOCUMENT_ID', 'USER_ID']
+            );
 
-        $foundByVariant = 0;
-        while ($task = $res->GetNext()) {
-            profilerIncCounterCustom('bizproc_tasks_scanned');
-            $requestId = extractRequestIdFromDocumentIdCustom($task['DOCUMENT_ID'] ?? '', $iblockId);
-            if ($requestId <= 0 || !isset($requestIdsMap[$requestId])) {
-                continue;
+            $foundForRequest = false;
+            while ($task = $res->GetNext()) {
+                profilerIncCounterCustom('bizproc_tasks_scanned');
+                $userId = (int)($task['USER_ID'] ?? 0);
+                if ($userId <= 0) {
+                    continue;
+                }
+
+                if (!isset($map[$requestId])) {
+                    $map[$requestId] = [];
+                }
+                $map[$requestId][$userId] = userNameById($userId);
+                $foundForRequest = true;
             }
 
-            $userId = (int)($task['USER_ID'] ?? 0);
-            if ($userId <= 0) {
-                continue;
+            if ($foundForRequest) {
+                break;
             }
 
-            if (!isset($map[$requestId])) {
-                $map[$requestId] = [];
-            }
-            $map[$requestId][$userId] = userNameById($userId);
-            $foundByVariant++;
-        }
-
-        if ($foundByVariant > 0) {
-            break;
-        }
-
-        if ($index < 2) {
             profilerIncCounterCustom('bizproc_filter_fallbacks');
         }
     }
