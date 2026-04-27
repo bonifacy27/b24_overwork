@@ -56,6 +56,7 @@ $PROP_MAP = [
     3095 => ['code' => 'OBOSNOVANIE',                  'title' => 'Обоснование'],
     3107 => ['code' => 'SVYAZANNYE_ZAYAVKI',           'title' => 'Связанные заявки'],
     3112 => ['code' => 'GROUP_LINK',                   'title' => 'Связанная группа заявок'],
+    3135 => ['code' => 'PODTIP_ZAYAVKI',               'title' => 'Подтип заявки'],
 ];
 
 $GROUP_PROP_MAP = [
@@ -673,6 +674,107 @@ function normalizeTextKeyCustom($value)
     return $value;
 }
 
+function parseUserIdsFromMixedValueCustom($value)
+{
+    $result = [];
+
+    if (is_array($value)) {
+        foreach ($value as $item) {
+            foreach (parseUserIdsFromMixedValueCustom($item) as $userId) {
+                $result[$userId] = $userId;
+            }
+        }
+        return array_values($result);
+    }
+
+    if ($value === null) {
+        return [];
+    }
+
+    $value = (string)$value;
+    if ($value === '') {
+        return [];
+    }
+
+    if (preg_match_all('/(?:^|[^\d])(\d+)(?:$|[^\d])/u', $value, $matches)) {
+        foreach ($matches[1] as $match) {
+            $userId = (int)$match;
+            if ($userId > 0) {
+                $result[$userId] = $userId;
+            }
+        }
+    }
+
+    return array_values($result);
+}
+
+function loadGlobalVariableUserIdsCustom($variableName)
+{
+    static $cache = [];
+
+    $variableName = trim((string)$variableName);
+    if ($variableName === '') {
+        return [];
+    }
+
+    if (isset($cache[$variableName])) {
+        return $cache[$variableName];
+    }
+
+    if (!Loader::includeModule('bizproc') || !class_exists('CBPWorkflowTemplateLoader')) {
+        $cache[$variableName] = [];
+        return $cache[$variableName];
+    }
+
+    $globalVars = [];
+    if (method_exists('CBPWorkflowTemplateLoader', 'GetGlobalVariables')) {
+        $globalVars = (array)CBPWorkflowTemplateLoader::GetGlobalVariables();
+    }
+
+    $variable = (array)($globalVars[$variableName] ?? []);
+    $values = [];
+
+    foreach (['Default', 'default', 'VALUE', 'Value'] as $key) {
+        if (array_key_exists($key, $variable)) {
+            $values[] = $variable[$key];
+        }
+    }
+
+    $userIds = [];
+    foreach ($values as $value) {
+        foreach (parseUserIdsFromMixedValueCustom($value) as $userId) {
+            $userIds[$userId] = $userId;
+        }
+    }
+
+    $cache[$variableName] = array_values($userIds);
+    return $cache[$variableName];
+}
+
+function mapSubtypeToFilterCodeCustom($subtypeValue)
+{
+    $subtypeIds = is_array($subtypeValue) ? $subtypeValue : [$subtypeValue];
+    $subtypeIds = array_values(array_filter(array_map('intval', $subtypeIds)));
+
+    if (empty($subtypeIds)) {
+        return '';
+    }
+
+    $groups = [
+        'cb' => [3575290, 3575289, 3575285],
+        'cb_ka' => [3575284],
+        'ka' => [3575288],
+    ];
+
+    foreach ($groups as $groupCode => $ids) {
+        if (array_intersect($subtypeIds, $ids)) {
+            return $groupCode;
+        }
+    }
+
+    return '';
+}
+
 function buildGroupFilterUrlCustom($groupFilterId)
 {
     $params = $_GET;
@@ -694,11 +796,31 @@ $dateTo       = trim((string)($_GET['date_to'] ?? ''));
 $groupFilter  = (int)($_GET['group_filter'] ?? 0);
 $statusInput  = $_GET['status'] ?? [];
 $inWorkOnly   = (string)($_GET['in_work'] ?? '') === 'Y';
+$subtypeInput = trim((string)($_GET['subtype_group'] ?? ''));
 
 if (!is_array($statusInput)) {
     $statusInput = [$statusInput];
 }
 $statusInput = array_values(array_filter(array_map('intval', $statusInput)));
+$allowedSubtypeFilters = ['cb', 'cb_ka', 'ka'];
+if (!in_array($subtypeInput, $allowedSubtypeFilters, true)) {
+    $subtypeInput = '';
+}
+
+global $USER;
+$currentUserId = is_object($USER) ? (int)$USER->GetID() : 0;
+$currentUserGroups = ($currentUserId > 0) ? array_map('intval', CUser::GetUserGroup($currentUserId)) : [];
+$adminGroupId = 1;
+
+$globalRoleUserIds = loadGlobalVariableUserIdsCustom('Variable1722502594854');
+$canUseSubtypeFilter =
+    in_array($adminGroupId, $currentUserGroups, true) ||
+    in_array($currentUserId, $globalRoleUserIds, true);
+
+if (!$canUseSubtypeFilter) {
+    $subtypeInput = '';
+}
+
 $qLower = ($q !== '') ? mb_strtolower($q, 'UTF-8') : '';
 $dateFromNorm = ($dateFrom !== '') ? normalizeDateCustom($dateFrom) : '';
 $dateToNorm = ($dateTo !== '') ? normalizeDateCustom($dateTo) : '';
@@ -769,6 +891,7 @@ while ($ob = $rsItems->GetNextElement()) {
     $v3095 = propValueSafe($p, $IBLOCK_ID, $id, 3095, $PROP_MAP[3095]['code']);
     $v3107 = propValueSafe($p, $IBLOCK_ID, $id, 3107, $PROP_MAP[3107]['code']);
     $v3112 = propValueSafe($p, $IBLOCK_ID, $id, 3112, $PROP_MAP[3112]['code']);
+    $v3135 = propValueSafe($p, $IBLOCK_ID, $id, 3135, $PROP_MAP[3135]['code']);
 
     $employeeName = '';
     if (is_numeric($v3085)) {
@@ -849,6 +972,11 @@ while ($ob = $rsItems->GetNextElement()) {
         continue;
     }
 
+    $subtypeGroupCode = mapSubtypeToFilterCodeCustom($v3135);
+    if ($canUseSubtypeFilter && $subtypeInput !== '' && $subtypeGroupCode !== $subtypeInput) {
+        continue;
+    }
+
     $rows[$id] = [
         'ID'              => $id,
         'FIO'             => $employeeName,
@@ -872,16 +1000,16 @@ while ($ob = $rsItems->GetNextElement()) {
         'GROUP_ID'        => $groupId,
         'GROUP_INFO'      => $groupInfo,
         'GROUP_MEMBERS'   => $groupMembers,
+        'SUBTYPE_GROUP'   => $subtypeGroupCode,
         'OPEN_URL'        => buildElementUrlCustom($GROUP_ID, $IBLOCK_ID, $id),
     ];
 }
 profilerStopCustom('requests_prepare_rows');
 
-global $USER;
 profilerStartCustom('bizproc_maps_load');
 $taskMap = loadCurrentUserBizprocTasksMapCustom(
     array_keys($rows),
-    is_object($USER) ? (int)$USER->GetID() : 0,
+    $currentUserId,
     $IBLOCK_ID
 );
 
@@ -1441,6 +1569,9 @@ profilerStopCustom('total_backend');
         <input type="hidden" name="sort" value="<?= h($sortKey) ?>">
         <input type="hidden" name="dir" value="<?= h($dir) ?>">
         <input type="hidden" name="diag" value="<?= $isDiagEnabled ? 'Y' : '' ?>">
+        <?php if (!$canUseSubtypeFilter): ?>
+            <input type="hidden" name="subtype_group" value="">
+        <?php endif; ?>
 
         <div class="filter-toolbar">
             <div class="filter-item search-item">
@@ -1498,6 +1629,17 @@ profilerStopCustom('total_backend');
                 </label>
             </div>
 
+            <?php if ($canUseSubtypeFilter): ?>
+                <div class="filter-item">
+                    <select name="subtype_group" class="form-control form-control-sm" aria-label="Подтип заявки">
+                        <option value="">Подтип: все</option>
+                        <option value="cb" <?= $subtypeInput === 'cb' ? 'selected' : '' ?>>C&amp;B</option>
+                        <option value="cb_ka" <?= $subtypeInput === 'cb_ka' ? 'selected' : '' ?>>C&amp;B+KA</option>
+                        <option value="ka" <?= $subtypeInput === 'ka' ? 'selected' : '' ?>>KA</option>
+                    </select>
+                </div>
+            <?php endif; ?>
+
             <div class="filter-actions">
                 <button type="submit" class="btn btn-primary btn-sm">Применить</button>
                 <a href="<?= h('?' . http_build_query(array_filter([
@@ -1506,6 +1648,7 @@ profilerStopCustom('total_backend');
                     'date_to'      => $dateTo,
                     'status'       => !empty($statusInput) ? $statusInput : null,
                     'in_work'      => $inWorkOnly ? 'Y' : null,
+                    'subtype_group'=> $canUseSubtypeFilter && $subtypeInput !== '' ? $subtypeInput : null,
                     'group_filter' => $groupFilter > 0 ? $groupFilter : null,
                     'sort'         => $sortKey,
                     'dir'          => $dir,
@@ -1525,7 +1668,7 @@ profilerStopCustom('total_backend');
         <?php
         $dirOpposite = ($dir === 'ASC') ? 'DESC' : 'ASC';
 
-        $makeSortLink = function ($key, $title) use ($sortKey, $dir, $dirOpposite, $q, $dateFrom, $dateTo, $statusInput, $groupFilter, $inWorkOnly, $isDiagEnabled) {
+        $makeSortLink = function ($key, $title) use ($sortKey, $dir, $dirOpposite, $q, $dateFrom, $dateTo, $statusInput, $groupFilter, $inWorkOnly, $isDiagEnabled, $subtypeInput, $canUseSubtypeFilter) {
             $isActive = ($sortKey === $key);
 
             $params = [
@@ -1535,6 +1678,7 @@ profilerStopCustom('total_backend');
                 'sort'        => $key,
                 'dir'         => $isActive ? $dirOpposite : 'ASC',
                 'in_work'     => $inWorkOnly ? 'Y' : '',
+                'subtype_group'=> $canUseSubtypeFilter ? $subtypeInput : '',
                 'group_filter'=> $groupFilter > 0 ? $groupFilter : '',
                 'diag'        => $isDiagEnabled ? 'Y' : '',
             ];
