@@ -1124,6 +1124,56 @@ function overtimeValidateCommentByTaskParameters(array $task, string $action, st
 
     return 'Поле "' . $label . '" обязательно для выбранного действия.';
 }
+
+function overtimeRenderTextWithLinks(string $text): string
+{
+    $text = str_replace('Текст задания для формы', '', $text);
+    $text = trim($text);
+    if ($text === '') {
+        return '';
+    }
+
+    $pattern = '/https?:\/\/[^\s<>"\']+/iu';
+    if (!preg_match_all($pattern, $text, $matches, PREG_OFFSET_CAPTURE)) {
+        return nl2br(overtimeH($text));
+    }
+
+    $result = '';
+    $cursor = 0;
+    foreach ($matches[0] as $matchData) {
+        [$rawUrl, $offset] = $matchData;
+        $offset = (int)$offset;
+
+        if ($offset > $cursor) {
+            $result .= overtimeH(substr($text, $cursor, $offset - $cursor));
+        }
+
+        $url = $rawUrl;
+        $suffix = '';
+        while ($url !== '' && preg_match('/[.,;:!?)]+$/u', $url)) {
+            $suffix = substr($url, -1) . $suffix;
+            $url = substr($url, 0, -1);
+        }
+
+        if ($url !== '') {
+            $safeUrl = overtimeH($url);
+            $result .= '<a href="' . $safeUrl . '" target="_blank" rel="noopener noreferrer">' . $safeUrl . '</a>';
+        }
+        if ($suffix !== '') {
+            $result .= overtimeH($suffix);
+        }
+
+        $cursor = $offset + strlen($rawUrl);
+    }
+
+    $tail = substr($text, $cursor);
+    if ($tail !== '') {
+        $result .= overtimeH($tail);
+    }
+
+    return nl2br($result);
+}
+
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
 $groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((int)$viewData['group_id'], (int)$viewData['id'], $overtimeConfig) : [];
@@ -1139,7 +1189,7 @@ if ($viewData && $currentUserId > 0) {
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
-        $bpDescriptionForForm = trim((string)($taskParams['DescriptionForForm'] ?? ''));
+        $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
         $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
@@ -1169,7 +1219,7 @@ if ($viewData && $currentUserId > 0) {
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
-        $bpDescriptionForForm = trim((string)($taskParams['DescriptionForForm'] ?? ''));
+        $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
         $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
@@ -1210,6 +1260,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-btn.overtime-btn-danger {background:#d1242f !important; border-color:#d1242f !important; color:#fff !important;}
     .overtime-btn.overtime-btn-warning {background:#f28c28 !important; border-color:#f28c28 !important; color:#fff !important;}
     .overtime-view-approval-comment {margin-bottom:10px;}
+    .overtime-view-approval-description {padding:12px; border:1px solid #e9b99a; border-radius:6px; background:#ffd9bd; white-space:pre-wrap; line-height:1.45;}
     .overtime-view-approval-comment textarea {width:100%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
@@ -1324,7 +1375,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
                     <?= bitrix_sessid_post() ?>
                     <?php if ($bpDescriptionForForm !== ''): ?>
                         <div class="overtime-view-approval-comment">
-                            <div class="overtime-view-justification"><?= nl2br(overtimeH($bpDescriptionForForm)) ?></div>
+                            <div class="overtime-view-approval-description"><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div>
                         </div>
                     <?php endif; ?>
                     <div class="overtime-view-approval-comment">
