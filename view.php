@@ -803,6 +803,105 @@ function overtimeFindTaskActionCodeByButtonCaption(int $taskId, string $caption)
     return '';
 }
 
+function overtimeGetTaskControlsByTaskId(int $taskId): array
+{
+    if ($taskId <= 0) {
+        return [];
+    }
+
+    $controls = [];
+    try {
+        if (method_exists('CBPDocument', 'GetTaskControls')) {
+            $controls = (array)CBPDocument::GetTaskControls($taskId);
+        }
+    } catch (\Throwable $e) {
+    }
+
+    if (!empty($controls)) {
+        return $controls;
+    }
+
+    try {
+        if (method_exists('CBPTaskService', 'GetTaskControls')) {
+            $controls = (array)CBPTaskService::GetTaskControls($taskId);
+        }
+    } catch (\Throwable $e) {
+    }
+
+    return is_array($controls) ? $controls : [];
+}
+
+function overtimeNormalizeTaskButtonLabel(string $label): string
+{
+    return mb_strtolower(trim($label), 'UTF-8');
+}
+
+function overtimeDetectTaskButtonKind(string $code, string $label): string
+{
+    $haystack = overtimeNormalizeTaskButtonLabel($code . ' ' . $label);
+    if (preg_match('/\b(approve|agree|accept|ok|yes|y|соглас)/u', $haystack)) {
+        return 'approve';
+    }
+
+    if (preg_match('/\b(nonapprove|reject|decline|deny|refuse|cancel|no|n|refine|доработ|отклон)/u', $haystack)) {
+        return 'reject';
+    }
+
+    return 'default';
+}
+
+function overtimeGetTaskActionButtons(array $task): array
+{
+    $taskId = (int)($task['ID'] ?? 0);
+    if ($taskId <= 0) {
+        return [];
+    }
+
+    $activityName = overtimeNormalizeTaskButtonLabel((string)($task['ACTIVITY_NAME'] ?? ''));
+    $hideRefineForActivity = $activityName === 'approvecopyactiveschedule';
+
+    $controls = overtimeGetTaskControlsByTaskId($taskId);
+    $buttons = [];
+    foreach ($controls as $controlCode => $controlData) {
+        $code = is_string($controlCode) ? trim($controlCode) : '';
+        $label = '';
+
+        if (is_array($controlData)) {
+            $label = trim((string)($controlData['TEXT'] ?? $controlData['LABEL'] ?? $controlData['NAME'] ?? ''));
+            if ($code === '') {
+                $code = trim((string)($controlData['NAME'] ?? $controlData['ID'] ?? ''));
+            }
+        } elseif (is_string($controlData)) {
+            $label = trim($controlData);
+        }
+
+        if ($code === '' || $label === '') {
+            continue;
+        }
+
+        $kind = overtimeDetectTaskButtonKind($code, $label);
+        if ($hideRefineForActivity && strpos(overtimeNormalizeTaskButtonLabel($code . ' ' . $label), 'доработ') !== false) {
+            continue;
+        }
+
+        $buttons[] = [
+            'code' => $code,
+            'label' => $label,
+            'kind' => $kind,
+        ];
+    }
+
+    if (!empty($buttons)) {
+        return $buttons;
+    }
+
+    [$approveCaption, $rejectCaption] = overtimeGetTaskCaptions($task, 'Согласовать', 'Отклонить');
+    return [
+        ['code' => 'approve', 'label' => $approveCaption, 'kind' => 'approve'],
+        ['code' => 'nonapprove', 'label' => $rejectCaption, 'kind' => 'reject'],
+    ];
+}
+
 function overtimeTaskIsRunning(int $taskId): bool
 {
     if ($taskId <= 0 || !class_exists('CBPTaskService')) {
@@ -980,8 +1079,8 @@ function overtimeValidateCommentByTaskParameters(array $task, string $action, st
         return null;
     }
 
-    $isApprove = $action === 'approve';
-    $isNonApprove = in_array($action, ['nonapprove', 'refine'], true);
+    $isApprove = (bool)preg_match('/\b(approve|agree|accept|ok|yes|y|соглас)/u', overtimeNormalizeTaskButtonLabel($action));
+    $isNonApprove = (bool)preg_match('/\b(nonapprove|reject|decline|deny|refuse|cancel|no|n|refine|доработ|отклон)/u', overtimeNormalizeTaskButtonLabel($action));
     $mustFill = $commentRequired === 'Y'
         || ($commentRequired === 'YA' && $isApprove)
         || ($commentRequired === 'YR' && $isNonApprove);
@@ -1002,6 +1101,7 @@ $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData
 $groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((int)$viewData['group_id'], (int)$viewData['id'], $overtimeConfig) : [];
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
+$approvalButtons = [];
 $bpActionError = '';
 $bpCommentLabel = 'Комментарий';
 
@@ -1010,6 +1110,7 @@ if ($viewData && $currentUserId > 0) {
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
+        $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
 
@@ -1019,9 +1120,10 @@ if (
     && check_bitrix_sessid()
 ) {
     $postAction = trim((string)$request->getPost('bp_action'));
-    if ($postAction === 'approve' || $postAction === 'nonapprove') {
+    $allowedActions = array_column($approvalButtons, 'code');
+    if ($postAction !== '' && in_array($postAction, $allowedActions, true)) {
         $bpComment = trim((string)$request->getPost('bp_comment'));
-        $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
+        $completionAction = $postAction;
         $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment);
 
         if (!empty($completionResult['OK'])) {
@@ -1037,6 +1139,7 @@ if ($viewData && $currentUserId > 0) {
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
+        $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
 
@@ -1191,9 +1294,22 @@ $APPLICATION->SetTitle('Просмотр заявки');
                         <textarea name="bp_comment" id="bp-comment-field"></textarea>
                     </div>
                     <div class="overtime-view-approval-actions">
-                        <input type="hidden" name="bp_action" value="approve">
-                        <button type="submit" class="overtime-btn overtime-btn-primary" onclick="this.form.bp_action.value='approve'; return true;">Согласовать</button>
-                        <button type="submit" class="overtime-btn overtime-btn-danger" onclick="this.form.bp_action.value='nonapprove'; return true;">Отклонить</button>
+                        <input type="hidden" name="bp_action" value="">
+                        <?php foreach ($approvalButtons as $button): ?>
+                            <?php
+                            $buttonClass = 'overtime-btn';
+                            if (($button['kind'] ?? '') === 'approve') {
+                                $buttonClass .= ' overtime-btn-primary';
+                            } elseif (($button['kind'] ?? '') === 'reject') {
+                                $buttonClass .= ' overtime-btn-danger';
+                            }
+                            ?>
+                            <button
+                                type="submit"
+                                class="<?= overtimeH($buttonClass) ?>"
+                                onclick="this.form.bp_action.value='<?= overtimeH((string)$button['code']) ?>'; return true;"
+                            ><?= overtimeH((string)$button['label']) ?></button>
+                        <?php endforeach; ?>
                     </div>
                 </form>
             </div>
