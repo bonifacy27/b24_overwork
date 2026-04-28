@@ -1334,6 +1334,7 @@ function overtimeCreateEmployeeRequestPack(
     $segments = overtimeRestoreSegments($segmentsRaw);
     $errors = [];
     $createdIds = [];
+    $requestNamesById = [];
 
     $accessValidation = overtimeValidateCreatorEmployeeAccess($employeeId, $config);
     if (!$accessValidation['allowed']) {
@@ -1458,12 +1459,7 @@ function overtimeCreateEmployeeRequestPack(
         }
 
         $createdId = overtimeCreateRequestElement($fields, $propertyValues);
-        $workflowError = overtimeStartRequestWorkflow($createdId, $config, $workflowParameters);
-        if ($workflowError !== null) {
-            $errors[] = 'Ошибка для заявки "' . $fields['NAME'] . '": ' . $workflowError;
-            continue;
-        }
-
+        $requestNamesById[$createdId] = (string)$fields['NAME'];
         $createdIds[] = $createdId;
     }
 
@@ -1476,6 +1472,22 @@ function overtimeCreateEmployeeRequestPack(
     }
 
     overtimeUpdateLinkedRequests($createdIds, $config);
+
+    foreach ($createdIds as $createdId) {
+        $workflowError = overtimeStartRequestWorkflow($createdId, $config, $workflowParameters);
+        if ($workflowError !== null) {
+            $requestName = $requestNamesById[$createdId] ?? ('ID=' . $createdId);
+            $errors[] = 'Ошибка для заявки "' . $requestName . '": ' . $workflowError;
+        }
+    }
+
+    if (!empty($errors)) {
+        return [
+            'success' => false,
+            'errors' => $errors,
+            'created_ids' => $createdIds,
+        ];
+    }
 
     return [
         'success' => true,
