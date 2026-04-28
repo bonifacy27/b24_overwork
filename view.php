@@ -1203,7 +1203,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
     .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
-    .overtime-view-approval {border:1px solid #b8d6a8; border-radius:10px; padding:16px; background:#f1fbe9; margin-top:20px; box-shadow:0 2px 12px rgba(82,140,58,.12);}
+    .overtime-view-approval {border:1px solid #e9b99a; border-radius:10px; padding:16px; background:#ffd9bd; margin-top:20px; box-shadow:0 2px 12px rgba(180,110,62,.12);}
     .overtime-view-approval-title {font-size:16px; margin-bottom:10px; font-weight:600;}
     .overtime-view-approval-actions {display:flex; gap:10px; flex-wrap:wrap;}
     .overtime-btn.overtime-btn-success {background:#2ea043 !important; border-color:#2ea043 !important; color:#fff !important;}
