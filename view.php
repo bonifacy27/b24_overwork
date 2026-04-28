@@ -1203,12 +1203,12 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
     .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
-    .overtime-view-approval {border:1px solid #a9c7f5; border-radius:10px; padding:16px; background:#eaf3ff; margin-top:20px; box-shadow:0 2px 12px rgba(31,111,235,.08);}
+    .overtime-view-approval {border:1px solid #b8d6a8; border-radius:10px; padding:16px; background:#f1fbe9; margin-top:20px; box-shadow:0 2px 12px rgba(82,140,58,.12);}
     .overtime-view-approval-title {font-size:16px; margin-bottom:10px; font-weight:600;}
     .overtime-view-approval-actions {display:flex; gap:10px; flex-wrap:wrap;}
-    .overtime-btn-success {background:#2ea043; border-color:#2ea043; color:#fff;}
-    .overtime-btn-danger {background:#d1242f; border-color:#d1242f; color:#fff;}
-    .overtime-btn-warning {background:#f28c28; border-color:#f28c28; color:#fff;}
+    .overtime-btn.overtime-btn-success {background:#2ea043 !important; border-color:#2ea043 !important; color:#fff !important;}
+    .overtime-btn.overtime-btn-danger {background:#d1242f !important; border-color:#d1242f !important; color:#fff !important;}
+    .overtime-btn.overtime-btn-warning {background:#f28c28 !important; border-color:#f28c28 !important; color:#fff !important;}
     .overtime-view-approval-comment {margin-bottom:10px;}
     .overtime-view-approval-comment textarea {width:100%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
