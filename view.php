@@ -803,6 +803,143 @@ function overtimeFindTaskActionCodeByButtonCaption(int $taskId, string $caption)
     return '';
 }
 
+function overtimeGetTaskControlsByTaskId(int $taskId): array
+{
+    if ($taskId <= 0) {
+        return [];
+    }
+
+    $controls = [];
+    try {
+        if (method_exists('CBPDocument', 'GetTaskControls')) {
+            $controls = (array)CBPDocument::GetTaskControls($taskId);
+        }
+    } catch (\Throwable $e) {
+    }
+
+    if (!empty($controls)) {
+        return $controls;
+    }
+
+    try {
+        if (method_exists('CBPTaskService', 'GetTaskControls')) {
+            $controls = (array)CBPTaskService::GetTaskControls($taskId);
+        }
+    } catch (\Throwable $e) {
+    }
+
+    return is_array($controls) ? $controls : [];
+}
+
+function overtimeNormalizeTaskButtonLabel(string $label): string
+{
+    return mb_strtolower(trim($label), 'UTF-8');
+}
+
+function overtimeDetectTaskButtonKind(string $code, string $label): string
+{
+    $haystack = overtimeNormalizeTaskButtonLabel($code . ' ' . $label);
+    if (preg_match('/\b(approve|agree|accept|ok|yes|y|соглас)/u', $haystack)) {
+        return 'approve';
+    }
+
+    if (preg_match('/\b(refine|доработ)/u', $haystack)) {
+        return 'refine';
+    }
+
+    if (preg_match('/\b(nonapprove|reject|decline|deny|refuse|cancel|no|n|refine|доработ|отклон)/u', $haystack)) {
+        return 'reject';
+    }
+
+    return 'default';
+}
+
+function overtimeGetTaskActionButtons(array $task): array
+{
+    $taskId = (int)($task['ID'] ?? 0);
+    if ($taskId <= 0) {
+        return [];
+    }
+
+    $activityName = overtimeNormalizeTaskButtonLabel((string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? ''));
+    $hideRefineForActivity = $activityName === 'approvecopyactiveschedule';
+
+    $controls = overtimeGetTaskControlsByTaskId($taskId);
+    $buttons = [];
+    $knownCodes = [];
+    foreach ($controls as $controlCode => $controlData) {
+        $code = is_string($controlCode) ? trim($controlCode) : '';
+        $label = '';
+
+        if (is_array($controlData)) {
+            $label = trim((string)($controlData['TEXT'] ?? $controlData['LABEL'] ?? $controlData['NAME'] ?? ''));
+            if ($code === '') {
+                $code = trim((string)($controlData['NAME'] ?? $controlData['ID'] ?? ''));
+            }
+        } elseif (is_string($controlData)) {
+            $label = trim($controlData);
+        }
+
+        if ($code === '' || $label === '') {
+            continue;
+        }
+
+        $kind = overtimeDetectTaskButtonKind($code, $label);
+        if ($hideRefineForActivity && strpos(overtimeNormalizeTaskButtonLabel($code . ' ' . $label), 'доработ') !== false) {
+            continue;
+        }
+
+        $buttons[] = [
+            'code' => $code,
+            'label' => $label,
+            'kind' => $kind,
+        ];
+        $knownCodes[overtimeNormalizeTaskButtonLabel($code)] = true;
+    }
+
+    $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? []);
+    $approveText = trim((string)($params['TaskButton1Message'] ?? ''));
+    $rejectText = trim((string)($params['TaskButton2Message'] ?? ''));
+    $refineText = trim((string)($params['TaskButton3Message'] ?? ''));
+    $refineAllowed = !isset($params['RefineAllowed']) || (string)$params['RefineAllowed'] !== 'N';
+
+    if (!isset($knownCodes['approve'])) {
+        $buttons[] = [
+            'code' => 'approve',
+            'label' => $approveText !== '' ? $approveText : 'Согласовать',
+            'kind' => 'approve',
+        ];
+        $knownCodes['approve'] = true;
+    }
+
+    if (!isset($knownCodes['nonapprove'])) {
+        $buttons[] = [
+            'code' => 'nonapprove',
+            'label' => $rejectText !== '' ? $rejectText : 'Отклонить',
+            'kind' => 'reject',
+        ];
+        $knownCodes['nonapprove'] = true;
+    }
+
+    if (!$hideRefineForActivity && $refineAllowed && !isset($knownCodes['refine'])) {
+        $buttons[] = [
+            'code' => 'refine',
+            'label' => $refineText !== '' ? $refineText : 'Доработка',
+            'kind' => 'refine',
+        ];
+    }
+
+    if (!empty($buttons)) {
+        return $buttons;
+    }
+
+    [$approveCaption, $rejectCaption] = overtimeGetTaskCaptions($task, 'Согласовать', 'Отклонить');
+    return [
+        ['code' => 'approve', 'label' => $approveCaption, 'kind' => 'approve'],
+        ['code' => 'nonapprove', 'label' => $rejectCaption, 'kind' => 'reject'],
+    ];
+}
+
 function overtimeTaskIsRunning(int $taskId): bool
 {
     if ($taskId <= 0 || !class_exists('CBPTaskService')) {
@@ -859,12 +996,14 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         'no' => 'nonapprove', 'cancel' => 'nonapprove',
         'reject' => 'nonapprove', 'decline' => 'nonapprove',
     ];
-    $code = strtolower(trim($action));
-    if ($code === '') {
-        $code = 'approve';
+    $rawCode = trim($action);
+    if ($rawCode === '') {
+        $rawCode = 'approve';
     }
+    $code = strtolower($rawCode);
     if (isset($aliases[$code])) {
         $code = $aliases[$code];
+        $rawCode = $code;
     }
 
     $validationError = overtimeValidateCommentByTaskParameters($task, $code, $comment);
@@ -872,74 +1011,62 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         return ['OK' => false, 'ERROR' => $validationError];
     }
 
-    try {
-        if (method_exists('CBPDocument', 'PostTaskForm')) {
-            $fields1 = [
-                'USER_ID' => $userId,
-                'REAL_USER_ID' => $userId,
-                'COMMENT' => $comment,
-                'ACTION' => $code,
-                $code => 'Y',
-            ];
-            $tmpErr = [];
-            CBPDocument::PostTaskForm($taskId, $userId, $fields1, $tmpErr);
-            if (!empty($tmpErr)) {
-                $errors = array_merge($errors, $tmpErr);
-            }
-            if (!overtimeTaskIsRunning($taskId)) {
-                return ['OK' => true, 'ERROR' => ''];
-            }
-        }
-    } catch (\Throwable $e) {
-        $errors[] = ['message' => $e->getMessage()];
+    $baseFields = [
+        'USER_ID' => $userId,
+        'REAL_USER_ID' => $userId,
+        'COMMENT' => $comment,
+        'task_comment' => $comment,
+    ];
+    $requests = [];
+    if ($code === 'approve') {
+        $requests[] = $baseFields + ['approve' => 'Y', 'ACTION' => 'approve'];
+    } elseif ($code === 'nonapprove') {
+        $requests[] = $baseFields + ['nonapprove' => 'Y', 'ACTION' => 'nonapprove'];
+    } elseif ($code === 'refine') {
+        $requests[] = $baseFields + ['refine' => 'Y', 'REFINE' => 'Y', 'nonapprove' => 'Y', 'ACTION' => 'refine'];
+        $requests[] = $baseFields + ['refine' => 'Y', 'REFINE' => 'Y', 'nonapprove' => 'Y', 'ACTION' => 'nonapprove'];
+    } else {
+        $requests[] = $baseFields + [$rawCode => 'Y', 'ACTION' => $rawCode];
     }
 
-    try {
-        if (method_exists('CBPDocument', 'PostTaskForm')) {
-            $fields2 = [
-                'USER_ID' => $userId,
-                'REAL_USER_ID' => $userId,
-                'COMMENT' => $comment,
-                $code => 'Y',
-            ];
-            $tmpErr2 = [];
-            CBPDocument::PostTaskForm($taskId, $userId, $fields2, $tmpErr2);
-            if (!empty($tmpErr2)) {
-                $errors = array_merge($errors, $tmpErr2);
-            }
-            if (!overtimeTaskIsRunning($taskId)) {
-                return ['OK' => true, 'ERROR' => ''];
-            }
-        }
-    } catch (\Throwable $e) {
-        $errors[] = ['message' => $e->getMessage()];
-    }
-
-    try {
-        $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
-        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['NAME'] ?? '');
-        if ($workflowId !== '' && $activity !== '' && method_exists('CBPDocument', 'SendExternalEvent')) {
-            $isYes = in_array($code, ['approve', 'accepted', 'accept', 'ok', 'yes', 'y', 'agree'], true);
-            $isNo = in_array($code, ['cancel', 'rejected', 'reject', 'no', 'n', 'disagree', 'decline', 'deny', 'refuse', 'nonapprove'], true);
-            $payloads = [];
-
-            if ($isYes || $isNo) {
-                $approveCode = $isYes ? 'Y' : 'N';
-                $payloads[] = ['APPROVE' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
-                $payloads[] = ['RESULT' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
-            } else {
-                $payloads[] = ['COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
-            }
-
-            foreach ($payloads as $payload) {
-                $extErr = [];
-                CBPDocument::SendExternalEvent($workflowId, $activity, $payload, $extErr);
-                if (!empty($extErr)) {
-                    $errors = array_merge($errors, $extErr);
+    foreach ($requests as $requestFields) {
+        try {
+            if (method_exists('CBPDocument', 'PostTaskForm')) {
+                $tmpErr = [];
+                CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $tmpErr, '', $userId);
+                if (!empty($tmpErr)) {
+                    $errors = array_merge($errors, $tmpErr);
                 }
                 if (!overtimeTaskIsRunning($taskId)) {
                     return ['OK' => true, 'ERROR' => ''];
                 }
+            }
+        } catch (\Throwable $e) {
+            $errors[] = ['message' => $e->getMessage()];
+        }
+    }
+
+    try {
+        $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
+        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? '');
+        if ($workflowId !== '' && $activity !== '' && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
+            $payload = [
+                'USER_ID' => $userId,
+                'REAL_USER_ID' => $userId,
+                'COMMENT' => $comment,
+            ];
+            if ($code === 'approve') {
+                $payload['APPROVE'] = true;
+            } else {
+                $payload['APPROVE'] = false;
+                if ($code === 'refine') {
+                    $payload['REFINE'] = 'Y';
+                }
+            }
+
+            CBPRuntime::SendExternalEvent($workflowId, $activity, $payload);
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
             }
         }
     } catch (\Throwable $e) {
@@ -948,7 +1075,7 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
 
     try {
         if (method_exists('CBPTaskService', 'DoTask')) {
-            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $code, $code => 'Y', 'COMMENT' => $comment]);
+            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $rawCode, $rawCode => 'Y', 'COMMENT' => $comment, 'task_comment' => $comment]);
             if (!overtimeTaskIsRunning($taskId)) {
                 return ['OK' => true, 'ERROR' => ''];
             }
@@ -980,8 +1107,8 @@ function overtimeValidateCommentByTaskParameters(array $task, string $action, st
         return null;
     }
 
-    $isApprove = $action === 'approve';
-    $isNonApprove = in_array($action, ['nonapprove', 'refine'], true);
+    $isApprove = (bool)preg_match('/\b(approve|agree|accept|ok|yes|y|соглас)/u', overtimeNormalizeTaskButtonLabel($action));
+    $isNonApprove = (bool)preg_match('/\b(nonapprove|reject|decline|deny|refuse|cancel|no|n|refine|доработ|отклон)/u', overtimeNormalizeTaskButtonLabel($action));
     $mustFill = $commentRequired === 'Y'
         || ($commentRequired === 'YA' && $isApprove)
         || ($commentRequired === 'YR' && $isNonApprove);
@@ -997,19 +1124,78 @@ function overtimeValidateCommentByTaskParameters(array $task, string $action, st
 
     return 'Поле "' . $label . '" обязательно для выбранного действия.';
 }
+
+function overtimeRenderTextWithLinks(string $text): string
+{
+    $text = str_replace('Текст задания для формы', '', $text);
+    $text = trim($text);
+    if ($text === '') {
+        return '';
+    }
+
+    $formatPlainText = static function (string $value): string {
+        $escaped = overtimeH($value);
+        return str_ireplace(['[b]', '[/b]'], ['<strong>', '</strong>'], $escaped);
+    };
+
+    $pattern = '/https?:\/\/[^\s<>"\']+/iu';
+    if (!preg_match_all($pattern, $text, $matches, PREG_OFFSET_CAPTURE)) {
+        return nl2br($formatPlainText($text));
+    }
+
+    $result = '';
+    $cursor = 0;
+    foreach ($matches[0] as $matchData) {
+        [$rawUrl, $offset] = $matchData;
+        $offset = (int)$offset;
+
+        if ($offset > $cursor) {
+            $result .= $formatPlainText(substr($text, $cursor, $offset - $cursor));
+        }
+
+        $url = $rawUrl;
+        $suffix = '';
+        while ($url !== '' && preg_match('/[.,;:!?)]+$/u', $url)) {
+            $suffix = substr($url, -1) . $suffix;
+            $url = substr($url, 0, -1);
+        }
+
+        if ($url !== '') {
+            $safeUrl = overtimeH($url);
+            $result .= '<a href="' . $safeUrl . '" target="_blank" rel="noopener noreferrer">' . $safeUrl . '</a>';
+        }
+        if ($suffix !== '') {
+            $result .= $formatPlainText($suffix);
+        }
+
+        $cursor = $offset + strlen($rawUrl);
+    }
+
+    $tail = substr($text, $cursor);
+    if ($tail !== '') {
+        $result .= $formatPlainText($tail);
+    }
+
+    return nl2br($result);
+}
+
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
 $groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((int)$viewData['group_id'], (int)$viewData['id'], $overtimeConfig) : [];
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
+$approvalButtons = [];
 $bpActionError = '';
 $bpCommentLabel = 'Комментарий';
+$bpDescriptionForForm = '';
 
 if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
+        $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
+        $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
 
@@ -1019,9 +1205,10 @@ if (
     && check_bitrix_sessid()
 ) {
     $postAction = trim((string)$request->getPost('bp_action'));
-    if ($postAction === 'approve' || $postAction === 'nonapprove') {
+    $allowedActions = array_column($approvalButtons, 'code');
+    if ($postAction !== '' && in_array($postAction, $allowedActions, true)) {
         $bpComment = trim((string)$request->getPost('bp_comment'));
-        $completionAction = $postAction === 'approve' ? 'approve' : 'nonapprove';
+        $completionAction = $postAction;
         $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment);
 
         if (!empty($completionResult['OK'])) {
@@ -1037,6 +1224,8 @@ if ($viewData && $currentUserId > 0) {
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
+        $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
+        $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
 
@@ -1069,12 +1258,16 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
     .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
-    .overtime-view-approval {border:1px solid #d7e3f7; border-radius:8px; padding:14px; background:#f5f9ff; margin-top:20px;}
+    .overtime-view-approval {border:1px solid #e9b99a; border-radius:10px; padding:16px; background:#ffd9bd; margin-top:20px; box-shadow:0 2px 12px rgba(180,110,62,.12);}
     .overtime-view-approval-title {font-size:16px; margin-bottom:10px; font-weight:600;}
     .overtime-view-approval-actions {display:flex; gap:10px; flex-wrap:wrap;}
-    .overtime-btn-danger {background:#d1242f; border-color:#d1242f; color:#fff;}
+    .overtime-btn.overtime-btn-success {background:#2ea043 !important; border-color:#2ea043 !important; color:#fff !important;}
+    .overtime-btn.overtime-btn-danger {background:#d1242f !important; border-color:#d1242f !important; color:#fff !important;}
+    .overtime-btn.overtime-btn-warning {background:#f28c28 !important; border-color:#f28c28 !important; color:#fff !important;}
     .overtime-view-approval-comment {margin-bottom:10px;}
-    .overtime-view-approval-comment textarea {width:100%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
+    .overtime-view-approval-description {padding:12px; border:1px solid #e9b99a; border-radius:6px; background:#ffd9bd; white-space:normal; line-height:1.45;}
+    .overtime-view-approval-comment textarea {width:30%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
+    .overtime-view-approval-comment-note {font-size:12px; color:#7c2d12; margin-top:4px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
 </style>
@@ -1186,14 +1379,35 @@ $APPLICATION->SetTitle('Просмотр заявки');
                 <?php endif; ?>
                 <form method="post" style="margin:0;">
                     <?= bitrix_sessid_post() ?>
+                    <?php if ($bpDescriptionForForm !== ''): ?>
+                        <div class="overtime-view-approval-comment">
+                            <div class="overtime-view-approval-description"><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div>
+                        </div>
+                    <?php endif; ?>
                     <div class="overtime-view-approval-comment">
                         <div class="overtime-view-meta-label" style="margin-bottom:6px;"><?= overtimeH($bpCommentLabel) ?></div>
                         <textarea name="bp_comment" id="bp-comment-field"></textarea>
+                        <div class="overtime-view-approval-comment-note">Комментарий обязателен при отклонении заявки.</div>
                     </div>
                     <div class="overtime-view-approval-actions">
-                        <input type="hidden" name="bp_action" value="approve">
-                        <button type="submit" class="overtime-btn overtime-btn-primary" onclick="this.form.bp_action.value='approve'; return true;">Согласовать</button>
-                        <button type="submit" class="overtime-btn overtime-btn-danger" onclick="this.form.bp_action.value='nonapprove'; return true;">Отклонить</button>
+                        <input type="hidden" name="bp_action" value="">
+                        <?php foreach ($approvalButtons as $button): ?>
+                            <?php
+                            $buttonClass = 'overtime-btn';
+                            if (($button['kind'] ?? '') === 'approve') {
+                                $buttonClass .= ' overtime-btn-success';
+                            } elseif (($button['kind'] ?? '') === 'refine') {
+                                $buttonClass .= ' overtime-btn-warning';
+                            } elseif (($button['kind'] ?? '') === 'reject') {
+                                $buttonClass .= ' overtime-btn-danger';
+                            }
+                            ?>
+                            <button
+                                type="submit"
+                                class="<?= overtimeH($buttonClass) ?>"
+                                onclick="this.form.bp_action.value='<?= overtimeH((string)$button['code']) ?>'; return true;"
+                            ><?= overtimeH((string)$button['label']) ?></button>
+                        <?php endforeach; ?>
                     </div>
                 </form>
             </div>
