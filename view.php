@@ -862,6 +862,7 @@ function overtimeGetTaskActionButtons(array $task): array
 
     $controls = overtimeGetTaskControlsByTaskId($taskId);
     $buttons = [];
+    $knownCodes = [];
     foreach ($controls as $controlCode => $controlData) {
         $code = is_string($controlCode) ? trim($controlCode) : '';
         $label = '';
@@ -888,6 +889,39 @@ function overtimeGetTaskActionButtons(array $task): array
             'code' => $code,
             'label' => $label,
             'kind' => $kind,
+        ];
+        $knownCodes[overtimeNormalizeTaskButtonLabel($code)] = true;
+    }
+
+    $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? []);
+    $approveText = trim((string)($params['TaskButton1Message'] ?? ''));
+    $rejectText = trim((string)($params['TaskButton2Message'] ?? ''));
+    $refineText = trim((string)($params['TaskButton3Message'] ?? ''));
+    $refineAllowed = !isset($params['RefineAllowed']) || (string)$params['RefineAllowed'] !== 'N';
+
+    if (!isset($knownCodes['approve'])) {
+        $buttons[] = [
+            'code' => 'approve',
+            'label' => $approveText !== '' ? $approveText : 'Согласовать',
+            'kind' => 'approve',
+        ];
+        $knownCodes['approve'] = true;
+    }
+
+    if (!isset($knownCodes['nonapprove'])) {
+        $buttons[] = [
+            'code' => 'nonapprove',
+            'label' => $rejectText !== '' ? $rejectText : 'Отклонить',
+            'kind' => 'reject',
+        ];
+        $knownCodes['nonapprove'] = true;
+    }
+
+    if (!$hideRefineForActivity && $refineAllowed && !isset($knownCodes['refine'])) {
+        $buttons[] = [
+            'code' => 'refine',
+            'label' => $refineText !== '' ? $refineText : 'Доработка',
+            'kind' => 'reject',
         ];
     }
 
