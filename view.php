@@ -1261,7 +1261,8 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-btn.overtime-btn-warning {background:#f28c28 !important; border-color:#f28c28 !important; color:#fff !important;}
     .overtime-view-approval-comment {margin-bottom:10px;}
     .overtime-view-approval-description {padding:12px; border:1px solid #e9b99a; border-radius:6px; background:#ffd9bd; white-space:pre-wrap; line-height:1.45;}
-    .overtime-view-approval-comment textarea {width:100%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
+    .overtime-view-approval-comment textarea {width:30%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
+    .overtime-view-approval-comment-note {font-size:12px; color:#7c2d12; margin-top:4px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
     .overtime-btn-primary {background:#1f6feb; border-color:#1f6feb; color:#fff;}
 </style>
@@ -1381,6 +1382,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
                     <div class="overtime-view-approval-comment">
                         <div class="overtime-view-meta-label" style="margin-bottom:6px;"><?= overtimeH($bpCommentLabel) ?></div>
                         <textarea name="bp_comment" id="bp-comment-field"></textarea>
+                        <div class="overtime-view-approval-comment-note">Комментарий обязателен при отклонении заявки.</div>
                     </div>
                     <div class="overtime-view-approval-actions">
                         <input type="hidden" name="bp_action" value="">
