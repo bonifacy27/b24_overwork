@@ -843,6 +843,10 @@ function overtimeDetectTaskButtonKind(string $code, string $label): string
         return 'approve';
     }
 
+    if (preg_match('/\b(refine|доработ)/u', $haystack)) {
+        return 'refine';
+    }
+
     if (preg_match('/\b(nonapprove|reject|decline|deny|refuse|cancel|no|n|refine|доработ|отклон)/u', $haystack)) {
         return 'reject';
     }
@@ -921,7 +925,7 @@ function overtimeGetTaskActionButtons(array $task): array
         $buttons[] = [
             'code' => 'refine',
             'label' => $refineText !== '' ? $refineText : 'Доработка',
-            'kind' => 'reject',
+            'kind' => 'refine',
         ];
     }
 
@@ -1199,10 +1203,12 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
     .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
-    .overtime-view-approval {border:1px solid #d7e3f7; border-radius:8px; padding:14px; background:#f5f9ff; margin-top:20px;}
+    .overtime-view-approval {border:1px solid #a9c7f5; border-radius:10px; padding:16px; background:#eaf3ff; margin-top:20px; box-shadow:0 2px 12px rgba(31,111,235,.08);}
     .overtime-view-approval-title {font-size:16px; margin-bottom:10px; font-weight:600;}
     .overtime-view-approval-actions {display:flex; gap:10px; flex-wrap:wrap;}
+    .overtime-btn-success {background:#2ea043; border-color:#2ea043; color:#fff;}
     .overtime-btn-danger {background:#d1242f; border-color:#d1242f; color:#fff;}
+    .overtime-btn-warning {background:#f28c28; border-color:#f28c28; color:#fff;}
     .overtime-view-approval-comment {margin-bottom:10px;}
     .overtime-view-approval-comment textarea {width:100%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
@@ -1318,7 +1324,6 @@ $APPLICATION->SetTitle('Просмотр заявки');
                     <?= bitrix_sessid_post() ?>
                     <?php if ($bpDescriptionForForm !== ''): ?>
                         <div class="overtime-view-approval-comment">
-                            <div class="overtime-view-meta-label" style="margin-bottom:6px;">Описание задания</div>
                             <div class="overtime-view-justification"><?= nl2br(overtimeH($bpDescriptionForForm)) ?></div>
                         </div>
                     <?php endif; ?>
@@ -1332,7 +1337,9 @@ $APPLICATION->SetTitle('Просмотр заявки');
                             <?php
                             $buttonClass = 'overtime-btn';
                             if (($button['kind'] ?? '') === 'approve') {
-                                $buttonClass .= ' overtime-btn-primary';
+                                $buttonClass .= ' overtime-btn-success';
+                            } elseif (($button['kind'] ?? '') === 'refine') {
+                                $buttonClass .= ' overtime-btn-warning';
                             } elseif (($button['kind'] ?? '') === 'reject') {
                                 $buttonClass .= ' overtime-btn-danger';
                             }
