@@ -857,7 +857,7 @@ function overtimeGetTaskActionButtons(array $task): array
         return [];
     }
 
-    $activityName = overtimeNormalizeTaskButtonLabel((string)($task['ACTIVITY_NAME'] ?? ''));
+    $activityName = overtimeNormalizeTaskButtonLabel((string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? ''));
     $hideRefineForActivity = $activityName === 'approvecopyactiveschedule';
 
     $controls = overtimeGetTaskControlsByTaskId($taskId);
@@ -958,12 +958,14 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         'no' => 'nonapprove', 'cancel' => 'nonapprove',
         'reject' => 'nonapprove', 'decline' => 'nonapprove',
     ];
-    $code = strtolower(trim($action));
-    if ($code === '') {
-        $code = 'approve';
+    $rawCode = trim($action);
+    if ($rawCode === '') {
+        $rawCode = 'approve';
     }
+    $code = strtolower($rawCode);
     if (isset($aliases[$code])) {
         $code = $aliases[$code];
+        $rawCode = $code;
     }
 
     $validationError = overtimeValidateCommentByTaskParameters($task, $code, $comment);
@@ -971,74 +973,62 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         return ['OK' => false, 'ERROR' => $validationError];
     }
 
-    try {
-        if (method_exists('CBPDocument', 'PostTaskForm')) {
-            $fields1 = [
-                'USER_ID' => $userId,
-                'REAL_USER_ID' => $userId,
-                'COMMENT' => $comment,
-                'ACTION' => $code,
-                $code => 'Y',
-            ];
-            $tmpErr = [];
-            CBPDocument::PostTaskForm($taskId, $userId, $fields1, $tmpErr);
-            if (!empty($tmpErr)) {
-                $errors = array_merge($errors, $tmpErr);
-            }
-            if (!overtimeTaskIsRunning($taskId)) {
-                return ['OK' => true, 'ERROR' => ''];
-            }
-        }
-    } catch (\Throwable $e) {
-        $errors[] = ['message' => $e->getMessage()];
+    $baseFields = [
+        'USER_ID' => $userId,
+        'REAL_USER_ID' => $userId,
+        'COMMENT' => $comment,
+        'task_comment' => $comment,
+    ];
+    $requests = [];
+    if ($code === 'approve') {
+        $requests[] = $baseFields + ['approve' => 'Y', 'ACTION' => 'approve'];
+    } elseif ($code === 'nonapprove') {
+        $requests[] = $baseFields + ['nonapprove' => 'Y', 'ACTION' => 'nonapprove'];
+    } elseif ($code === 'refine') {
+        $requests[] = $baseFields + ['refine' => 'Y', 'REFINE' => 'Y', 'nonapprove' => 'Y', 'ACTION' => 'refine'];
+        $requests[] = $baseFields + ['refine' => 'Y', 'REFINE' => 'Y', 'nonapprove' => 'Y', 'ACTION' => 'nonapprove'];
+    } else {
+        $requests[] = $baseFields + [$rawCode => 'Y', 'ACTION' => $rawCode];
     }
 
-    try {
-        if (method_exists('CBPDocument', 'PostTaskForm')) {
-            $fields2 = [
-                'USER_ID' => $userId,
-                'REAL_USER_ID' => $userId,
-                'COMMENT' => $comment,
-                $code => 'Y',
-            ];
-            $tmpErr2 = [];
-            CBPDocument::PostTaskForm($taskId, $userId, $fields2, $tmpErr2);
-            if (!empty($tmpErr2)) {
-                $errors = array_merge($errors, $tmpErr2);
-            }
-            if (!overtimeTaskIsRunning($taskId)) {
-                return ['OK' => true, 'ERROR' => ''];
-            }
-        }
-    } catch (\Throwable $e) {
-        $errors[] = ['message' => $e->getMessage()];
-    }
-
-    try {
-        $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
-        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['NAME'] ?? '');
-        if ($workflowId !== '' && $activity !== '' && method_exists('CBPDocument', 'SendExternalEvent')) {
-            $isYes = in_array($code, ['approve', 'accepted', 'accept', 'ok', 'yes', 'y', 'agree'], true);
-            $isNo = in_array($code, ['cancel', 'rejected', 'reject', 'no', 'n', 'disagree', 'decline', 'deny', 'refuse', 'nonapprove'], true);
-            $payloads = [];
-
-            if ($isYes || $isNo) {
-                $approveCode = $isYes ? 'Y' : 'N';
-                $payloads[] = ['APPROVE' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
-                $payloads[] = ['RESULT' => $approveCode, 'COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
-            } else {
-                $payloads[] = ['COMMENT' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId];
-            }
-
-            foreach ($payloads as $payload) {
-                $extErr = [];
-                CBPDocument::SendExternalEvent($workflowId, $activity, $payload, $extErr);
-                if (!empty($extErr)) {
-                    $errors = array_merge($errors, $extErr);
+    foreach ($requests as $requestFields) {
+        try {
+            if (method_exists('CBPDocument', 'PostTaskForm')) {
+                $tmpErr = [];
+                CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $tmpErr, '', $userId);
+                if (!empty($tmpErr)) {
+                    $errors = array_merge($errors, $tmpErr);
                 }
                 if (!overtimeTaskIsRunning($taskId)) {
                     return ['OK' => true, 'ERROR' => ''];
                 }
+            }
+        } catch (\Throwable $e) {
+            $errors[] = ['message' => $e->getMessage()];
+        }
+    }
+
+    try {
+        $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
+        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? '');
+        if ($workflowId !== '' && $activity !== '' && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
+            $payload = [
+                'USER_ID' => $userId,
+                'REAL_USER_ID' => $userId,
+                'COMMENT' => $comment,
+            ];
+            if ($code === 'approve') {
+                $payload['APPROVE'] = true;
+            } else {
+                $payload['APPROVE'] = false;
+                if ($code === 'refine') {
+                    $payload['REFINE'] = 'Y';
+                }
+            }
+
+            CBPRuntime::SendExternalEvent($workflowId, $activity, $payload);
+            if (!overtimeTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
             }
         }
     } catch (\Throwable $e) {
@@ -1047,7 +1037,7 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
 
     try {
         if (method_exists('CBPTaskService', 'DoTask')) {
-            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $code, $code => 'Y', 'COMMENT' => $comment]);
+            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $rawCode, $rawCode => 'Y', 'COMMENT' => $comment, 'task_comment' => $comment]);
             if (!overtimeTaskIsRunning($taskId)) {
                 return ['OK' => true, 'ERROR' => ''];
             }
