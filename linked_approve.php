@@ -12,7 +12,8 @@
 $iblockId = 391;
 $propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
 $propertyCodeStatus = 'STATUS'; // При необходимости замените на фактический код свойства статуса.
-$statusApproveName = 'На согласовании C&B';
+$statusApproveElementId = 3578386; // ID элемента статуса "На согласовании C&B" в справочнике статусов.
+$statusApproveName = 'На согласовании C&B'; // Фолбэк-проверка по названию статуса.
 
 $rootActivity = $this->GetRootActivity();
 $documentIdRaw = $rootActivity->GetDocumentId();
@@ -138,14 +139,25 @@ foreach ($linkedElementIds as $linkedElementId) {
     }
 
     $statusValue = '';
+    $statusElementId = 0;
     $statusPropRes = CIBlockElement::GetProperty($iblockId, $linkedElementId, [], ['CODE' => $propertyCodeStatus]);
     if ($statusProp = $statusPropRes->Fetch()) {
         $statusValue = trim((string)($statusProp['VALUE_ENUM'] ?: $statusProp['VALUE']));
+        $statusElementId = (int)($statusProp['VALUE'] ?? 0);
     }
 
-    if ($statusValue !== $statusApproveName) {
+    $isExpectedStatus = false;
+    if ($statusApproveElementId > 0 && $statusElementId > 0 && $statusElementId === $statusApproveElementId) {
+        $isExpectedStatus = true;
+    }
+    if (!$isExpectedStatus && $statusValue !== '' && $statusValue === $statusApproveName) {
+        $isExpectedStatus = true;
+    }
+
+    if (!$isExpectedStatus) {
         $this->WriteToTrackingService(
-            "linked_approve: Заявка {$linkedElementId} пропущена, статус '{$statusValue}' (ожидался '{$statusApproveName}')"
+            "linked_approve: Заявка {$linkedElementId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
+            . "(ожидался '{$statusApproveName}', ID '{$statusApproveElementId}')"
         );
         continue;
     }
