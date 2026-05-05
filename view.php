@@ -1133,9 +1133,14 @@ function overtimeRenderTextWithLinks(string $text): string
         return '';
     }
 
+    $formatPlainText = static function (string $value): string {
+        $escaped = overtimeH($value);
+        return str_ireplace(['[b]', '[/b]'], ['<strong>', '</strong>'], $escaped);
+    };
+
     $pattern = '/https?:\/\/[^\s<>"\']+/iu';
     if (!preg_match_all($pattern, $text, $matches, PREG_OFFSET_CAPTURE)) {
-        return nl2br(overtimeH($text));
+        return nl2br($formatPlainText($text));
     }
 
     $result = '';
@@ -1145,7 +1150,7 @@ function overtimeRenderTextWithLinks(string $text): string
         $offset = (int)$offset;
 
         if ($offset > $cursor) {
-            $result .= overtimeH(substr($text, $cursor, $offset - $cursor));
+            $result .= $formatPlainText(substr($text, $cursor, $offset - $cursor));
         }
 
         $url = $rawUrl;
@@ -1160,7 +1165,7 @@ function overtimeRenderTextWithLinks(string $text): string
             $result .= '<a href="' . $safeUrl . '" target="_blank" rel="noopener noreferrer">' . $safeUrl . '</a>';
         }
         if ($suffix !== '') {
-            $result .= overtimeH($suffix);
+            $result .= $formatPlainText($suffix);
         }
 
         $cursor = $offset + strlen($rawUrl);
@@ -1168,7 +1173,7 @@ function overtimeRenderTextWithLinks(string $text): string
 
     $tail = substr($text, $cursor);
     if ($tail !== '') {
-        $result .= overtimeH($tail);
+        $result .= $formatPlainText($tail);
     }
 
     return nl2br($result);
@@ -1260,7 +1265,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-btn.overtime-btn-danger {background:#d1242f !important; border-color:#d1242f !important; color:#fff !important;}
     .overtime-btn.overtime-btn-warning {background:#f28c28 !important; border-color:#f28c28 !important; color:#fff !important;}
     .overtime-view-approval-comment {margin-bottom:10px;}
-    .overtime-view-approval-description {padding:12px; border:1px solid #e9b99a; border-radius:6px; background:#ffd9bd; white-space:pre-wrap; line-height:1.45;}
+    .overtime-view-approval-description {padding:12px; border:1px solid #e9b99a; border-radius:6px; background:#ffd9bd; white-space:normal; line-height:1.45;}
     .overtime-view-approval-comment textarea {width:30%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
     .overtime-view-approval-comment-note {font-size:12px; color:#7c2d12; margin-top:4px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
