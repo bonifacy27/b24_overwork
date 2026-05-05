@@ -101,17 +101,14 @@ $appendHistory = static function (int $elementId, string $message) use ($iblockI
     $timestamp = date('d.m.Y H:i:s');
     $line = '[' . $timestamp . '] ' . $message;
 
-    $existing = [];
+    $existing = '';
     $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
-    while ($prop = $propRes->Fetch()) {
-        $value = trim((string)($prop['VALUE'] ?? ''));
-        if ($value !== '') {
-            $existing[] = $value;
-        }
+    if ($prop = $propRes->Fetch()) {
+        $existing = trim((string)($prop['VALUE'] ?? ''));
     }
 
-    $existing[] = $line;
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $existing]);
+    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
+    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
 };
 
 $resolveApproveActionCode = static function (int $taskId): string {
