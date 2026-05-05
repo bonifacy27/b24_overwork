@@ -12,6 +12,7 @@
 $iblockId = 391;
 $propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
 $propertyCodeStatus = 'STATUS'; // При необходимости замените на фактический код свойства статуса.
+$propertyCodeHistory = 'ISTORIYA'; // Поле истории заявки.
 $statusApproveElementId = 3578386; // ID элемента статуса "На согласовании C&B" в справочнике статусов.
 $statusApproveName = 'На согласовании C&B'; // Фолбэк-проверка по названию статуса.
 
@@ -67,6 +68,45 @@ if (empty($linkedElementIds)) {
 
 $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
 
+$isTaskStillRunning = static function (int $taskId): bool {
+    if ($taskId <= 0 || !class_exists('CBPTaskService')) {
+        return false;
+    }
+
+    $res = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'STATUS']);
+    if (!is_object($res)) {
+        return false;
+    }
+
+    $task = $res->Fetch();
+    if (!$task) {
+        return false;
+    }
+
+    return (int)($task['STATUS'] ?? 0) === (int)CBPTaskStatus::Running;
+};
+
+$appendHistory = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory): void {
+    if ($elementId <= 0 || $message === '') {
+        return;
+    }
+
+    $timestamp = date('d.m.Y H:i:s');
+    $line = '[' . $timestamp . '] ' . $message;
+
+    $existing = [];
+    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
+    while ($prop = $propRes->Fetch()) {
+        $value = trim((string)($prop['VALUE'] ?? ''));
+        if ($value !== '') {
+            $existing[] = $value;
+        }
+    }
+
+    $existing[] = $line;
+    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $existing]);
+};
+
 $resolveApproveActionCode = static function (int $taskId): string {
     $controls = [];
     if (method_exists('CBPDocument', 'GetTaskControls')) {
@@ -94,7 +134,7 @@ $resolveApproveActionCode = static function (int $taskId): string {
     return 'Approve';
 };
 
-$doApproveTask = static function (array $task, int $userId, string $comment = '') use ($resolveApproveActionCode): array {
+$doApproveTask = static function (array $task, int $userId, string $comment = '') use ($resolveApproveActionCode, $isTaskStillRunning): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
@@ -112,7 +152,7 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 'task_comment' => $comment,
             ];
             CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $errors, '', $userId);
-            if (empty($errors)) {
+            if (empty($errors) && !$isTaskStillRunning($taskId)) {
                 return [true, ''];
             }
         }
@@ -124,13 +164,15 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 'COMMENT' => $comment,
                 'task_comment' => $comment,
             ]);
-            return [true, ''];
+            if (!$isTaskStillRunning($taskId)) {
+                return [true, ''];
+            }
         }
     } catch (\Throwable $e) {
         return [false, $e->getMessage()];
     }
 
-    return [false, 'Не найден подходящий метод выполнения задания БП'];
+    return [false, 'Задание не завершилось после попытки согласования'];
 };
 
 foreach ($linkedElementIds as $linkedElementId) {
@@ -204,11 +246,13 @@ foreach ($linkedElementIds as $linkedElementId) {
 
                 $msgLinked = "Заявка автосогласована по согласованию связанной заявки #{$currentElementId}. Согласовал: {$currentUserName}";
                 CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $currentUserId);
+                $appendHistory($linkedElementId, $msgLinked);
                 $this->WriteToTrackingService("linked_approve: {$msgLinked}");
 
                 $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
                 $msgMain = "Связанная заявка #{$linkedElementId} автосогласована по согласованию этой заявки. Согласовал: {$currentUserName}";
                 CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $currentUserId);
+                $appendHistory($currentElementId, $msgMain);
                 $this->WriteToTrackingService("linked_approve: {$msgMain}");
             } else {
                 $this->WriteToTrackingService(
