@@ -761,9 +761,9 @@ function mapSubtypeToFilterCodeCustom($subtypeValue)
     }
 
     $groups = [
-        'cb' => [3575290, 3575289, 3575285],
+        'cb' => [3575290, 3575285],
         'cb_ka' => [3575284],
-        'ka' => [3575288],
+        'ka' => [3575288, 3575289],
     ];
 
     foreach ($groups as $groupCode => $ids) {

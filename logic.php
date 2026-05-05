@@ -498,10 +498,10 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
             ],
             'summary' => [
                 [
-                    'title' => 'ИТОГО часы для оплаты единовременной премией',
+                    'title' => 'ИТОГО сверхурочных часов по ТК РФ',
                     'hours' => $segmentHours,
                     'interval' => $interval,
-                    'basis' => 'все часы работы в выходной день оплачиваются единовременной премией',
+                    'basis' => 'все часы работы в выходной день учитываются как часы для оплаты по ТК РФ (KA)',
                 ],
             ],
             'hours_15' => 0.0,
@@ -714,7 +714,7 @@ function overtimeResolveSubtypeId(array $segment, float $totalTkHours, float $to
     }
 
     if ((int)$segment['type_id'] === (int)$config['WORK_TYPE_WEEKEND_ID']) {
-        return (int)($config['SUBTYPE_WEEKEND_CB_ID'] ?? 0);
+        return (int)($config['SUBTYPE_WEEKEND_KA_ID'] ?? $config['SUBTYPE_WEEKEND_CB_ID'] ?? 0);
     }
 
     if ((int)$segment['type_id'] !== (int)$config['WORK_TYPE_OVERTIME_ID']) {
