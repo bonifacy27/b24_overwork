@@ -15,6 +15,7 @@ $propertyCodeStatus = 'STATUS'; // При необходимости замен�
 $propertyCodeHistory = 'ISTORIYA'; // Поле истории заявки.
 $statusApproveElementId = 3578386; // ID элемента статуса "На согласовании C&B" в справочнике статусов.
 $statusApproveName = 'На согласовании C&B'; // Фолбэк-проверка по названию статуса.
+$debugEnabled = true; // Временная подробная отладка в трекинге БП.
 
 $rootActivity = $this->GetRootActivity();
 $documentIdRaw = $rootActivity->GetDocumentId();
@@ -68,6 +69,11 @@ if (empty($linkedElementIds)) {
 }
 
 $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
+$debugLog = function (string $message) use ($debugEnabled): void {
+    if ($debugEnabled) {
+        $this->WriteToTrackingService('linked_approve [debug]: ' . $message);
+    }
+};
 
 $isTaskStillRunning = static function (int $taskId): bool {
     if ($taskId <= 0 || !class_exists('CBPTaskService')) {
@@ -135,13 +141,15 @@ $resolveApproveActionCode = static function (int $taskId): string {
     return 'Approve';
 };
 
-$doApproveTask = static function (array $task, int $userId, string $comment = '') use ($resolveApproveActionCode, $isTaskStillRunning): array {
+$doApproveTask = static function (array $task, int $userId, string $comment = '') use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
     }
 
     $actionCode = $resolveApproveActionCode($taskId);
+    $debugLog("Начало doApproveTask: taskId={$taskId}, userId={$userId}, actionCode={$actionCode}");
+    $debugLog('Task raw: ' . print_r($task, true));
 
     try {
         if (method_exists('CBPDocument', 'PostTaskForm')) {
@@ -152,13 +160,20 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 'comment' => $comment,
                 'task_comment' => $comment,
             ];
+            $debugLog("Вызов CBPDocument::PostTaskForm для taskId={$taskId} с полями: " . print_r($requestFields, true));
             CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $errors, '', $userId);
+            if (!empty($errors)) {
+                $debugLog("PostTaskForm errors для taskId={$taskId}: " . print_r($errors, true));
+            }
             if (empty($errors) && !$isTaskStillRunning($taskId)) {
+                $debugLog("PostTaskForm успешно завершил taskId={$taskId}");
                 return [true, ''];
             }
+            $debugLog("После PostTaskForm taskId={$taskId} всё ещё running");
         }
 
         if (method_exists('CBPTaskService', 'DoTask')) {
+            $debugLog("Вызов CBPTaskService::DoTask для taskId={$taskId}");
             CBPTaskService::DoTask($taskId, $userId, [
                 'ACTION' => $actionCode,
                 $actionCode => 'Y',
@@ -166,12 +181,24 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 'task_comment' => $comment,
             ]);
             if (!$isTaskStillRunning($taskId)) {
+                $debugLog("DoTask успешно завершил taskId={$taskId}");
                 return [true, ''];
             }
+            $debugLog("После DoTask taskId={$taskId} всё ещё running");
         }
     } catch (\Throwable $e) {
+        $debugLog("Throwable в doApproveTask для taskId={$taskId}: " . $e->getMessage());
         return [false, $e->getMessage()];
     }
+
+    $controlsDbg = [];
+    if (method_exists('CBPDocument', 'GetTaskControls')) {
+        $controlsDbg = (array)CBPDocument::GetTaskControls($taskId);
+    }
+    if (empty($controlsDbg) && method_exists('CBPTaskService', 'GetTaskControls')) {
+        $controlsDbg = (array)CBPTaskService::GetTaskControls($taskId);
+    }
+    $debugLog("Итог: taskId={$taskId} не завершился. Controls: " . print_r($controlsDbg, true));
 
     return [false, 'Задание не завершилось после попытки согласования'];
 };
@@ -207,6 +234,7 @@ foreach ($linkedElementIds as $linkedElementId) {
 
     $linkedDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $linkedElementId];
     $states = CBPDocument::GetDocumentStates($documentType, $linkedDocumentId);
+    $debugLog("Найдены состояния БП для {$linkedElementId}: " . print_r($states, true));
 
     if (empty($states)) {
         $this->WriteToTrackingService("linked_approve: У связанной заявки {$linkedElementId} нет активных БП");
@@ -233,11 +261,14 @@ foreach ($linkedElementIds as $linkedElementId) {
             ['ID', 'NAME', 'WORKFLOW_ID', 'STATUS', 'USER_ID', 'USER_STATUS']
         );
 
+        $foundTasksForWorkflow = 0;
         while ($task = $taskRes->Fetch()) {
+            $foundTasksForWorkflow++;
             $taskId = (int)($task['ID'] ?? 0);
             if ($taskId <= 0) {
                 continue;
             }
+            $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
 
             $comment = 'Автосогласовано по согласованию связанной заявки #' . $currentElementId;
             [$ok, $err] = $doApproveTask($task, $executorUserId, $comment);
@@ -260,6 +291,9 @@ foreach ($linkedElementIds as $linkedElementId) {
                     "linked_approve: Ошибка автосогласования task {$taskId} по заявке {$linkedElementId}: {$err}"
                 );
             }
+        }
+        if ($foundTasksForWorkflow === 0) {
+            $debugLog("По workflowId={$workflowId} не найдено задач по фильтру STATUS=Running + USER_STATUS=Waiting");
         }
     }
 
