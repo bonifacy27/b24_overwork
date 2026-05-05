@@ -148,6 +148,16 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
     }
 
     $actionCode = $resolveApproveActionCode($taskId);
+    if ((string)($task['ACTIVITY_NAME'] ?? '') === '' && class_exists('CBPTaskService')) {
+        $taskReloadRes = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'WORKFLOW_ID', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']);
+        if (is_object($taskReloadRes)) {
+            $taskReload = $taskReloadRes->Fetch();
+            if (is_array($taskReload)) {
+                $task = array_merge($task, $taskReload);
+                $debugLog('Перезагрузили task с расширенными полями: ' . print_r($taskReload, true));
+            }
+        }
+    }
     $debugLog("Начало doApproveTask: taskId={$taskId}, userId={$userId}, actionCode={$actionCode}");
     $debugLog('Task raw: ' . print_r($task, true));
 
@@ -301,7 +311,7 @@ foreach ($linkedElementIds as $linkedElementId) {
             ],
             false,
             false,
-            ['ID', 'NAME', 'WORKFLOW_ID', 'STATUS', 'USER_ID', 'USER_STATUS']
+            ['ID', 'NAME', 'WORKFLOW_ID', 'STATUS', 'USER_ID', 'USER_STATUS', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']
         );
 
         $foundTasksForWorkflow = 0;
