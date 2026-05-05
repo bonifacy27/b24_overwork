@@ -324,18 +324,36 @@ foreach ($linkedElementIds as $linkedElementId) {
             $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
 
             $comment = 'Автосогласовано по согласованию связанной заявки #' . $currentElementId;
-            [$ok, $err] = $doApproveTask($task, $executorUserId, $comment);
+            $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
+            $executorCandidates = [];
+            if ($taskAssignedUserId > 0) {
+                $executorCandidates[] = $taskAssignedUserId;
+            }
+            $executorCandidates[] = $executorUserId;
+            $executorCandidates = array_values(array_unique($executorCandidates));
+
+            $ok = false;
+            $err = 'Не удалось завершить задачу ни одним исполнителем.';
+            $successUserId = 0;
+            foreach ($executorCandidates as $candidateUserId) {
+                $debugLog("Пробуем завершить taskId={$taskId} от userId={$candidateUserId}");
+                [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment);
+                if ($ok) {
+                    $successUserId = $candidateUserId;
+                    break;
+                }
+            }
 
             if ($ok) {
                 $approvedAny = true;
 
-                $msgLinked = "Заявка автосогласована по согласованию связанной заявки #{$currentElementId}. Инициатор согласования: {$currentUserName}. Выполнено от имени администратора (ID 1).";
+                $msgLinked = "Заявка автосогласована по согласованию связанной заявки #{$currentElementId}. Инициатор согласования: {$currentUserName}. Выполнено от пользователя ID {$successUserId}.";
                 CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $currentUserId);
                 $appendHistory($linkedElementId, $msgLinked);
                 $this->WriteToTrackingService("linked_approve: {$msgLinked}");
 
                 $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
-                $msgMain = "Связанная заявка #{$linkedElementId} автосогласована по согласованию этой заявки. Инициатор согласования: {$currentUserName}. Выполнено от имени администратора (ID 1).";
+                $msgMain = "Связанная заявка #{$linkedElementId} автосогласована по согласованию этой заявки. Инициатор согласования: {$currentUserName}. Выполнено от пользователя ID {$successUserId}.";
                 CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $currentUserId);
                 $appendHistory($currentElementId, $msgMain);
                 $this->WriteToTrackingService("linked_approve: {$msgMain}");
