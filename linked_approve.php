@@ -152,39 +152,55 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
     $debugLog('Task raw: ' . print_r($task, true));
 
     try {
+        $codesToTry = array_values(array_unique(array_filter([
+            $actionCode,
+            'Approve',
+            'approve',
+            'YES',
+            'Yes',
+            'Y',
+            'ok',
+            'OK',
+        ])));
+
         if (method_exists('CBPDocument', 'PostTaskForm')) {
-            $errors = [];
-            $requestFields = [
-                'approve' => $actionCode,
-                $actionCode => 'Y',
-                'comment' => $comment,
-                'task_comment' => $comment,
-            ];
-            $debugLog("Вызов CBPDocument::PostTaskForm для taskId={$taskId} с полями: " . print_r($requestFields, true));
-            CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $errors, '', $userId);
-            if (!empty($errors)) {
-                $debugLog("PostTaskForm errors для taskId={$taskId}: " . print_r($errors, true));
+            foreach ($codesToTry as $codeTry) {
+                $errors = [];
+                $requestFields = [
+                    'approve' => $codeTry,
+                    $codeTry => 'Y',
+                    'comment' => $comment,
+                    'task_comment' => $comment,
+                ];
+                $debugLog("Вызов CBPDocument::PostTaskForm для taskId={$taskId} c codeTry={$codeTry}, поля: " . print_r($requestFields, true));
+                CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $errors, '', $userId);
+                if (!empty($errors)) {
+                    $debugLog("PostTaskForm errors для taskId={$taskId}, codeTry={$codeTry}: " . print_r($errors, true));
+                }
+                if (empty($errors) && !$isTaskStillRunning($taskId)) {
+                    $debugLog("PostTaskForm успешно завершил taskId={$taskId} с codeTry={$codeTry}");
+                    return [true, ''];
+                }
             }
-            if (empty($errors) && !$isTaskStillRunning($taskId)) {
-                $debugLog("PostTaskForm успешно завершил taskId={$taskId}");
-                return [true, ''];
-            }
-            $debugLog("После PostTaskForm taskId={$taskId} всё ещё running");
+            $debugLog("После всех попыток PostTaskForm taskId={$taskId} всё ещё running");
         }
 
         if (method_exists('CBPTaskService', 'DoTask')) {
-            $debugLog("Вызов CBPTaskService::DoTask для taskId={$taskId}");
-            CBPTaskService::DoTask($taskId, $userId, [
-                'ACTION' => $actionCode,
-                $actionCode => 'Y',
-                'COMMENT' => $comment,
-                'task_comment' => $comment,
-            ]);
-            if (!$isTaskStillRunning($taskId)) {
-                $debugLog("DoTask успешно завершил taskId={$taskId}");
-                return [true, ''];
+            foreach ($codesToTry as $codeTry) {
+                $payload = [
+                    'ACTION' => $codeTry,
+                    $codeTry => 'Y',
+                    'COMMENT' => $comment,
+                    'task_comment' => $comment,
+                ];
+                $debugLog("Вызов CBPTaskService::DoTask для taskId={$taskId}, codeTry={$codeTry}, payload: " . print_r($payload, true));
+                CBPTaskService::DoTask($taskId, $userId, $payload);
+                if (!$isTaskStillRunning($taskId)) {
+                    $debugLog("DoTask успешно завершил taskId={$taskId} с codeTry={$codeTry}");
+                    return [true, ''];
+                }
             }
-            $debugLog("После DoTask taskId={$taskId} всё ещё running");
+            $debugLog("После всех попыток DoTask taskId={$taskId} всё ещё running");
         }
     } catch (\Throwable $e) {
         $debugLog("Throwable в doApproveTask для taskId={$taskId}: " . $e->getMessage());
