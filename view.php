@@ -613,12 +613,7 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
         if ($taskRequestId !== $requestId) {
             return false;
         }
-
-        [$approveCaption, $rejectCaption] = overtimeGetTaskCaptions($task, 'Согласовать', 'Отклонить');
-        $approveCaption = mb_strtolower(trim($approveCaption), 'UTF-8');
-        $rejectCaption = mb_strtolower(trim($rejectCaption), 'UTF-8');
-
-        return $approveCaption === 'согласовать' && $rejectCaption === 'отклонить';
+        return true;
     };
 
     foreach (overtimeGetDocumentIdCandidates($iblockId, $requestId) as $docIdCandidate) {
