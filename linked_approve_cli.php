@@ -51,7 +51,8 @@ $log = static function (string $m) use ($debug): void {
     $line = '[' . date('Y-m-d H:i:s') . '] linked_approve_cli: ' . $m . PHP_EOL;
     echo $line;
     if ($debug) {
-        @file_put_contents(__DIR__ . '/linked_approve_cli.log', $line, FILE_APPEND);
+        $logFile = rtrim((string)getcwd(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . 'linked_approve_cli.log';
+        @file_put_contents($logFile, $line, FILE_APPEND);
     }
 };
 
