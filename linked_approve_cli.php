@@ -139,21 +139,53 @@ foreach ($linked as $linkedId) {
             $actUser = $taskUser > 0 ? $taskUser : $runUserId;
             $comment = 'Автосогласовано внешним скриптом по заявке #' . $elementId;
 
-            $payload = [
-                    'approve' => 'Y',
-                    'ACTION' => 'approve',
+
+            $codesToTry = ['approve', 'Approve', 'Y', 'yes', 'YES', 'TaskButton1'];
+            foreach ($codesToTry as $code) {
+                $payload = [
+                    'approve' => $code,
+                    $code => 'Y',
+                    'ACTION' => $code,
                     'comment' => $comment,
                     'task_comment' => $comment,
                     'USER_ID' => $actUser,
                     'REAL_USER_ID' => $actUser,
                 ];
-            $log("try PostTaskForm linked={$linkedId}, wf={$wf}, task={$taskId}, actUser={$actUser}, payload=" . print_r($payload, true));
-            $errors = [];
-            $res = $runAsUser($actUser, static function () use ($taskId, $actUser, $comment, &$errors) {
-                return CBPDocument::PostTaskForm($taskId, $actUser, $payload, $errors, '', $actUser);
-            });
+                $log("try PostTaskForm linked={$linkedId}, wf={$wf}, task={$taskId}, actUser={$actUser}, code={$code}, payload=" . print_r($payload, true));
+                $errors = [];
+                $res = $runAsUser($actUser, static function () use ($taskId, $actUser, $payload, &$errors) {
+                    return CBPDocument::PostTaskForm($taskId, $actUser, $payload, $errors, '', $actUser);
+                });
+                $log("PostTaskForm result: " . print_r($res, true) . ', errors=' . print_r($errors, true));
+            }
 
-            $log("linked={$linkedId}, task={$taskId}, user={$actUser}, result=" . print_r($res, true) . ', errors=' . print_r($errors, true));
+            $activityCandidates = array_values(array_unique(array_filter([
+                (string)($task['ACTIVITY_NAME'] ?? ''),
+                (string)($task['ACTIVITY'] ?? ''),
+                (string)($state['STATE_NAME'] ?? ''),
+            ])));
+            foreach ($activityCandidates as $activity) {
+                $evPayload = [
+                    'USER_ID' => $actUser,
+                    'REAL_USER_ID' => $actUser,
+                    'COMMENT' => $comment,
+                    'APPROVE' => 1,
+                ];
+                $log("try SendExternalEvent wf={$wf}, activity={$activity}, payload=" . print_r($evPayload, true));
+                $evRes = $runAsUser($actUser, static function () use ($wf, $activity, $evPayload) {
+                    return CBPRuntime::SendExternalEvent($wf, $activity, $evPayload);
+                });
+                $log('SendExternalEvent result: ' . print_r($evRes, true));
+            }
+
+            foreach ($codesToTry as $code) {
+                $doPayload = ['ACTION' => $code, $code => 'Y', 'COMMENT' => $comment, 'task_comment' => $comment];
+                $log("try DoTask task={$taskId}, code={$code}, payload=" . print_r($doPayload, true));
+                $doRes = $runAsUser($actUser, static function () use ($taskId, $actUser, $doPayload) {
+                    return CBPTaskService::DoTask($taskId, $actUser, $doPayload);
+                });
+                $log('DoTask result: ' . print_r($doRes, true));
+            }
         }
     }
 }
