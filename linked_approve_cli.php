@@ -69,6 +69,13 @@ $runAsUser = static function (int $userId, callable $callback) use ($log) {
 
     if ($canAuth && $userId > 0 && $prevUserId !== $userId) {
         $USER->Authorize($userId);
+        if (class_exists('Bitrix\Main\Engine\CurrentUser')) {
+            try {
+                \Bitrix\Main\Engine\CurrentUser::get()->setId($userId);
+            } catch (\Throwable $e) {
+                $log('runAsUser: CurrentUser setId error: ' . $e->getMessage());
+            }
+        }
         $log("runAsUser: {$prevUserId} -> {$userId}");
     }
     try {
@@ -76,6 +83,13 @@ $runAsUser = static function (int $userId, callable $callback) use ($log) {
     } finally {
         if ($canAuth && $prevUserId > 0 && (int)$USER->GetID() !== $prevUserId) {
             $USER->Authorize($prevUserId);
+            if (class_exists('Bitrix\Main\Engine\CurrentUser')) {
+                try {
+                    \Bitrix\Main\Engine\CurrentUser::get()->setId($prevUserId);
+                } catch (\Throwable $e) {
+                    $log('runAsUser: CurrentUser restore error: ' . $e->getMessage());
+                }
+            }
             $log("runAsUser: restore {$prevUserId}");
         }
     }
