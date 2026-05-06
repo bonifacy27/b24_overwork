@@ -69,13 +69,6 @@ $runAsUser = static function (int $userId, callable $callback) use ($log) {
 
     if ($canAuth && $userId > 0 && $prevUserId !== $userId) {
         $USER->Authorize($userId);
-        if (class_exists('Bitrix\Main\Engine\CurrentUser')) {
-            try {
-                \Bitrix\Main\Engine\CurrentUser::get()->setId($userId);
-            } catch (\Throwable $e) {
-                $log('runAsUser: CurrentUser setId error: ' . $e->getMessage());
-            }
-        }
         $log("runAsUser: {$prevUserId} -> {$userId}");
     }
     try {
@@ -83,13 +76,6 @@ $runAsUser = static function (int $userId, callable $callback) use ($log) {
     } finally {
         if ($canAuth && $prevUserId > 0 && (int)$USER->GetID() !== $prevUserId) {
             $USER->Authorize($prevUserId);
-            if (class_exists('Bitrix\Main\Engine\CurrentUser')) {
-                try {
-                    \Bitrix\Main\Engine\CurrentUser::get()->setId($prevUserId);
-                } catch (\Throwable $e) {
-                    $log('runAsUser: CurrentUser restore error: ' . $e->getMessage());
-                }
-            }
             $log("runAsUser: restore {$prevUserId}");
         }
     }
@@ -182,7 +168,23 @@ foreach ($linked as $linkedId) {
                 }
             }
 
-            $log('safe mode: skip SendExternalEvent/DoTask to avoid touching other tasks');
+            $log('safe mode: skip SendExternalEvent; DoTask fallback for same task only');
+            foreach ($codesToTry as $code) {
+                $doPayload = ['ACTION' => $code, $code => 'Y', 'COMMENT' => $comment, 'task_comment' => $comment];
+                $log("try DoTask task={$taskId}, code={$code}, payload=" . print_r($doPayload, true));
+                $doRes = $runAsUser($actUser, static function () use ($taskId, $actUser, $doPayload) {
+                    return CBPTaskService::DoTask($taskId, $actUser, $doPayload);
+                });
+                $log('DoTask result: ' . print_r($doRes, true));
+                $taskCheckRes = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'STATUS']);
+                $taskCheck = is_object($taskCheckRes) ? $taskCheckRes->Fetch() : null;
+                $isClosed = is_array($taskCheck) && (int)($taskCheck['STATUS'] ?? 0) !== (int)CBPTaskStatus::Running;
+                $log('task status after DoTask: ' . print_r($taskCheck, true));
+                if ($isClosed) {
+                    $log("task={$taskId} closed by DoTask; stop attempts");
+                    break;
+                }
+            }
         }
     }
 }
