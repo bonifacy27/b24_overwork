@@ -138,7 +138,7 @@ $resolveApproveActionCode = static function (int $taskId): string {
     return 'Approve';
 };
 
-$doApproveTask = static function (array $task, int $userId, string $comment = '') use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog): array {
+$doApproveTask = static function (array $task, int $userId, string $comment = '', array $extraActivityCandidates = []) use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
@@ -200,23 +200,31 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
         }
 
         $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
-        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? '');
-        if ($workflowId !== '' && $activity !== '' && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
+        $activityCandidates = array_values(array_unique(array_filter(array_merge(
+            [
+                (string)($task['ACTIVITY_NAME'] ?? ''),
+                (string)($task['ACTIVITY'] ?? ''),
+            ],
+            $extraActivityCandidates
+        ))));
+        if ($workflowId !== '' && !empty($activityCandidates) && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
             $payload = [
                 'USER_ID' => $userId,
                 'REAL_USER_ID' => $userId,
                 'COMMENT' => $comment,
                 'APPROVE' => true,
             ];
-            $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activity}, payload=" . print_r($payload, true));
-            CBPRuntime::SendExternalEvent($workflowId, $activity, $payload);
-            if (!$isTaskStillRunning($taskId)) {
-                $debugLog("SendExternalEvent успешно завершил taskId={$taskId}");
-                return [true, ''];
+            foreach ($activityCandidates as $activity) {
+                $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activity}, payload=" . print_r($payload, true));
+                CBPRuntime::SendExternalEvent($workflowId, $activity, $payload);
+                if (!$isTaskStillRunning($taskId)) {
+                    $debugLog("SendExternalEvent успешно завершил taskId={$taskId}, activity={$activity}");
+                    return [true, ''];
+                }
+                $debugLog("После SendExternalEvent taskId={$taskId} всё ещё running, activity={$activity}");
             }
-            $debugLog("После SendExternalEvent taskId={$taskId} всё ещё running");
         } else {
-            $debugLog("SendExternalEvent пропущен: workflowId='{$workflowId}', activity='{$activity}'");
+            $debugLog("SendExternalEvent пропущен: workflowId='{$workflowId}', activityCandidates=" . print_r($activityCandidates, true));
         }
 
         if (method_exists('CBPTaskService', 'DoTask')) {
@@ -334,7 +342,7 @@ foreach ($linkedElementIds as $linkedElementId) {
             $successUserId = 0;
             foreach ($executorCandidates as $candidateUserId) {
                 $debugLog("Пробуем завершить taskId={$taskId} от userId={$candidateUserId}");
-                [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment);
+                [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment, [(string)($state['STATE_NAME'] ?? '')]);
                 if ($ok) {
                     $successUserId = $candidateUserId;
                     break;
