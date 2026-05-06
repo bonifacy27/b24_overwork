@@ -45,6 +45,72 @@ function overtimeGetElementNameById(int $iblockId, int $elementId): string
     return $name;
 }
 
+function overtimeResolveEnumOrElementValue($value): string
+{
+    if ($value === null || $value === '') {
+        return '';
+    }
+
+    if (is_array($value)) {
+        $items = [];
+        foreach ($value as $item) {
+            $resolved = overtimeResolveEnumOrElementValue($item);
+            if ($resolved !== '') {
+                $items[] = $resolved;
+            }
+        }
+        return implode(', ', $items);
+    }
+
+    static $enumCache = [];
+    static $elementCache = [];
+
+    $intValue = (int)$value;
+    if ($intValue > 0) {
+        if (!array_key_exists($intValue, $enumCache)) {
+            $enum = CIBlockPropertyEnum::GetByID($intValue);
+            $enumCache[$intValue] = $enum ? (string)$enum['VALUE'] : '';
+        }
+        if ($enumCache[$intValue] !== '') {
+            return $enumCache[$intValue];
+        }
+
+        if (!array_key_exists($intValue, $elementCache)) {
+            $res = CIBlockElement::GetList([], ['ID' => $intValue], false, false, ['ID', 'NAME']);
+            $row = $res->Fetch();
+            $elementCache[$intValue] = $row ? (string)$row['NAME'] : '';
+        }
+        if ($elementCache[$intValue] !== '') {
+            return $elementCache[$intValue];
+        }
+    }
+
+    return (string)$value;
+}
+
+function overtimeGetStatusClass(string $statusName): string
+{
+    $statusName = mb_strtolower(trim($statusName), 'UTF-8');
+    if ($statusName === '') {
+        return 'status-default';
+    }
+
+    if (mb_strpos($statusName, 'соглас') !== false || mb_strpos($statusName, 'утверж') !== false || mb_strpos($statusName, 'одобр') !== false) {
+        return 'status-success';
+    }
+    if (mb_strpos($statusName, 'отказ') !== false || mb_strpos($statusName, 'отклон') !== false) {
+        return 'status-danger';
+    }
+    if (mb_strpos($statusName, 'нов') !== false || mb_strpos($statusName, 'создан') !== false || mb_strpos($statusName, 'чернов') !== false) {
+        return 'status-info';
+    }
+    if (mb_strpos($statusName, 'на соглас') !== false || mb_strpos($statusName, 'в работе') !== false || mb_strpos($statusName, 'рассмотр') !== false || mb_strpos($statusName, 'перераспредел') !== false) {
+        return 'status-warning';
+    }
+
+    return 'status-default';
+}
+
 function overtimeGetRequestViewData(int $requestId, array $config): ?array
 {
     if ($requestId <= 0) {
@@ -64,6 +130,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
         'PROPERTY_' . $config['REQ_PROP_JUSTIFICATION'],
+        'PROPERTY_' . $config['REQ_PROP_STATUS'],
     ];
     $select = array_merge($select, overtimeBuildOptionalPropertySelect($config));
 
@@ -87,6 +154,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
     $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
+    $statusName = overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? '');
 
     $employee = overtimeGetUserDataById($employeeId);
     $initiatorId = (int)($item['CREATED_BY'] ?? 0);
@@ -123,6 +191,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
+        'status_name' => $statusName,
     ];
 }
 
@@ -151,6 +220,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
             'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
             'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_STATUS'],
             ...overtimeBuildOptionalPropertySelect($config),
         ]
     );
@@ -170,6 +240,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'employee_name' => $employee['name'] ?: 'Не указан',
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
+            'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
         ];
     }
 
@@ -201,6 +272,7 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
             'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
             'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
             'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_STATUS'],
             ...overtimeBuildOptionalPropertySelect($config),
         ]
     );
@@ -220,6 +292,7 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
             'employee_name' => $employee['name'] ?: 'Не указан',
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'calculation_html' => $calculationHtml,
+            'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
         ];
     }
 
@@ -1245,6 +1318,12 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-linked-body {padding:0 12px 12px;}
     .overtime-view-linked-item-title {font-size:13px; margin:8px 0 6px; color:#374151;}
     .overtime-view-linked-calc {font-size:13px;}
+    .status-pill {display:inline-block; padding:5px 10px; border-radius:999px; color:#fff; font-size:12px; line-height:1.2; white-space:nowrap; font-weight:600;}
+    .status-success { background: #28a745; }
+    .status-danger  { background: #dc3545; }
+    .status-warning { background: #f0ad4e; }
+    .status-info    { background: #17a2b8; }
+    .status-default { background: #6c757d; }
     .overtime-view-highlight-row {font-weight:700; font-size:14px;}
     .overtime-view-highlight-cell {background:#fff4cc !important;}
     .overtime-view-marker {display:inline-block; margin-left:6px; padding:1px 6px; border-radius:10px; background:#d1242f; color:#fff; font-size:11px; font-weight:700; letter-spacing:.2px;}
@@ -1253,14 +1332,14 @@ $APPLICATION->SetTitle('Просмотр заявки');
     .overtime-view-justification-summary {cursor:pointer; padding:8px 12px; font-size:14px; color:#374151; user-select:none; font-weight:600;}
     .overtime-view-justification-body {padding:0 12px 12px;}
     .overtime-view-actions {display:flex; gap:10px; margin-top:20px;}
-    .overtime-view-approval {border:1px solid #e9b99a; border-radius:10px; padding:16px; background:#ffd9bd; margin-top:20px; box-shadow:0 2px 12px rgba(180,110,62,.12);}
+    .overtime-view-approval {border:1px solid #b5e7f5; border-radius:10px; padding:16px; background:#E8F9FE; margin-top:20px; box-shadow:0 2px 12px rgba(99,154,176,.12);}
     .overtime-view-approval-title {font-size:16px; margin-bottom:10px; font-weight:600;}
     .overtime-view-approval-actions {display:flex; gap:10px; flex-wrap:wrap;}
     .overtime-btn.overtime-btn-success {background:#2ea043 !important; border-color:#2ea043 !important; color:#fff !important;}
     .overtime-btn.overtime-btn-danger {background:#d1242f !important; border-color:#d1242f !important; color:#fff !important;}
     .overtime-btn.overtime-btn-warning {background:#f28c28 !important; border-color:#f28c28 !important; color:#fff !important;}
     .overtime-view-approval-comment {margin-bottom:10px;}
-    .overtime-view-approval-description {padding:12px; border:1px solid #e9b99a; border-radius:6px; background:#ffd9bd; white-space:normal; line-height:1.45;}
+    .overtime-view-approval-description {padding:12px; border:1px solid #b5e7f5; border-radius:6px; background:#E8F9FE; white-space:normal; line-height:1.45;}
     .overtime-view-approval-comment textarea {width:30%; min-height:74px; resize:vertical; border:1px solid #cfd7df; border-radius:6px; padding:8px; font-size:14px;}
     .overtime-view-approval-comment-note {font-size:12px; color:#7c2d12; margin-top:4px;}
     .overtime-btn {display:inline-block; padding:10px 14px; border:1px solid #cfd7df; border-radius:6px; background:#fff; text-decoration:none; color:#1f2937; cursor:pointer;}
@@ -1278,6 +1357,11 @@ $APPLICATION->SetTitle('Просмотр заявки');
             </div>
         <?php else: ?>
             <div class="overtime-view-title">Заявка #<?= (int)$viewData['id'] ?></div>
+            <?php if ($viewData['status_name'] !== ''): ?>
+                <div style="margin-bottom:10px;">
+                    <span class="status-pill <?= overtimeH(overtimeGetStatusClass((string)$viewData['status_name'])) ?>"><?= overtimeH($viewData['status_name']) ?></span>
+                </div>
+            <?php endif; ?>
 
             <div class="overtime-view-meta">
                 <div class="overtime-view-meta-item">
@@ -1319,7 +1403,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
                 <div class="overtime-view-linked-wrap">
                     <details class="overtime-view-linked-details">
                         <summary class="overtime-view-linked-summary">
-                            Расчет по связанным заявкам (<?= count($linkedCalculations) ?>)
+                            Расчет по связанным заявкам (<?= count($linkedCalculations) ?>): #<?= implode(', #', array_map('intval', array_column($linkedCalculations, 'id'))) ?>
                         </summary>
                         <div class="overtime-view-linked-body">
                             <?php foreach ($linkedCalculations as $linked): ?>
@@ -1328,6 +1412,9 @@ $APPLICATION->SetTitle('Просмотр заявки');
                                 </div>
                                 <div class="overtime-view-meta-label" style="margin-bottom:6px;">
                                     Сотрудник: <?= overtimeH($linked['employee_name']) ?> · Тип оплаты: <?= overtimeH($linked['payment_type_name']) ?>
+                                    <?php if (($linked['status_name'] ?? '') !== ''): ?>
+                                        · <span class="status-pill <?= overtimeH(overtimeGetStatusClass((string)$linked['status_name'])) ?>"><?= overtimeH((string)$linked['status_name']) ?></span>
+                                    <?php endif; ?>
                                 </div>
                                 <div class="overtime-view-calc overtime-view-linked-calc">
                                     <?= $linked['calculation_html'] !== '' ? overtimeHighlightCalculationRows($linked['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
@@ -1350,6 +1437,9 @@ $APPLICATION->SetTitle('Просмотр заявки');
                                 <div class="overtime-view-linked-body">
                                     <div class="overtime-view-meta-label" style="margin-bottom:6px;">
                                         Сотрудник: <?= overtimeH($groupRequest['employee_name']) ?> · Тип оплаты: <?= overtimeH($groupRequest['payment_type_name']) ?>
+                                        <?php if (($groupRequest['status_name'] ?? '') !== ''): ?>
+                                            · <span class="status-pill <?= overtimeH(overtimeGetStatusClass((string)$groupRequest['status_name'])) ?>"><?= overtimeH((string)$groupRequest['status_name']) ?></span>
+                                        <?php endif; ?>
                                     </div>
                                     <div class="overtime-view-calc overtime-view-linked-calc">
                                         <?= $groupRequest['calculation_html'] !== '' ? overtimeHighlightCalculationRows($groupRequest['calculation_html']) : '<i>Расчет отсутствует</i>' ?>
