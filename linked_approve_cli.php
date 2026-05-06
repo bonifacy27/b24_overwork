@@ -101,9 +101,15 @@ foreach ($linked as $linkedId) {
         $wf = (string)($state['ID'] ?? '');
         if ($wf === '') continue;
 
-        $tasks = CBPTaskService::GetList(['ID' => 'ASC'], ['WORKFLOW_ID' => $wf, 'STATUS' => CBPTaskStatus::Running], false, false, ['ID', 'USER_ID', 'WORKFLOW_ID']);
+        $tasks = CBPTaskService::GetList(['ID' => 'ASC'], ['WORKFLOW_ID' => $wf, 'STATUS' => CBPTaskStatus::Running], false, false, ['ID', 'USER_ID', 'WORKFLOW_ID', 'PARAMETERS', 'NAME', 'ACTIVITY', 'ACTIVITY_NAME']);
         while ($task = $tasks->Fetch()) {
             $taskId = (int)$task['ID'];
+            $taskDocId = (int)($task['PARAMETERS']['DOCUMENT_ID'][2] ?? 0);
+            if ($taskDocId > 0 && $taskDocId !== $linkedId) {
+                $log("skip task={$taskId}: DOCUMENT_ID={$taskDocId}, expected linked={$linkedId}; raw=" . print_r($task, true));
+                continue;
+            }
+
             $taskUser = (int)($task['USER_ID'] ?? 0);
             $actUser = $taskUser > 0 ? $taskUser : $runUserId;
             $comment = 'Автосогласовано внешним скриптом по заявке #' . $elementId;
