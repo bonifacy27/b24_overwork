@@ -139,6 +139,27 @@ $resolveApproveActionCode = static function (int $taskId): string {
 };
 
 
+
+$runAsUser = static function (int $userId, callable $callback) use ($debugLog) {
+    global $USER;
+    $canAuth = is_object($USER) && method_exists($USER, 'Authorize') && method_exists($USER, 'GetID');
+    $prevUserId = $canAuth ? (int)$USER->GetID() : 0;
+
+    if ($canAuth && $userId > 0 && $prevUserId !== $userId) {
+        $USER->Authorize($userId);
+        $debugLog("runAsUser: переключили контекст пользователя с {$prevUserId} на {$userId}");
+    }
+
+    try {
+        return $callback();
+    } finally {
+        if ($canAuth && $prevUserId > 0 && (int)$USER->GetID() !== $prevUserId) {
+            $USER->Authorize($prevUserId);
+            $debugLog("runAsUser: восстановили контекст пользователя {$prevUserId}");
+        }
+    }
+};
+
 $collectTaskDiagnostics = static function (int $taskId, int $userId, string $stage = '') use ($debugLog): void {
     if (!class_exists('CBPTaskService')) {
         return;
@@ -174,7 +195,7 @@ $collectTaskDiagnostics = static function (int $taskId, int $userId, string $sta
     $debugLog("diag[{$stage}] controls attempts: " . print_r($controlsAttempts, true));
 };
 
-$doApproveTask = static function (array $task, int $userId, string $comment = '', string $fallbackActivityName = '') use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog, $collectTaskDiagnostics): array {
+$doApproveTask = static function (array $task, int $userId, string $comment = '', string $fallbackActivityName = '') use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog, $collectTaskDiagnostics, $runAsUser): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
@@ -231,7 +252,9 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
             foreach ($requests as $idx => $requestFields) {
                 $errors = [];
                 $debugLog("Вызов CBPDocument::PostTaskForm для taskId={$taskId}, attempt={$idx}, поля: " . print_r($requestFields, true));
-                $postResult = CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $errors, '', $userId);
+                $postResult = $runAsUser($userId, static function () use ($taskId, $userId, $requestFields, &$errors) {
+                    return CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $errors, '', $userId);
+                });
                 $debugLog("PostTaskForm result для taskId={$taskId}, attempt={$idx}: " . print_r($postResult, true));
                 if (!empty($errors)) {
                     $debugLog("PostTaskForm errors для taskId={$taskId}, attempt={$idx}: " . print_r($errors, true));
@@ -263,7 +286,9 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
             ];
             foreach ($activityCandidates as $activityCandidate) {
                 $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activityCandidate}, payload=" . print_r($payload, true));
-                $eventResult = CBPRuntime::SendExternalEvent($workflowId, $activityCandidate, $payload);
+                $eventResult = $runAsUser($userId, static function () use ($workflowId, $activityCandidate, $payload) {
+                    return CBPRuntime::SendExternalEvent($workflowId, $activityCandidate, $payload);
+                });
                 $debugLog("SendExternalEvent result taskId={$taskId}, activity={$activityCandidate}: " . print_r($eventResult, true));
                 if (!$isTaskStillRunning($taskId)) {
                     $debugLog("SendExternalEvent успешно завершил taskId={$taskId}, activity={$activityCandidate}");
@@ -288,7 +313,9 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                     'task_comment' => $comment,
                 ];
                 $debugLog("Вызов CBPTaskService::DoTask для taskId={$taskId}, codeTry={$codeTry}, payload: " . print_r($payload, true));
-                $doTaskResult = CBPTaskService::DoTask($taskId, $userId, $payload);
+                $doTaskResult = $runAsUser($userId, static function () use ($taskId, $userId, $payload) {
+                    return CBPTaskService::DoTask($taskId, $userId, $payload);
+                });
                 $debugLog("DoTask result для taskId={$taskId}, codeTry={$codeTry}: " . print_r($doTaskResult, true));
                 if (!$isTaskStillRunning($taskId)) {
                     $debugLog("DoTask успешно завершил taskId={$taskId} с codeTry={$codeTry}");
