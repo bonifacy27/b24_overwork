@@ -4,10 +4,27 @@
  * Usage: /usr/bin/php linked_approve_cli.php --element=3586572 [--user=1]
  */
 
-$_SERVER['DOCUMENT_ROOT'] = $_SERVER['DOCUMENT_ROOT'] ?: dirname(__DIR__);
+define('NO_KEEP_STATISTIC', true);
+define('NOT_CHECK_PERMISSIONS', true);
+define('STOP_STATISTICS', true);
+define('BX_CRONTAB', true);
+define('BX_CRONTAB_SUPPORT', true);
+define('NO_AGENT_STATISTIC', 'Y');
+define('DisableEventsCheck', true);
+
+$_SERVER['DOCUMENT_ROOT'] = '/home/bitrix/www';
+$_SERVER['REMOTE_ADDR'] = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+$_SERVER['REQUEST_METHOD'] = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$_SERVER['HTTP_HOST'] = $_SERVER['HTTP_HOST'] ?? 'localhost';
+
 $prolog = $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 if (is_file($prolog)) {
+    ob_start();
     require_once $prolog;
+    $prologOutput = (string)ob_get_clean();
+    if ($prologOutput !== '' && stripos($prologOutput, '<html') !== false) {
+        fwrite(STDERR, "Warning: prolog produced HTML output (likely auth template), ignored for CLI run.\n");
+    }
 }
 
 if (!class_exists('CModule')) {
