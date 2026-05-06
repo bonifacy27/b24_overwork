@@ -111,14 +111,32 @@ $appendHistory = static function (int $elementId, string $message) use ($iblockI
     CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
 };
 
-$resolveApproveActionCode = static function (int $taskId): string {
+$getTaskControls = static function (array $task) use ($debugLog): array {
+    $taskId = (int)($task['ID'] ?? 0);
     $controls = [];
+
     if (method_exists('CBPDocument', 'GetTaskControls')) {
-        $controls = (array)CBPDocument::GetTaskControls($taskId);
+        $controls = (array)CBPDocument::GetTaskControls($task);
     }
     if (empty($controls) && method_exists('CBPTaskService', 'GetTaskControls')) {
-        $controls = (array)CBPTaskService::GetTaskControls($taskId);
+        $controls = (array)CBPTaskService::GetTaskControls($task);
     }
+
+    if (empty($controls) && $taskId > 0) {
+        if (method_exists('CBPDocument', 'GetTaskControls')) {
+            $controls = (array)CBPDocument::GetTaskControls($taskId);
+        }
+        if (empty($controls) && method_exists('CBPTaskService', 'GetTaskControls')) {
+            $controls = (array)CBPTaskService::GetTaskControls($taskId);
+        }
+    }
+
+    $debugLog('Task controls для taskId=' . $taskId . ': ' . print_r($controls, true));
+    return $controls;
+};
+
+$resolveApproveActionCode = static function (array $task) use ($getTaskControls): string {
+    $controls = $getTaskControls($task);
 
     foreach ($controls as $control) {
         $id = (string)($control['CONTROL_ID'] ?? $control['ID'] ?? '');
@@ -138,13 +156,13 @@ $resolveApproveActionCode = static function (int $taskId): string {
     return 'Approve';
 };
 
-$doApproveTask = static function (array $task, int $userId, string $comment = '') use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog): array {
+$doApproveTask = static function (array $task, int $userId, string $comment = '', array $extraActivityCandidates = []) use ($resolveApproveActionCode, $getTaskControls, $isTaskStillRunning, $debugLog): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
     }
 
-    $actionCode = $resolveApproveActionCode($taskId);
+    $actionCode = $resolveApproveActionCode($task);
     if ((string)($task['ACTIVITY_NAME'] ?? '') === '' && class_exists('CBPTaskService')) {
         $taskReloadRes = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'WORKFLOW_ID', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']);
         if (is_object($taskReloadRes)) {
@@ -200,23 +218,31 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
         }
 
         $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
-        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? '');
-        if ($workflowId !== '' && $activity !== '' && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
+        $activityCandidates = array_values(array_unique(array_filter(array_merge(
+            [
+                (string)($task['ACTIVITY_NAME'] ?? ''),
+                (string)($task['ACTIVITY'] ?? ''),
+            ],
+            $extraActivityCandidates
+        ))));
+        if ($workflowId !== '' && !empty($activityCandidates) && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
             $payload = [
                 'USER_ID' => $userId,
                 'REAL_USER_ID' => $userId,
                 'COMMENT' => $comment,
                 'APPROVE' => true,
             ];
-            $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activity}, payload=" . print_r($payload, true));
-            CBPRuntime::SendExternalEvent($workflowId, $activity, $payload);
-            if (!$isTaskStillRunning($taskId)) {
-                $debugLog("SendExternalEvent успешно завершил taskId={$taskId}");
-                return [true, ''];
+            foreach ($activityCandidates as $activity) {
+                $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activity}, payload=" . print_r($payload, true));
+                CBPRuntime::SendExternalEvent($workflowId, $activity, $payload);
+                if (!$isTaskStillRunning($taskId)) {
+                    $debugLog("SendExternalEvent успешно завершил taskId={$taskId}, activity={$activity}");
+                    return [true, ''];
+                }
+                $debugLog("После SendExternalEvent taskId={$taskId} всё ещё running, activity={$activity}");
             }
-            $debugLog("После SendExternalEvent taskId={$taskId} всё ещё running");
         } else {
-            $debugLog("SendExternalEvent пропущен: workflowId='{$workflowId}', activity='{$activity}'");
+            $debugLog("SendExternalEvent пропущен: workflowId='{$workflowId}', activityCandidates=" . print_r($activityCandidates, true));
         }
 
         if (method_exists('CBPTaskService', 'DoTask')) {
@@ -241,13 +267,7 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
         return [false, $e->getMessage()];
     }
 
-    $controlsDbg = [];
-    if (method_exists('CBPDocument', 'GetTaskControls')) {
-        $controlsDbg = (array)CBPDocument::GetTaskControls($taskId);
-    }
-    if (empty($controlsDbg) && method_exists('CBPTaskService', 'GetTaskControls')) {
-        $controlsDbg = (array)CBPTaskService::GetTaskControls($taskId);
-    }
+    $controlsDbg = $getTaskControls($task);
     $debugLog("Итог: taskId={$taskId} не завершился. Controls: " . print_r($controlsDbg, true));
 
     return [false, 'Задание не завершилось после попытки согласования'];
@@ -334,7 +354,7 @@ foreach ($linkedElementIds as $linkedElementId) {
             $successUserId = 0;
             foreach ($executorCandidates as $candidateUserId) {
                 $debugLog("Пробуем завершить taskId={$taskId} от userId={$candidateUserId}");
-                [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment);
+                [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment, [(string)($state['STATE_NAME'] ?? '')]);
                 if ($ok) {
                     $successUserId = $candidateUserId;
                     break;
