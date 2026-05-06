@@ -56,6 +56,12 @@ $log = static function (string $m) use ($debug): void {
     }
 };
 
+
+$log('start: argv=' . print_r($_SERVER['argv'] ?? [], true));
+$log('env: DOCUMENT_ROOT=' . ($_SERVER['DOCUMENT_ROOT'] ?? '') . ', cwd=' . getcwd() . ', php_sapi=' . PHP_SAPI);
+$log('options: ' . print_r($options, true));
+$log("input: elementId={$elementId}, runUserId={$runUserId}, debug=" . ($debug ? '1' : '0'));
+
 $runAsUser = static function (int $userId, callable $callback) use ($log) {
     global $USER;
     $canAuth = is_object($USER) && method_exists($USER, 'Authorize') && method_exists($USER, 'GetID');
@@ -84,6 +90,7 @@ while ($p = $rs->Fetch()) {
     if (!empty($p['VALUE'])) $linked[] = (int)$p['VALUE'];
 }
 $linked = array_values(array_unique(array_filter($linked)));
+$log('linked ids raw: ' . print_r($linked, true));
 if (!$linked) {
     $log('No linked requests found');
     exit(0);
@@ -92,7 +99,9 @@ if (!$linked) {
 foreach ($linked as $linkedId) {
     $docType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
     $docId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $linkedId];
+    $log("processing linked={$linkedId}, docId=" . print_r($docId, true));
     $states = CBPDocument::GetDocumentStates($docType, $docId);
+    $log("states for linked={$linkedId}: " . print_r($states, true));
     if (!$states) {
         $log("No workflows for linked #{$linkedId}");
         continue;
@@ -108,6 +117,7 @@ foreach ($linked as $linkedId) {
             continue;
         }
 
+        $log("query tasks for workflow={$wf}");
         $tasks = CBPTaskService::GetList(['ID' => 'ASC'], ['WORKFLOW_ID' => $wf, 'STATUS' => CBPTaskStatus::Running], false, false, ['ID', 'USER_ID', 'WORKFLOW_ID', 'PARAMETERS', 'NAME', 'ACTIVITY', 'ACTIVITY_NAME']);
         while ($task = $tasks->Fetch()) {
             $taskId = (int)$task['ID'];
@@ -124,23 +134,28 @@ foreach ($linked as $linkedId) {
                 continue;
             }
 
+            $log('candidate task raw: ' . print_r($task, true));
             $taskUser = (int)($task['USER_ID'] ?? 0);
             $actUser = $taskUser > 0 ? $taskUser : $runUserId;
             $comment = 'Автосогласовано внешним скриптом по заявке #' . $elementId;
 
-            $errors = [];
-            $res = $runAsUser($actUser, static function () use ($taskId, $actUser, $comment, &$errors) {
-                return CBPDocument::PostTaskForm($taskId, $actUser, [
+            $payload = [
                     'approve' => 'Y',
                     'ACTION' => 'approve',
                     'comment' => $comment,
                     'task_comment' => $comment,
                     'USER_ID' => $actUser,
                     'REAL_USER_ID' => $actUser,
-                ], $errors, '', $actUser);
+                ];
+            $log("try PostTaskForm linked={$linkedId}, wf={$wf}, task={$taskId}, actUser={$actUser}, payload=" . print_r($payload, true));
+            $errors = [];
+            $res = $runAsUser($actUser, static function () use ($taskId, $actUser, $comment, &$errors) {
+                return CBPDocument::PostTaskForm($taskId, $actUser, $payload, $errors, '', $actUser);
             });
 
             $log("linked={$linkedId}, task={$taskId}, user={$actUser}, result=" . print_r($res, true) . ', errors=' . print_r($errors, true));
         }
     }
 }
+
+$log('finish');
