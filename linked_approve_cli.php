@@ -102,12 +102,25 @@ foreach ($linked as $linkedId) {
         $wf = (string)($state['ID'] ?? '');
         if ($wf === '') continue;
 
+        $workflowStatus = (int)($state['WORKFLOW_STATUS'] ?? 0);
+        if ($workflowStatus > 0 && $workflowStatus !== 3) {
+            $log("skip workflow={$wf}: WORKFLOW_STATUS={$workflowStatus}");
+            continue;
+        }
+
         $tasks = CBPTaskService::GetList(['ID' => 'ASC'], ['WORKFLOW_ID' => $wf, 'STATUS' => CBPTaskStatus::Running], false, false, ['ID', 'USER_ID', 'WORKFLOW_ID', 'PARAMETERS', 'NAME', 'ACTIVITY', 'ACTIVITY_NAME']);
         while ($task = $tasks->Fetch()) {
             $taskId = (int)$task['ID'];
             $taskDocId = (int)($task['PARAMETERS']['DOCUMENT_ID'][2] ?? 0);
             if ($taskDocId > 0 && $taskDocId !== $linkedId) {
                 $log("skip task={$taskId}: DOCUMENT_ID={$taskDocId}, expected linked={$linkedId}; raw=" . print_r($task, true));
+                continue;
+            }
+
+            $activityCode = mb_strtolower((string)($task['ACTIVITY'] ?? ''));
+            $taskName = mb_strtolower((string)($task['NAME'] ?? ''));
+            if ($activityCode !== '' && strpos($activityCode, 'approve') === false && strpos($taskName, 'соглас') === false) {
+                $log("skip task={$taskId}: activity='{$activityCode}', name='{$taskName}'");
                 continue;
             }
 
