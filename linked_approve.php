@@ -111,14 +111,32 @@ $appendHistory = static function (int $elementId, string $message) use ($iblockI
     CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
 };
 
-$resolveApproveActionCode = static function (int $taskId): string {
+$getTaskControls = static function (array $task) use ($debugLog): array {
+    $taskId = (int)($task['ID'] ?? 0);
     $controls = [];
+
     if (method_exists('CBPDocument', 'GetTaskControls')) {
-        $controls = (array)CBPDocument::GetTaskControls($taskId);
+        $controls = (array)CBPDocument::GetTaskControls($task);
     }
     if (empty($controls) && method_exists('CBPTaskService', 'GetTaskControls')) {
-        $controls = (array)CBPTaskService::GetTaskControls($taskId);
+        $controls = (array)CBPTaskService::GetTaskControls($task);
     }
+
+    if (empty($controls) && $taskId > 0) {
+        if (method_exists('CBPDocument', 'GetTaskControls')) {
+            $controls = (array)CBPDocument::GetTaskControls($taskId);
+        }
+        if (empty($controls) && method_exists('CBPTaskService', 'GetTaskControls')) {
+            $controls = (array)CBPTaskService::GetTaskControls($taskId);
+        }
+    }
+
+    $debugLog('Task controls для taskId=' . $taskId . ': ' . print_r($controls, true));
+    return $controls;
+};
+
+$resolveApproveActionCode = static function (array $task) use ($getTaskControls): string {
+    $controls = $getTaskControls($task);
 
     foreach ($controls as $control) {
         $id = (string)($control['CONTROL_ID'] ?? $control['ID'] ?? '');
@@ -138,13 +156,13 @@ $resolveApproveActionCode = static function (int $taskId): string {
     return 'Approve';
 };
 
-$doApproveTask = static function (array $task, int $userId, string $comment = '', array $extraActivityCandidates = []) use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog): array {
+$doApproveTask = static function (array $task, int $userId, string $comment = '', array $extraActivityCandidates = []) use ($resolveApproveActionCode, $getTaskControls, $isTaskStillRunning, $debugLog): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
     }
 
-    $actionCode = $resolveApproveActionCode($taskId);
+    $actionCode = $resolveApproveActionCode($task);
     if ((string)($task['ACTIVITY_NAME'] ?? '') === '' && class_exists('CBPTaskService')) {
         $taskReloadRes = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'WORKFLOW_ID', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']);
         if (is_object($taskReloadRes)) {
@@ -249,13 +267,7 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
         return [false, $e->getMessage()];
     }
 
-    $controlsDbg = [];
-    if (method_exists('CBPDocument', 'GetTaskControls')) {
-        $controlsDbg = (array)CBPDocument::GetTaskControls($taskId);
-    }
-    if (empty($controlsDbg) && method_exists('CBPTaskService', 'GetTaskControls')) {
-        $controlsDbg = (array)CBPTaskService::GetTaskControls($taskId);
-    }
+    $controlsDbg = $getTaskControls($task);
     $debugLog("Итог: taskId={$taskId} не завершился. Controls: " . print_r($controlsDbg, true));
 
     return [false, 'Задание не завершилось после попытки согласования'];
