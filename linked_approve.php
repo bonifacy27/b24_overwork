@@ -166,17 +166,24 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
             'yes',
             'YES',
             'Y',
+            'TaskButton1',
+            'taskbutton1',
+            'BUTTON1',
+            'complete',
+            'Complete',
         ])));
 
         if (method_exists('CBPDocument', 'PostTaskForm')) {
             $requests = [
-                ['approve' => 'Y', 'ACTION' => 'approve', 'comment' => $comment, 'task_comment' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId],
+                ['approve' => 'Y', 'APPROVE' => 'Y', 'ACTION' => 'approve', 'status' => 'Y', 'comment' => $comment, 'task_comment' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId],
             ];
             foreach ($codesToTry as $codeTry) {
                 $requests[] = [
                     'approve' => $codeTry,
                     $codeTry => 'Y',
                     'ACTION' => $codeTry,
+                    'APPROVE' => 'Y',
+                    'status' => 'Y',
                     'comment' => $comment,
                     'task_comment' => $comment,
                     'USER_ID' => $userId,
@@ -210,7 +217,10 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 'USER_ID' => $userId,
                 'REAL_USER_ID' => $userId,
                 'COMMENT' => $comment,
-                'APPROVE' => true,
+                'comment' => $comment,
+                'APPROVE' => 1,
+                'approve' => 'Y',
+                'status' => 'Y',
             ];
             foreach ($activityCandidates as $activityCandidate) {
                 $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activityCandidate}, payload=" . print_r($payload, true));
@@ -230,7 +240,10 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 $payload = [
                     'ACTION' => $codeTry,
                     $codeTry => 'Y',
+                    'APPROVE' => 'Y',
+                    'status' => 'Y',
                     'COMMENT' => $comment,
+                    'comment' => $comment,
                     'task_comment' => $comment,
                 ];
                 $debugLog("Вызов CBPTaskService::DoTask для taskId={$taskId}, codeTry={$codeTry}, payload: " . print_r($payload, true));
