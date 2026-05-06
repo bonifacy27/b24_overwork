@@ -392,7 +392,6 @@ foreach ($linkedElementIds as $linkedElementId) {
             ['ID' => 'ASC'],
             [
                 'WORKFLOW_ID' => $workflowId,
-                'USER_STATUS' => CBPTaskUserStatus::Waiting,
                 'STATUS' => CBPTaskStatus::Running,
             ],
             false,
@@ -450,7 +449,7 @@ foreach ($linkedElementIds as $linkedElementId) {
             }
         }
         if ($foundTasksForWorkflow === 0) {
-            $debugLog("По workflowId={$workflowId} не найдено задач по фильтру STATUS=Running + USER_STATUS=Waiting");
+            $debugLog("По workflowId={$workflowId} не найдено задач по фильтру STATUS=Running (без USER_STATUS)");
         }
     }
 
