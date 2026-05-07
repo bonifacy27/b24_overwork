@@ -208,6 +208,31 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
         $debug['attempts'][] = ['method' => 'CBPTaskService::DoTask', 'exception' => $e->getMessage()];
     }
 
+    try {
+        $workflowId = (string)($task['WORKFLOW_ID'] ?? '');
+        $activity = (string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? '');
+        if ($workflowId !== '' && $activity !== '' && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
+            $payload = ['USER_ID' => $userId, 'REAL_USER_ID' => $userId, 'COMMENT' => ''];
+            $normalized = mb_strtolower($actionCode, 'UTF-8');
+            if (preg_match('/approve|agree|accept|ok|yes|соглас/u', $normalized)) {
+                $payload['APPROVE'] = true;
+            } else {
+                $payload['APPROVE'] = false;
+                if (preg_match('/refine|доработ/u', $normalized)) {
+                    $payload['REFINE'] = 'Y';
+                }
+            }
+            CBPRuntime::SendExternalEvent($workflowId, $activity, $payload);
+            $debug['attempts'][] = ['method' => 'CBPRuntime::SendExternalEvent', 'workflow_id' => $workflowId, 'activity' => $activity, 'payload' => $payload];
+            if (!overtimeRefineTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => '', 'DEBUG' => $debug];
+            }
+        }
+    } catch (\Throwable $e) {
+        $errors[] = ['message' => $e->getMessage()];
+        $debug['attempts'][] = ['method' => 'CBPRuntime::SendExternalEvent', 'exception' => $e->getMessage()];
+    }
+
     $flat = [];
     foreach ($errors as $error) {
         $flat[] = is_array($error) ? (string)($error['message'] ?? $error['MESSAGE'] ?? '') : (string)$error;
