@@ -68,6 +68,25 @@ function overtimeRefineFindTask(int $requestId, int $userId, int $iblockId): ?ar
     return null;
 }
 
+
+function overtimeRefineExtractTaskParameters($raw): array
+{
+    if (is_array($raw)) return $raw;
+    if (!is_string($raw) || trim($raw) === '') return [];
+    $u = @unserialize($raw, ['allowed_classes' => false]);
+    if (is_array($u)) return $u;
+    $j = json_decode($raw, true);
+    return is_array($j) ? $j : [];
+}
+
+function overtimeRefineTaskCaptions(array $task): array
+{
+    $p = overtimeRefineExtractTaskParameters($task['PARAMETERS'] ?? null);
+    $a = trim((string)($p['TaskButton1Message'] ?? 'Согласовать'));
+    $r = trim((string)($p['TaskButton2Message'] ?? 'Отклонить'));
+    return [$a !== '' ? $a : 'Согласовать', $r !== '' ? $r : 'Отклонить'];
+}
+
 function overtimeRefineCompleteTask(array $task, int $userId, string $action): array
 {
     $taskId = (int)($task['ID'] ?? 0);
@@ -135,7 +154,14 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
         $isStartWorkday = overtimeIsWorkday1C($dateStart);
         $isEndWorkday = overtimeIsWorkday1C($dateEnd);
         if ($isWeekendType && ($isStartWorkday || $isEndWorkday)) { $error = 'Для заявки на работу в выходной день можно выбирать только выходные/праздничные дни.'; }
-        if (!$isWeekendType && (!$isStartWorkday || !$isEndWorkday || $dateStart !== $dateEnd)) { $error = 'Для сверхурочной заявки выбирается только рабочий день, дата начала и окончания должна совпадать.'; }
+        if (!$isWeekendType && (!$isStartWorkday || !$isEndWorkday)) { $error = 'Для сверхурочной заявки даты начала и окончания должны быть рабочими днями.'; }
+        if (!$isWeekendType && $error === '') {
+            $cursor = strtotime($dateStart); $end = strtotime($dateEnd);
+            while ($cursor <= $end) {
+                if (!overtimeIsWorkday1C(date('Y-m-d', $cursor))) { $error = 'Период сверхурочной заявки не должен пересекаться с выходными/праздничными днями.'; break; }
+                $cursor = strtotime('+1 day', $cursor);
+            }
+        }
 
         if ($error === '') {
             $fields = [
@@ -151,11 +177,18 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
     }
     if ($error === '') {
         $done = overtimeRefineCompleteTask($task, $currentUserId, $action === 'approve' ? 'approve' : 'reject');
-        if (!empty($done['OK'])) { LocalRedirect('/forms/hr_administration/overtime/view.php?id=' . $requestId); }
+        if (!empty($done['OK'])) { LocalRedirect('/forms/hr_administration/overtime/list.php'); }
         $error = (string)($done['ERROR'] ?? 'Не удалось завершить задание БП');
     }
 }
 $hours = overtimeGetHourOptions();
+$dateStartValue = (string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_START_DATE'].'_VALUE'];
+$dateEndValue = (string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_END_DATE'].'_VALUE'];
+if (preg_match('/^\d{2}\.\d{2}\.\d{4}$/', $dateStartValue)) { $dateStartValue = date('Y-m-d', strtotime($dateStartValue)); }
+if (preg_match('/^\d{2}\.\d{2}\.\d{4}$/', $dateEndValue)) { $dateEndValue = date('Y-m-d', strtotime($dateEndValue)); }
+$paymentOptions = overtimeGetPaymentTypesByWorkType($workTypeId, $overtimeConfig);
+$currentPaymentId = (int)($item['PROPERTY_'.$overtimeConfig['REQ_PROP_PAYMENT_TYPE'].'_VALUE'] ?? 0);
+[$approveCaption, $rejectCaption] = overtimeRefineTaskCaptions($task);
 ?>
 <style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}</style>
 <div class="overtime-wrap"><div class="overtime-box">
@@ -166,16 +199,15 @@ $hours = overtimeGetHourOptions();
 <div class="overtime-field"><label>Тип заявки</label><input type="text" value="<?=overtimeH($workTypeName)?>" readonly></div>
 <div class="overtime-field"><label>Комментарий по доработке</label><textarea readonly rows="2"><?=overtimeH((string)($item['PROPERTY_KOMMENTARIY_DLYA_DORABOTKI_VALUE'] ?? ''))?></textarea></div>
 <div class="overtime-grid-4">
-<div class="overtime-field"><label>Дата начала</label><input type="date" id="date_start" name="date_start" value="<?=overtimeH((string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_START_DATE'].'_VALUE'])?>"></div>
+<div class="overtime-field"><label>Дата начала</label><input type="date" id="date_start" name="date_start" value="<?=overtimeH($dateStartValue)?>"></div>
 <div class="overtime-field"><label>Время начала</label><select name="time_start" id="time_start"><?php foreach($hours as $h): ?><option value="<?=overtimeH($h)?>" <?=$h===(string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_START_TIME'].'_VALUE']?'selected':''?>><?=overtimeH($h)?></option><?php endforeach;?></select></div>
-<div class="overtime-field"><label>Дата окончания</label><input type="date" id="date_end" name="date_end" value="<?=overtimeH((string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_END_DATE'].'_VALUE'])?>"></div>
+<div class="overtime-field"><label>Дата окончания</label><input type="date" id="date_end" name="date_end" value="<?=overtimeH($dateEndValue)?>"></div>
 <div class="overtime-field"><label>Время окончания</label><select name="time_end" id="time_end"><?php foreach($hours as $h): ?><option value="<?=overtimeH($h)?>" <?=$h===(string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_END_TIME'].'_VALUE']?'selected':''?>><?=overtimeH($h)?></option><?php endforeach;?></select></div>
 </div>
 <div class="overtime-field"><label>Обоснование</label><textarea id="justification" name="justification" rows="3"><?=overtimeH((string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_JUSTIFICATION'].'_VALUE'])?></textarea></div>
-<div class="overtime-field"><label>Тип оплаты</label><input type="text" id="payment_type" name="payment_type" value="<?=overtimeH((string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_PAYMENT_TYPE'].'_VALUE'])?>"></div>
-<div class="overtime-preview-box"><h3>Предпросмотр</h3><div id="single_preview"></div></div>
-<button type="button" class="ui-btn ui-btn-primary" id="approve_btn">Согласовать</button>
-<button type="button" class="ui-btn ui-btn-light-border" id="reject_btn">Отклонить</button>
+<div class="overtime-field"><label>Тип оплаты</label><select id="payment_type" name="payment_type"><?php foreach($paymentOptions as $opt): ?><option value="<?= (int)$opt['ID'] ?>" <?= (int)$opt['ID'] === $currentPaymentId ? 'selected' : '' ?>><?= overtimeH($opt['NAME']) ?></option><?php endforeach; ?></select></div>
+<button type="button" class="ui-btn ui-btn-primary" id="approve_btn"><?=overtimeH($approveCaption)?></button>
+<button type="button" class="ui-btn ui-btn-light-border" id="reject_btn"><?=overtimeH($rejectCaption)?></button>
 </form></div></div>
 <script>
 BX.ready(function(){
@@ -185,14 +217,9 @@ BX.ready(function(){
    const ds=document.getElementById('date_start').value,de=document.getElementById('date_end').value;
    if(!ds||!de){return true;}
    if(isWeekendType){ if(!isWeekend(ds)||!isWeekend(de)){alert('Разрешены только выходные/праздничные дни.'); return false;} }
-   else { if(isWeekend(ds)||isWeekend(de)||ds!==de){alert('Для сверхурочной заявки только рабочий день и одинаковые даты начала/окончания.'); return false;} }
+   else { if(isWeekend(ds)||isWeekend(de)){alert('Для сверхурочной заявки дата начала и окончания должны быть рабочими днями.'); return false;} }
    return true;
  }
- function preview(){
-   const payload={single:{employee_id:'<?= (int)$employee['id'] ?>',date_start:date_start.value,time_start:time_start.value,date_end:date_end.value,time_end:time_end.value,justification:justification.value,payment_type:{0:payment_type.value}}};
-   BX.ajax.post(location.pathname+'?id=<?= (int)$requestId ?>',{ajax_action:'preview',payload:JSON.stringify(payload),sessid:BX.bitrix_sessid()},function(r){try{const j=JSON.parse(r);document.getElementById('single_preview').innerHTML=(j.single&&j.single.preview_html)?j.single.preview_html:'';}catch(e){}});
- }
- ['date_start','date_end','time_start','time_end','justification','payment_type'].forEach(id=>document.getElementById(id).addEventListener('change',preview)); preview();
  document.getElementById('approve_btn').onclick=function(){if(!validateDates())return;document.getElementById('task_action').value='approve';document.getElementById('refine-form').submit();};
  document.getElementById('reject_btn').onclick=function(){document.getElementById('task_action').value='reject';document.getElementById('refine-form').submit();};
 });
