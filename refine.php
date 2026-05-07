@@ -16,15 +16,55 @@ require_once __DIR__ . '/constants.php';
 require_once __DIR__ . '/data.php';
 require_once __DIR__ . '/logic.php';
 
+function overtimeRefineExtractRequestIdFromDocumentId(string $documentId, int $iblockId): int
+{
+    $documentId = trim($documentId);
+    if ($documentId === '') { return 0; }
+    if ($iblockId > 0 && preg_match('/(?:^|_)' . preg_quote((string)$iblockId, '/') . '_([0-9]+)$/', $documentId, $m)) { return (int)$m[1]; }
+    if (preg_match('/([0-9]+)\D*$/', $documentId, $m)) { return (int)$m[1]; }
+    return 0;
+}
+
+function overtimeRefineBizprocTaskIsForUser(array $task, int $userId): bool
+{
+    $scalar = (int)preg_replace('/\D+/u', '', (string)($task['USER_ID'] ?? ''));
+    if ($scalar > 0) { return $scalar === $userId; }
+    $users = $task['USERS'] ?? null;
+    if (is_string($users)) {
+        foreach (preg_split('/[,\s;|]+/u', $users) ?: [] as $part) {
+            if ((int)preg_replace('/\D+/u', '', (string)$part) === $userId) { return true; }
+        }
+    }
+    if (is_array($users)) {
+        foreach ($users as $v) {
+            if ((int)preg_replace('/\D+/u', '', (string)$v) === $userId) { return true; }
+        }
+    }
+    return false;
+}
+
 function overtimeRefineFindTask(int $requestId, int $userId, int $iblockId): ?array
 {
     if ($requestId <= 0 || $userId <= 0 || $iblockId <= 0 || !class_exists('CBPTaskService')) { return null; }
-    $res = CBPTaskService::GetList(['ID' => 'DESC'], ['USER_STATUS' => CBPTaskUserStatus::Waiting], false, false, ['ID','DOCUMENT_ID','USER_ID']);
-    while ($task = $res->GetNext()) {
-        $doc = (string)($task['DOCUMENT_ID'] ?? '');
-        if (strpos($doc, '_' . $iblockId . '_' . $requestId) === false) { continue; }
-        if ((int)preg_replace('/\D+/u', '', (string)($task['USER_ID'] ?? '')) === $userId) { return $task; }
+    $select = ['ID','DOCUMENT_ID','WORKFLOW_ID','ACTIVITY_NAME','USER_ID','USERS','PARAMETERS'];
+    $check = static function(array $task) use ($requestId, $userId, $iblockId): bool {
+        return overtimeRefineBizprocTaskIsForUser($task, $userId)
+            && overtimeRefineExtractRequestIdFromDocumentId((string)($task['DOCUMENT_ID'] ?? ''), $iblockId) === $requestId;
+    };
+
+    $docCandidates = [
+        ['lists', 'BizprocDocument', 'lists_' . $iblockId . '_' . $requestId],
+        ['iblock', 'CIBlockDocument', 'iblock_' . $iblockId . '_' . $requestId],
+        ['lists', 'Bitrix\Lists\BizprocDocumentLists', (string)$requestId],
+    ];
+
+    foreach ($docCandidates as $doc) {
+        $res = CBPTaskService::GetList(['ID' => 'DESC'], ['DOCUMENT_ID' => $doc, 'USER_STATUS' => CBPTaskUserStatus::Waiting], false, false, $select);
+        while ($task = $res->GetNext()) { if ($check($task)) return $task; }
     }
+
+    $res = CBPTaskService::GetList(['ID' => 'DESC'], ['USER_STATUS' => CBPTaskUserStatus::Waiting], false, false, $select);
+    while ($task = $res->GetNext()) { if ($check($task)) return $task; }
     return null;
 }
 
