@@ -79,28 +79,42 @@ function overtimeRefineExtractTaskParameters($raw): array
     return is_array($j) ? $j : [];
 }
 
-function overtimeRefineTaskCaptions(array $task): array
+function overtimeRefineGetTaskControlsByTaskId(int $taskId): array
 {
-    $p = overtimeRefineExtractTaskParameters($task['PARAMETERS'] ?? null);
-    $a = trim((string)($p['TaskButton1Message'] ?? 'Согласовать'));
-    $r = trim((string)($p['TaskButton2Message'] ?? 'Отклонить'));
-    return [$a !== '' ? $a : 'Согласовать', $r !== '' ? $r : 'Отклонить'];
+    $controls = [];
+    try { if (method_exists('CBPDocument', 'GetTaskControls')) { $controls = (array)CBPDocument::GetTaskControls($taskId); } } catch (\Throwable $e) {}
+    if (!empty($controls)) return $controls;
+    try { if (method_exists('CBPTaskService', 'GetTaskControls')) { $controls = (array)CBPTaskService::GetTaskControls($taskId); } } catch (\Throwable $e) {}
+    return is_array($controls) ? $controls : [];
 }
 
-function overtimeRefineCompleteTask(array $task, int $userId, string $action): array
+function overtimeRefineGetTaskButtons(array $task): array
 {
     $taskId = (int)($task['ID'] ?? 0);
-    if ($taskId <= 0) return ['OK' => false, 'ERROR' => 'Не найдено задание БП'];
-    $fields = ['USER_ID' => $userId, 'REAL_USER_ID' => $userId, 'COMMENT' => ''];
-    $fields[$action === 'approve' ? 'approve' : 'nonapprove'] = 'Y';
+    $controls = overtimeRefineGetTaskControlsByTaskId($taskId);
+    $approve=['code'=>'approve','label'=>'Согласовать']; $reject=['code'=>'nonapprove','label'=>'Отклонить'];
+    foreach ($controls as $code => $data) {
+        $label = is_array($data) ? (string)($data['TEXT'] ?? $data['LABEL'] ?? $data['NAME'] ?? '') : (string)$data;
+        $h = mb_strtolower(trim($code.' '.$label));
+        if (preg_match('/approve|agree|accept|соглас/u',$h)) { $approve=['code'=>(string)$code,'label'=>trim($label) ?: 'Согласовать']; }
+        if (preg_match('/nonapprove|reject|decline|отклон/u',$h)) { $reject=['code'=>(string)$code,'label'=>trim($label) ?: 'Отклонить']; }
+    }
+    return ['approve'=>$approve,'reject'=>$reject];
+}
+
+function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode): array
+{
+    $taskId = (int)($task['ID'] ?? 0);
+    if ($taskId <= 0) return ['OK'=>false,'ERROR'=>'Не найдено задание БП'];
+    $fields = ['USER_ID'=>$userId,'REAL_USER_ID'=>$userId,'COMMENT'=>'','task_comment'=>'', 'ACTION'=>$actionCode, $actionCode=>'Y'];
     try {
         $errors = [];
         CBPDocument::PostTaskForm($taskId, $userId, $fields, $errors, '', $userId);
-        if (!empty($errors)) { return ['OK' => false, 'ERROR' => 'Ошибка завершения задания БП']; }
+        if (!empty($errors)) { return ['OK'=>false,'ERROR'=>'Ошибка завершения задания БП']; }
     } catch (\Throwable $e) {
-        return ['OK' => false, 'ERROR' => $e->getMessage()];
+        return ['OK'=>false,'ERROR'=>$e->getMessage()];
     }
-    return ['OK' => true];
+    return ['OK'=>true];
 }
 
 function overtimeRefineLoadRequest(int $requestId, array $config): ?array
@@ -176,7 +190,9 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
         }
     }
     if ($error === '') {
-        $done = overtimeRefineCompleteTask($task, $currentUserId, $action === 'approve' ? 'approve' : 'reject');
+        $taskButtons = overtimeRefineGetTaskButtons($task);
+        $actionCode = $action === 'approve' ? (string)$taskButtons['approve']['code'] : (string)$taskButtons['reject']['code'];
+        $done = overtimeRefineCompleteTask($task, $currentUserId, $actionCode);
         if (!empty($done['OK'])) { LocalRedirect('/forms/hr_administration/overtime/list.php'); }
         $error = (string)($done['ERROR'] ?? 'Не удалось завершить задание БП');
     }
@@ -188,16 +204,15 @@ if (preg_match('/^\d{2}\.\d{2}\.\d{4}$/', $dateStartValue)) { $dateStartValue = 
 if (preg_match('/^\d{2}\.\d{2}\.\d{4}$/', $dateEndValue)) { $dateEndValue = date('Y-m-d', strtotime($dateEndValue)); }
 $paymentOptions = overtimeGetPaymentTypesByWorkType($workTypeId, $overtimeConfig);
 $currentPaymentId = (int)($item['PROPERTY_'.$overtimeConfig['REQ_PROP_PAYMENT_TYPE'].'_VALUE'] ?? 0);
-[$approveCaption, $rejectCaption] = overtimeRefineTaskCaptions($task);
+$taskButtons = overtimeRefineGetTaskButtons($task);
 ?>
-<style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}</style>
+<style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.ro{background:#f5f7fa;border:1px solid #d0d7de;color:#56606a}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}</style>
 <div class="overtime-wrap"><div class="overtime-box">
 <?php if ($error !== ''): ?><div class="overtime-alert"><?=overtimeH($error)?></div><?php endif; ?>
 <form method="post" id="refine-form"><?=bitrix_sessid_post()?>
 <input type="hidden" name="action" value="save_refine"><input type="hidden" name="task_action" id="task_action" value="">
-<div class="overtime-field"><label>Сотрудник</label><input type="text" value="<?=overtimeH($employee['display'])?>" readonly></div>
-<div class="overtime-field"><label>Тип заявки</label><input type="text" value="<?=overtimeH($workTypeName)?>" readonly></div>
-<div class="overtime-field"><label>Комментарий по доработке</label><textarea readonly rows="2"><?=overtimeH((string)($item['PROPERTY_KOMMENTARIY_DLYA_DORABOTKI_VALUE'] ?? ''))?></textarea></div>
+<div class="overtime-field"><label>Сотрудник</label><input type="text" value="<?=overtimeH($employee['display'])?>" readonly class="ro"></div>
+<div class="overtime-field"><label>Комментарий по доработке</label><textarea readonly rows="2" class="ro"><?=overtimeH((string)($item['PROPERTY_KOMMENTARIY_DLYA_DORABOTKI_VALUE'] ?? ''))?></textarea></div>
 <div class="overtime-grid-4">
 <div class="overtime-field"><label>Дата начала</label><input type="date" id="date_start" name="date_start" value="<?=overtimeH($dateStartValue)?>"></div>
 <div class="overtime-field"><label>Время начала</label><select name="time_start" id="time_start"><?php foreach($hours as $h): ?><option value="<?=overtimeH($h)?>" <?=$h===(string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_START_TIME'].'_VALUE']?'selected':''?>><?=overtimeH($h)?></option><?php endforeach;?></select></div>
@@ -205,9 +220,11 @@ $currentPaymentId = (int)($item['PROPERTY_'.$overtimeConfig['REQ_PROP_PAYMENT_TY
 <div class="overtime-field"><label>Время окончания</label><select name="time_end" id="time_end"><?php foreach($hours as $h): ?><option value="<?=overtimeH($h)?>" <?=$h===(string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_END_TIME'].'_VALUE']?'selected':''?>><?=overtimeH($h)?></option><?php endforeach;?></select></div>
 </div>
 <div class="overtime-field"><label>Обоснование</label><textarea id="justification" name="justification" rows="3"><?=overtimeH((string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_JUSTIFICATION'].'_VALUE'])?></textarea></div>
+<div class="overtime-field"><label>Тип заявки</label><input class="ro" type="text" value="<?=overtimeH($workTypeName)?>" readonly></div>
 <div class="overtime-field"><label>Тип оплаты</label><select id="payment_type" name="payment_type"><?php foreach($paymentOptions as $opt): ?><option value="<?= (int)$opt['ID'] ?>" <?= (int)$opt['ID'] === $currentPaymentId ? 'selected' : '' ?>><?= overtimeH($opt['NAME']) ?></option><?php endforeach; ?></select></div>
-<button type="button" class="ui-btn ui-btn-primary" id="approve_btn"><?=overtimeH($approveCaption)?></button>
-<button type="button" class="ui-btn ui-btn-light-border" id="reject_btn"><?=overtimeH($rejectCaption)?></button>
+<div class="overtime-field"><label>Текущее задание бизнес-процесса</label><div class="ro"><?=overtimeH((string)($task['NAME'] ?? ''))?></div></div>
+<button type="button" class="ui-btn ui-btn-primary" id="approve_btn"><?=overtimeH($taskButtons['approve']['label'])?></button>
+<button type="button" class="ui-btn ui-btn-light-border" id="reject_btn"><?=overtimeH($taskButtons['reject']['label'])?></button>
 </form></div></div>
 <script>
 BX.ready(function(){
