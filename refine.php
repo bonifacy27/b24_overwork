@@ -79,6 +79,18 @@ function overtimeRefineExtractTaskParameters($raw): array
     return is_array($j) ? $j : [];
 }
 
+function overtimeRefineTaskCaptions(array $task): array
+{
+    $params = overtimeRefineExtractTaskParameters($task['PARAMETERS'] ?? null);
+    $approve = trim((string)($params['TaskButton1Message'] ?? ''));
+    $reject = trim((string)($params['TaskButton2Message'] ?? ''));
+
+    return [
+        $approve !== '' ? $approve : 'Согласовать',
+        $reject !== '' ? $reject : 'Отклонить',
+    ];
+}
+
 function overtimeRefineGetTaskControlsByTaskId(int $taskId): array
 {
     $controls = [];
