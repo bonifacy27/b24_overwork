@@ -115,6 +115,25 @@ function overtimeRefineGetTaskButtons(array $task): array
     return ['approve'=>$approve,'reject'=>$reject];
 }
 
+function overtimeRefineTaskIsRunning(int $taskId): bool
+{
+    if ($taskId <= 0 || !class_exists('CBPTaskService')) {
+        return false;
+    }
+
+    $res = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'STATUS']);
+    if (!is_object($res)) {
+        return false;
+    }
+
+    $task = $res->GetNext();
+    if (!$task) {
+        return false;
+    }
+
+    return (int)($task['STATUS'] ?? 0) === (int)CBPTaskStatus::Running;
+}
+
 function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode): array
 {
     $taskId = (int)($task['ID'] ?? 0);
