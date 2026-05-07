@@ -147,6 +147,11 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
     }
 
     $errors = [];
+    $debug = [
+        'task_id' => $taskId,
+        'action_code' => $actionCode,
+        'attempts' => [],
+    ];
     $base = ['USER_ID' => $userId, 'REAL_USER_ID' => $userId, 'COMMENT' => '', 'task_comment' => ''];
     $requests = [];
     if ($actionCode === 'refine') {
@@ -160,26 +165,30 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
         try {
             $tmpErr = [];
             CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $tmpErr, '', $userId);
+            $debug['attempts'][] = ['method' => 'CBPDocument::PostTaskForm', 'fields' => $requestFields, 'errors' => $tmpErr];
             if (!empty($tmpErr)) {
                 $errors = array_merge($errors, $tmpErr);
             }
             if (!overtimeRefineTaskIsRunning($taskId)) {
-                return ['OK' => true, 'ERROR' => ''];
+                return ['OK' => true, 'ERROR' => '', 'DEBUG' => $debug];
             }
         } catch (\Throwable $e) {
             $errors[] = ['message' => $e->getMessage()];
+            $debug['attempts'][] = ['method' => 'CBPDocument::PostTaskForm', 'exception' => $e->getMessage(), 'fields' => $requestFields];
         }
     }
 
     try {
         if (method_exists('CBPTaskService', 'DoTask')) {
             CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $actionCode, $actionCode => 'Y', 'COMMENT' => '', 'task_comment' => '']);
+            $debug['attempts'][] = ['method' => 'CBPTaskService::DoTask', 'fields' => ['ACTION' => $actionCode, $actionCode => 'Y']];
             if (!overtimeRefineTaskIsRunning($taskId)) {
-                return ['OK' => true, 'ERROR' => ''];
+                return ['OK' => true, 'ERROR' => '', 'DEBUG' => $debug];
             }
         }
     } catch (\Throwable $e) {
         $errors[] = ['message' => $e->getMessage()];
+        $debug['attempts'][] = ['method' => 'CBPTaskService::DoTask', 'exception' => $e->getMessage()];
     }
 
     $flat = [];
@@ -187,7 +196,8 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
         $flat[] = is_array($error) ? (string)($error['message'] ?? $error['MESSAGE'] ?? '') : (string)$error;
     }
     $flat = trim(implode(' ', array_filter($flat)));
-    return ['OK' => false, 'ERROR' => $flat !== '' ? $flat : 'Не удалось завершить задание БП.'];
+    $debug['final_running_state'] = overtimeRefineTaskIsRunning($taskId) ? 'running' : 'closed';
+    return ['OK' => false, 'ERROR' => $flat !== '' ? $flat : 'Не удалось завершить задание БП.', 'DEBUG' => $debug];
 }
 
 function overtimeRefineLoadRequest(int $requestId, array $config): ?array
@@ -232,6 +242,7 @@ $workTypeId = (int)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_TYPE'].'_VAL
 $isWeekendType = $workTypeId === (int)$overtimeConfig['WORK_TYPE_WEEKEND_ID'];
 $workTypeName = $isWeekendType ? 'Заявка на работу в выходной день' : 'Заявка на сверхурочную работу';
 $error = '';
+$bpDebugInfo = [];
 
 if ($request->isPost() && $request->getPost('action') === 'save_refine' && check_bitrix_sessid()) {
     $action = (string)$request->getPost('task_action');
@@ -274,6 +285,7 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
         $done = overtimeRefineCompleteTask($task, $currentUserId, $actionCode);
         if (!empty($done['OK'])) { LocalRedirect('/forms/hr_administration/overtime/list.php'); }
         $error = (string)($done['ERROR'] ?? 'Не удалось завершить задание БП');
+        $bpDebugInfo = is_array($done['DEBUG'] ?? null) ? $done['DEBUG'] : [];
     }
 }
 $hours = overtimeGetHourOptions();
@@ -290,6 +302,12 @@ $bpDescriptionForForm = trim(str_replace('Текст задания для фо�
 <style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.ro{background:#f5f7fa;border:1px solid #d0d7de;color:#56606a}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}</style>
 <div class="overtime-wrap"><div class="overtime-box">
 <?php if ($error !== ''): ?><div class="overtime-alert"><?=overtimeH($error)?></div><?php endif; ?>
+<?php if (!empty($bpDebugInfo)): ?>
+    <details class="overtime-field">
+        <summary>Диагностика завершения БП</summary>
+        <pre style="white-space:pre-wrap; background:#f5f7fa; border:1px solid #d0d7de; padding:10px; border-radius:6px;"><?= overtimeH(print_r($bpDebugInfo, true)) ?></pre>
+    </details>
+<?php endif; ?>
 <form method="post" id="refine-form"><?=bitrix_sessid_post()?>
 <input type="hidden" name="action" value="save_refine"><input type="hidden" name="task_action" id="task_action" value="">
 <div class="overtime-field"><label>Сотрудник</label><input type="text" value="<?=overtimeH($employee['display'])?>" readonly class="ro"></div>
