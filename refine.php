@@ -46,7 +46,7 @@ function overtimeRefineBizprocTaskIsForUser(array $task, int $userId): bool
 function overtimeRefineFindTask(int $requestId, int $userId, int $iblockId): ?array
 {
     if ($requestId <= 0 || $userId <= 0 || $iblockId <= 0 || !class_exists('CBPTaskService')) { return null; }
-    $select = ['ID','DOCUMENT_ID','WORKFLOW_ID','ACTIVITY_NAME','USER_ID','USERS','PARAMETERS'];
+    $select = ['ID','NAME','DOCUMENT_ID','WORKFLOW_ID','ACTIVITY_NAME','USER_ID','USERS','PARAMETERS'];
     $check = static function(array $task) use ($requestId, $userId, $iblockId): bool {
         return overtimeRefineBizprocTaskIsForUser($task, $userId)
             && overtimeRefineExtractRequestIdFromDocumentId((string)($task['DOCUMENT_ID'] ?? ''), $iblockId) === $requestId;
@@ -118,30 +118,46 @@ function overtimeRefineGetTaskButtons(array $task): array
 function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode): array
 {
     $taskId = (int)($task['ID'] ?? 0);
-    if ($taskId <= 0) return ['OK'=>false,'ERROR'=>'Не найдено задание БП'];
-    $fields = ['USER_ID'=>$userId,'REAL_USER_ID'=>$userId,'COMMENT'=>'','task_comment'=>'', 'ACTION'=>$actionCode, $actionCode=>'Y'];
+    if ($taskId <= 0 || $userId <= 0) {
+        return ['OK' => false, 'ERROR' => 'Некорректные входные данные для завершения задачи БП.'];
+    }
+
+    $errors = [];
+    $base = ['USER_ID' => $userId, 'REAL_USER_ID' => $userId, 'COMMENT' => '', 'task_comment' => ''];
+    $requests = [$base + ['ACTION' => $actionCode, $actionCode => 'Y']];
+
+    foreach ($requests as $requestFields) {
+        try {
+            $tmpErr = [];
+            CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $tmpErr, '', $userId);
+            if (!empty($tmpErr)) {
+                $errors = array_merge($errors, $tmpErr);
+            }
+            if (!overtimeRefineTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
+            }
+        } catch (\Throwable $e) {
+            $errors[] = ['message' => $e->getMessage()];
+        }
+    }
+
     try {
-        $errors = [];
-        CBPDocument::PostTaskForm($taskId, $userId, $fields, $errors, '', $userId);
-        if (empty($errors) && class_exists('CBPTaskService')) {
-            $check = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'STATUS']);
-            $actual = is_object($check) ? $check->GetNext() : null;
-            if (!$actual || (int)($actual['STATUS'] ?? 0) !== (int)CBPTaskStatus::Running) {
-                return ['OK' => true];
+        if (method_exists('CBPTaskService', 'DoTask')) {
+            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $actionCode, $actionCode => 'Y', 'COMMENT' => '', 'task_comment' => '']);
+            if (!overtimeRefineTaskIsRunning($taskId)) {
+                return ['OK' => true, 'ERROR' => ''];
             }
         }
     } catch (\Throwable $e) {
-        return ['OK'=>false,'ERROR'=>$e->getMessage()];
+        $errors[] = ['message' => $e->getMessage()];
     }
-    try {
-        if (method_exists('CBPTaskService', 'DoTask')) {
-            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $actionCode, $actionCode => 'Y', 'COMMENT' => '']);
-            return ['OK' => true];
-        }
-    } catch (\Throwable $e) {
-        return ['OK' => false, 'ERROR' => $e->getMessage()];
+
+    $flat = [];
+    foreach ($errors as $error) {
+        $flat[] = is_array($error) ? (string)($error['message'] ?? $error['MESSAGE'] ?? '') : (string)$error;
     }
-    return ['OK'=>false,'ERROR'=>'Не удалось завершить задание БП'];
+    $flat = trim(implode(' ', array_filter($flat)));
+    return ['OK' => false, 'ERROR' => $flat !== '' ? $flat : 'Не удалось завершить задание БП.'];
 }
 
 function overtimeRefineLoadRequest(int $requestId, array $config): ?array
@@ -249,7 +265,7 @@ $taskButtons = overtimeRefineGetTaskButtons($task);
 <div class="overtime-field"><label>Обоснование</label><textarea id="justification" name="justification" rows="3"><?=overtimeH((string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_JUSTIFICATION'].'_VALUE'])?></textarea></div>
 <div class="overtime-field"><label>Тип заявки</label><input class="ro" type="text" value="<?=overtimeH($workTypeName)?>" readonly></div>
 <div class="overtime-field"><label>Тип оплаты</label><select id="payment_type" name="payment_type"><?php foreach($paymentOptions as $opt): ?><option value="<?= (int)$opt['ID'] ?>" <?= (int)$opt['ID'] === $currentPaymentId ? 'selected' : '' ?>><?= overtimeH($opt['NAME']) ?></option><?php endforeach; ?></select></div>
-<div class="overtime-field"><label>Текущее задание бизнес-процесса</label><div class="ro"><?=overtimeH((string)($task['NAME'] ?? ''))?></div></div>
+<div class="overtime-field"><label>Текущее задание бизнес-процесса</label><div class="ro"><?=overtimeH((string)($task['NAME'] ?? $task['ACTIVITY_NAME'] ?? ''))?></div></div>
 <button type="button" class="ui-btn ui-btn-primary" id="approve_btn"><?=overtimeH($taskButtons['approve']['label'])?></button>
 <button type="button" class="ui-btn ui-btn-light-border" id="reject_btn"><?=overtimeH($taskButtons['reject']['label'])?></button>
 </form></div></div>
