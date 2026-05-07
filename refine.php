@@ -104,15 +104,20 @@ function overtimeRefineGetTaskButtons(array $task): array
 {
     $taskId = (int)($task['ID'] ?? 0);
     $controls = overtimeRefineGetTaskControlsByTaskId($taskId);
+    $params = overtimeRefineExtractTaskParameters($task['PARAMETERS'] ?? []);
     [$defaultApprove, $defaultReject] = overtimeRefineTaskCaptions($task);
-    $approve=['code'=>'approve','label'=>$defaultApprove]; $reject=['code'=>'nonapprove','label'=>$defaultReject];
+    $approve=['code'=>'approve','label'=>$defaultApprove]; $reject=['code'=>'nonapprove','label'=>$defaultReject]; $refine = null;
     foreach ($controls as $code => $data) {
         $label = is_array($data) ? (string)($data['TEXT'] ?? $data['LABEL'] ?? $data['NAME'] ?? '') : (string)$data;
         $h = mb_strtolower(trim($code.' '.$label));
         if (preg_match('/approve|agree|accept|соглас/u',$h)) { $approve=['code'=>(string)$code,'label'=>trim($label) ?: 'Согласовать']; }
         if (preg_match('/nonapprove|reject|decline|отклон/u',$h)) { $reject=['code'=>(string)$code,'label'=>trim($label) ?: 'Отклонить']; }
+        if (preg_match('/refine|доработ/u',$h)) { $refine=['code'=>(string)$code,'label'=>trim($label) ?: 'Доработка']; }
     }
-    return ['approve'=>$approve,'reject'=>$reject];
+    if ($refine === null && (!isset($params['RefineAllowed']) || (string)$params['RefineAllowed'] !== 'N')) {
+        $refine = ['code' => 'refine', 'label' => trim((string)($params['TaskButton3Message'] ?? '')) ?: 'Доработка'];
+    }
+    return ['approve'=>$approve,'reject'=>$reject,'refine'=>$refine];
 }
 
 function overtimeRefineTaskIsRunning(int $taskId): bool
@@ -143,7 +148,13 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
 
     $errors = [];
     $base = ['USER_ID' => $userId, 'REAL_USER_ID' => $userId, 'COMMENT' => '', 'task_comment' => ''];
-    $requests = [$base + ['ACTION' => $actionCode, $actionCode => 'Y']];
+    $requests = [];
+    if ($actionCode === 'refine') {
+        $requests[] = $base + ['refine' => 'Y', 'REFINE' => 'Y', 'nonapprove' => 'Y', 'ACTION' => 'refine'];
+        $requests[] = $base + ['refine' => 'Y', 'REFINE' => 'Y', 'nonapprove' => 'Y', 'ACTION' => 'nonapprove'];
+    } else {
+        $requests[] = $base + ['ACTION' => $actionCode, $actionCode => 'Y'];
+    }
 
     foreach ($requests as $requestFields) {
         try {
@@ -253,7 +264,13 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
     }
     if ($error === '') {
         $taskButtons = overtimeRefineGetTaskButtons($task);
-        $actionCode = $action === 'approve' ? (string)$taskButtons['approve']['code'] : (string)$taskButtons['reject']['code'];
+        if ($action === 'approve') {
+            $actionCode = (string)$taskButtons['approve']['code'];
+        } elseif ($action === 'refine' && !empty($taskButtons['refine'])) {
+            $actionCode = (string)$taskButtons['refine']['code'];
+        } else {
+            $actionCode = (string)$taskButtons['reject']['code'];
+        }
         $done = overtimeRefineCompleteTask($task, $currentUserId, $actionCode);
         if (!empty($done['OK'])) { LocalRedirect('/forms/hr_administration/overtime/list.php'); }
         $error = (string)($done['ERROR'] ?? 'Не удалось завершить задание БП');
@@ -267,6 +284,8 @@ if (preg_match('/^\d{2}\.\d{2}\.\d{4}$/', $dateEndValue)) { $dateEndValue = date
 $paymentOptions = overtimeGetPaymentTypesByWorkType($workTypeId, $overtimeConfig);
 $currentPaymentId = (int)($item['PROPERTY_'.$overtimeConfig['REQ_PROP_PAYMENT_TYPE'].'_VALUE'] ?? 0);
 $taskButtons = overtimeRefineGetTaskButtons($task);
+$taskParams = overtimeRefineExtractTaskParameters($task['PARAMETERS'] ?? []);
+$bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
 ?>
 <style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.ro{background:#f5f7fa;border:1px solid #d0d7de;color:#56606a}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}</style>
 <div class="overtime-wrap"><div class="overtime-box">
@@ -285,8 +304,14 @@ $taskButtons = overtimeRefineGetTaskButtons($task);
 <div class="overtime-field"><label>Тип заявки</label><input class="ro" type="text" value="<?=overtimeH($workTypeName)?>" readonly></div>
 <div class="overtime-field"><label>Тип оплаты</label><select id="payment_type" name="payment_type"><?php foreach($paymentOptions as $opt): ?><option value="<?= (int)$opt['ID'] ?>" <?= (int)$opt['ID'] === $currentPaymentId ? 'selected' : '' ?>><?= overtimeH($opt['NAME']) ?></option><?php endforeach; ?></select></div>
 <div class="overtime-field"><label>Текущее задание бизнес-процесса</label><div class="ro"><?=overtimeH((string)($task['NAME'] ?? $task['ACTIVITY_NAME'] ?? ''))?></div></div>
+<?php if ($bpDescriptionForForm !== ''): ?>
+<div class="overtime-field"><div class="ro"><?= nl2br(overtimeH($bpDescriptionForForm)) ?></div></div>
+<?php endif; ?>
 <button type="button" class="ui-btn ui-btn-primary" id="approve_btn"><?=overtimeH($taskButtons['approve']['label'])?></button>
 <button type="button" class="ui-btn ui-btn-light-border" id="reject_btn"><?=overtimeH($taskButtons['reject']['label'])?></button>
+<?php if (!empty($taskButtons['refine'])): ?>
+<button type="button" class="ui-btn ui-btn-light-border" id="refine_btn"><?=overtimeH($taskButtons['refine']['label'])?></button>
+<?php endif; ?>
 </form></div></div>
 <script>
 BX.ready(function(){
@@ -301,6 +326,7 @@ BX.ready(function(){
  }
  document.getElementById('approve_btn').onclick=function(){if(!validateDates())return;document.getElementById('task_action').value='approve';document.getElementById('refine-form').submit();};
  document.getElementById('reject_btn').onclick=function(){document.getElementById('task_action').value='reject';document.getElementById('refine-form').submit();};
+ const rb=document.getElementById('refine_btn'); if(rb){ rb.onclick=function(){document.getElementById('task_action').value='refine';document.getElementById('refine-form').submit();}; }
 });
 </script>
 <?php require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
