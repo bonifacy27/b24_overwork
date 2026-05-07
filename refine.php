@@ -120,6 +120,21 @@ function overtimeRefineGetTaskButtons(array $task): array
     return ['approve'=>$approve,'reject'=>$reject,'refine'=>$refine];
 }
 
+function overtimeRefineResolveRuntimeActionCode(array $task, string $actionCode): string
+{
+    $buttons = overtimeRefineGetTaskButtons($task);
+    if ($actionCode === 'approve' && !empty($buttons['approve']['code'])) {
+        return (string)$buttons['approve']['code'];
+    }
+    if (($actionCode === 'nonapprove' || $actionCode === 'reject') && !empty($buttons['reject']['code'])) {
+        return (string)$buttons['reject']['code'];
+    }
+    if ($actionCode === 'refine' && !empty($buttons['refine']['code'])) {
+        return (string)$buttons['refine']['code'];
+    }
+    return $actionCode;
+}
+
 function overtimeRefineTaskIsRunning(int $taskId): bool
 {
     if ($taskId <= 0 || !class_exists('CBPTaskService')) {
@@ -146,10 +161,12 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
         return ['OK' => false, 'ERROR' => 'Некорректные входные данные для завершения задачи БП.'];
     }
 
+    $actionCode = overtimeRefineResolveRuntimeActionCode($task, $actionCode);
     $errors = [];
     $debug = [
         'task_id' => $taskId,
         'action_code' => $actionCode,
+        'controls' => overtimeRefineGetTaskControlsByTaskId($taskId),
         'attempts' => [],
     ];
     $base = ['USER_ID' => $userId, 'REAL_USER_ID' => $userId, 'COMMENT' => '', 'task_comment' => ''];
