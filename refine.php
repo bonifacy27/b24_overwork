@@ -154,7 +154,7 @@ function overtimeRefineTaskIsRunning(int $taskId): bool
     return (int)($task['STATUS'] ?? 0) === (int)CBPTaskStatus::Running;
 }
 
-function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode): array
+function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode, string $actionKind = ''): array
 {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0 || $userId <= 0) {
@@ -213,12 +213,12 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
         $activity = (string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? '');
         if ($workflowId !== '' && $activity !== '' && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
             $payload = ['USER_ID' => $userId, 'REAL_USER_ID' => $userId, 'COMMENT' => ''];
-            $normalized = mb_strtolower($actionCode, 'UTF-8');
-            if (preg_match('/approve|agree|accept|ok|yes|соглас/u', $normalized)) {
+            $kind = trim(mb_strtolower($actionKind, 'UTF-8'));
+            if ($kind === 'approve') {
                 $payload['APPROVE'] = true;
             } else {
                 $payload['APPROVE'] = false;
-                if (preg_match('/refine|доработ/u', $normalized)) {
+                if ($kind === 'refine') {
                     $payload['REFINE'] = 'Y';
                 }
             }
@@ -288,11 +288,12 @@ $bpDebugInfo = [];
 
 if ($request->isPost() && $request->getPost('action') === 'save_refine' && check_bitrix_sessid()) {
     $action = (string)$request->getPost('task_action');
+    $actionKind = (string)$request->getPost('task_kind');
     $taskButtons = overtimeRefineGetTaskButtons($task);
     $approveCode = (string)($taskButtons['approve']['code'] ?? 'approve');
     $rejectCode = (string)($taskButtons['reject']['code'] ?? 'nonapprove');
     $refineCode = (string)($taskButtons['refine']['code'] ?? 'refine');
-    $isApproveAction = ($action === $approveCode);
+    $isApproveAction = ($actionKind === 'approve');
 
     if ($isApproveAction) {
         $dateStart = (string)$request->getPost('date_start');
@@ -329,7 +330,7 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
             }
         }
         $actionCode = in_array($action, $allowedCodes, true) ? $action : (string)$taskButtons['approve']['code'];
-        $done = overtimeRefineCompleteTask($task, $currentUserId, $actionCode);
+        $done = overtimeRefineCompleteTask($task, $currentUserId, $actionCode, $actionKind);
         if (!empty($done['OK'])) { LocalRedirect('/forms/hr_administration/overtime/list.php'); }
         $error = (string)($done['ERROR'] ?? 'Не удалось завершить задание БП');
         $bpDebugInfo = is_array($done['DEBUG'] ?? null) ? $done['DEBUG'] : [];
@@ -356,7 +357,7 @@ $bpDescriptionForForm = trim(str_replace('Текст задания для фо�
     </details>
 <?php endif; ?>
 <form method="post" id="refine-form"><?=bitrix_sessid_post()?>
-<input type="hidden" name="action" value="save_refine"><input type="hidden" name="task_action" id="task_action" value="">
+<input type="hidden" name="action" value="save_refine"><input type="hidden" name="task_action" id="task_action" value=""><input type="hidden" name="task_kind" id="task_kind" value="">
 <div class="overtime-field"><label>Сотрудник</label><input type="text" value="<?=overtimeH($employee['display'])?>" readonly class="ro"></div>
 <div class="overtime-field"><label>Комментарий по доработке</label><textarea readonly rows="2" class="ro"><?=overtimeH((string)($item['PROPERTY_KOMMENTARIY_DLYA_DORABOTKI_VALUE'] ?? ''))?></textarea></div>
 <div class="overtime-grid-4">
@@ -389,9 +390,9 @@ BX.ready(function(){
    else { if(isWeekend(ds)||isWeekend(de)){alert('Для сверхурочной заявки дата начала и окончания должны быть рабочими днями.'); return false;} }
    return true;
  }
- document.getElementById('approve_btn').onclick=function(){if(!validateDates())return;document.getElementById('task_action').value='<?= overtimeH((string)$taskButtons['approve']['code']) ?>';document.getElementById('refine-form').submit();};
- document.getElementById('reject_btn').onclick=function(){document.getElementById('task_action').value='<?= overtimeH((string)$taskButtons['reject']['code']) ?>';document.getElementById('refine-form').submit();};
- const rb=document.getElementById('refine_btn'); if(rb){ rb.onclick=function(){document.getElementById('task_action').value='<?= overtimeH((string)($taskButtons['refine']['code'] ?? 'refine')) ?>';document.getElementById('refine-form').submit();}; }
+ document.getElementById('approve_btn').onclick=function(){if(!validateDates())return;document.getElementById('task_action').value='<?= overtimeH((string)$taskButtons['approve']['code']) ?>';document.getElementById('task_kind').value='approve';document.getElementById('refine-form').submit();};
+ document.getElementById('reject_btn').onclick=function(){document.getElementById('task_action').value='<?= overtimeH((string)$taskButtons['reject']['code']) ?>';document.getElementById('task_kind').value='reject';document.getElementById('refine-form').submit();};
+ const rb=document.getElementById('refine_btn'); if(rb){ rb.onclick=function(){document.getElementById('task_action').value='<?= overtimeH((string)($taskButtons['refine']['code'] ?? 'refine')) ?>';document.getElementById('task_kind').value='refine';document.getElementById('refine-form').submit();}; }
 });
 </script>
 <?php require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
