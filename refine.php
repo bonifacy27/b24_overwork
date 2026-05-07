@@ -92,7 +92,8 @@ function overtimeRefineGetTaskButtons(array $task): array
 {
     $taskId = (int)($task['ID'] ?? 0);
     $controls = overtimeRefineGetTaskControlsByTaskId($taskId);
-    $approve=['code'=>'approve','label'=>'Согласовать']; $reject=['code'=>'nonapprove','label'=>'Отклонить'];
+    [$defaultApprove, $defaultReject] = overtimeRefineTaskCaptions($task);
+    $approve=['code'=>'approve','label'=>$defaultApprove]; $reject=['code'=>'nonapprove','label'=>$defaultReject];
     foreach ($controls as $code => $data) {
         $label = is_array($data) ? (string)($data['TEXT'] ?? $data['LABEL'] ?? $data['NAME'] ?? '') : (string)$data;
         $h = mb_strtolower(trim($code.' '.$label));
@@ -110,11 +111,25 @@ function overtimeRefineCompleteTask(array $task, int $userId, string $actionCode
     try {
         $errors = [];
         CBPDocument::PostTaskForm($taskId, $userId, $fields, $errors, '', $userId);
-        if (!empty($errors)) { return ['OK'=>false,'ERROR'=>'Ошибка завершения задания БП']; }
+        if (empty($errors) && class_exists('CBPTaskService')) {
+            $check = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'STATUS']);
+            $actual = is_object($check) ? $check->GetNext() : null;
+            if (!$actual || (int)($actual['STATUS'] ?? 0) !== (int)CBPTaskStatus::Running) {
+                return ['OK' => true];
+            }
+        }
     } catch (\Throwable $e) {
         return ['OK'=>false,'ERROR'=>$e->getMessage()];
     }
-    return ['OK'=>true];
+    try {
+        if (method_exists('CBPTaskService', 'DoTask')) {
+            CBPTaskService::DoTask($taskId, $userId, ['ACTION' => $actionCode, $actionCode => 'Y', 'COMMENT' => '']);
+            return ['OK' => true];
+        }
+    } catch (\Throwable $e) {
+        return ['OK' => false, 'ERROR' => $e->getMessage()];
+    }
+    return ['OK'=>false,'ERROR'=>'Не удалось завершить задание БП'];
 }
 
 function overtimeRefineLoadRequest(int $requestId, array $config): ?array
