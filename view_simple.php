@@ -1407,7 +1407,15 @@ $department = trim((string)($u['WORK_DEPARTMENT'] ?? ''));
 <div><b>ФИО инициатора заявки:</b> <?= overtimeH($viewData['initiator_name']) ?></div>
 <table class="overtime-simple-table"><tr><th>ID</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы для оплаты премией <span class="overtime-view-marker">C&B</span></th><th>Часы для оплаты бухгалтерией <span class="overtime-view-marker">КА</span></th><th>Тип оплаты</th></tr>
 <?php
-$rows = array_merge([['id'=>$viewData['id'],'work_type_name'=>$viewData['work_type_name'],'work_period_text'=>$viewData['work_period_text'],'payment_type_name'=>$viewData['payment_type_name'],'calculation_html'=>$viewData['calculation_html']]], $linkedCalculations);
+$rows = array_merge([[
+    'id' => $viewData['id'],
+    'work_type_name' => $viewData['work_type_name'],
+    'work_period_text' => $viewData['work_period_text'],
+    'payment_type_name' => $viewData['payment_type_name'],
+    'calculation_html' => $viewData['calculation_html'],
+    'total_premium_hours' => $viewData['total_premium_hours'] ?? '0',
+    'total_ot_hours' => $viewData['total_ot_hours'] ?? '0',
+]], $linkedCalculations);
 foreach ($rows as $row):
 preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($row['work_period_text'] ?? ''), $m);
 ?>
