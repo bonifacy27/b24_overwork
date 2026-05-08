@@ -508,7 +508,7 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
             'hours_20' => 0.0,
             'night_hours_20' => 0.0,
             'tk_hours' => $segmentHours,
-            'premium_hours' => $segmentHours,
+            'premium_hours' => 0.0,
         ];
     }
 

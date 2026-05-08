@@ -176,7 +176,8 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         }
     }
 
-    $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+        $displayHours = overtimeResolveDisplayHoursByItem($item, $config);
+        $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
     if ($calculationHtml === '') {
         $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
     }
@@ -195,8 +196,8 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
         'status_name' => $statusName,
         'employee_id' => $employeeId,
-        'total_ot_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_OT_HOURS']),
-        'total_premium_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_PREMIUM_HOURS']),
+        'total_ot_hours' => $displayHours['tk_hours'],
+        'total_premium_hours' => $displayHours['premium_hours'],
     ];
 }
 
@@ -236,7 +237,8 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
         $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
         $employee = overtimeGetUserDataById($employeeId);
 
-        $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+        $displayHours = overtimeResolveDisplayHoursByItem($item, $config);
+    $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
         if ($calculationHtml === '') {
             $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
         }
@@ -248,8 +250,8 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_TYPE'])),
             'work_period_text' => overtimeBuildWorkPeriodTextByRequestItem($item, $config),
-            'total_ot_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_OT_HOURS']),
-            'total_premium_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_PREMIUM_HOURS']),
+            'total_ot_hours' => $displayHours['tk_hours'],
+            'total_premium_hours' => $displayHours['premium_hours'],
             'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
         ];
@@ -294,7 +296,8 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
         $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
         $employee = overtimeGetUserDataById($employeeId);
 
-        $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
+        $displayHours = overtimeResolveDisplayHoursByItem($item, $config);
+    $calculationHtml = overtimeBuildCalculationHtmlByRequestItem($item, $config);
         if ($calculationHtml === '') {
             $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
         }
@@ -419,6 +422,63 @@ function overtimeBuildWorkPeriodTextByRequestItem(array $item, array $config): s
     }
 
     return sprintf('(%s - %s)', $start->format('d.m.Y H:i'), $end->format('d.m.Y H:i'));
+}
+
+
+function overtimeResolveDisplayHoursByItem(array $item, array $config): array
+{
+    $paymentBreakdown = overtimeBuildPaymentBreakdownByRequestItem($item, $config);
+    if (!empty($paymentBreakdown)) {
+        return [
+            'tk_hours' => (string)round((float)($paymentBreakdown['tk_hours'] ?? 0), 2),
+            'premium_hours' => (string)round((float)($paymentBreakdown['premium_hours'] ?? 0), 2),
+        ];
+    }
+
+    return [
+        'tk_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_OT_HOURS']),
+        'premium_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_PREMIUM_HOURS']),
+    ];
+}
+
+function overtimeBuildPaymentBreakdownByRequestItem(array $item, array $config): array
+{
+    $employeeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_EMPLOYEE']);
+    $workTypeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_TYPE']);
+
+    if ($employeeId <= 0 || $workTypeId <= 0) {
+        return [];
+    }
+
+    $startDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_DATE']);
+    $startTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_START_TIME']);
+    $endDate = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_DATE']);
+    $endTime = overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_END_TIME']);
+
+    $start = overtimeBuildDateTimeFromDateAndTime($startDate, $startTime);
+    $end = overtimeBuildDateTimeFromDateAndTime($endDate, $endTime);
+
+    if ($start === null || $end === null) {
+        $start = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_START']));
+        $end = overtimeParseRequestDateTimeValue(overtimeExtractPropertyValue($item, $config['REQ_PROP_END']));
+    }
+
+    if ($start === null || $end === null) {
+        return [];
+    }
+
+    if (strtotime($start->format('Y-m-d H:i:s')) >= strtotime($end->format('Y-m-d H:i:s'))) {
+        return [];
+    }
+
+    $segment = [
+        'type_id' => $workTypeId,
+        'start' => $start,
+        'end' => $end,
+        'hours' => overtimeGetHoursDiff($start, $end),
+    ];
+
+    return overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
 }
 
 function overtimeBuildCalculationHtmlByRequestItem(array $item, array $config): string
