@@ -498,7 +498,7 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
             ],
             'summary' => [
                 [
-                    'title' => 'ИТОГО сверхурочных часов по ТК РФ',
+                    'title' => 'ИТОГО часов работы в выходной день по ТК РФ',
                     'hours' => $segmentHours,
                     'interval' => $interval,
                     'basis' => 'все часы работы в выходной день учитываются как часы для оплаты по ТК РФ (KA)',
