@@ -131,6 +131,8 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
         'PROPERTY_' . $config['REQ_PROP_JUSTIFICATION'],
         'PROPERTY_' . $config['REQ_PROP_STATUS'],
+        'PROPERTY_' . $config['REQ_PROP_TOTAL_OT_HOURS'],
+        'PROPERTY_' . $config['REQ_PROP_TOTAL_PREMIUM_HOURS'],
     ];
     $select = array_merge($select, overtimeBuildOptionalPropertySelect($config));
 
@@ -192,6 +194,9 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
         'status_name' => $statusName,
+        'employee_id' => $employeeId,
+        'total_ot_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_OT_HOURS']),
+        'total_premium_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_PREMIUM_HOURS']),
     ];
 }
 
@@ -221,6 +226,8 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
             'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
             'PROPERTY_' . $config['REQ_PROP_STATUS'],
+            'PROPERTY_' . $config['REQ_PROP_TOTAL_OT_HOURS'],
+            'PROPERTY_' . $config['REQ_PROP_TOTAL_PREMIUM_HOURS'],
             ...overtimeBuildOptionalPropertySelect($config),
         ]
     );
@@ -239,6 +246,10 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'name' => (string)$item['NAME'],
             'employee_name' => $employee['name'] ?: 'Не указан',
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
+            'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_TYPE'])),
+            'work_period_text' => overtimeBuildWorkPeriodTextByRequestItem($item, $config),
+            'total_ot_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_OT_HOURS']),
+            'total_premium_hours' => (string)overtimeExtractPropertyValue($item, $config['REQ_PROP_TOTAL_PREMIUM_HOURS']),
             'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
         ];
@@ -273,6 +284,8 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
             'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
             'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
             'PROPERTY_' . $config['REQ_PROP_STATUS'],
+            'PROPERTY_' . $config['REQ_PROP_TOTAL_OT_HOURS'],
+            'PROPERTY_' . $config['REQ_PROP_TOTAL_PREMIUM_HOURS'],
             ...overtimeBuildOptionalPropertySelect($config),
         ]
     );
@@ -1317,8 +1330,8 @@ function overtimeExtractHoursByLabel(string $html, array $labels): float
 }
 
 ?>
-<style>.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #ddd;padding:6px}.overtime-view-marker{background:#d1242f;color:#fff;padding:1px 6px;border-radius:9px;font-size:11px}</style>
-<div>
+<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}</style>
+<div class="overtime-view-wrap"><div class="overtime-view-box">
 <?php if ($viewData):
 $employeeId = (int)($viewData['employee_id'] ?? 0);
 if ($employeeId <= 0) {
@@ -1329,29 +1342,31 @@ $position = trim((string)($u['WORK_POSITION'] ?? ''));
 $department = trim((string)($u['WORK_DEPARTMENT'] ?? ''));
 ?>
 <div><b>ФИО сотрудника:</b> <?= overtimeH($viewData['employee_name']) ?></div>
-<div><b>Должность (WORK_POSITION):</b> <?= overtimeH($position ?: 'Не указана') ?></div>
-<div><b>Подразделение (WORK_DEPARTMENT):</b> <?= overtimeH($department ?: 'Не указано') ?></div>
+<div><b>Должность:</b> <?= overtimeH($position ?: 'Не указана') ?></div>
+<div><b>Подразделение:</b> <?= overtimeH($department ?: 'Не указано') ?></div>
 <div><b>ФИО инициатора заявки:</b> <?= overtimeH($viewData['initiator_name']) ?></div>
-<table class="overtime-simple-table"><tr><th>ID</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы для оплаты премией</th><th>Часы для оплаты бухгалтерией</th><th>Тип оплаты</th></tr>
+<table class="overtime-simple-table"><tr><th>ID</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы для оплаты премией <span class="overtime-view-marker">C&B</span></th><th>Часы для оплаты бухгалтерией <span class="overtime-view-marker">КА</span></th><th>Тип оплаты</th></tr>
 <?php
 $rows = array_merge([['id'=>$viewData['id'],'work_type_name'=>$viewData['work_type_name'],'work_period_text'=>$viewData['work_period_text'],'payment_type_name'=>$viewData['payment_type_name'],'calculation_html'=>$viewData['calculation_html']]], $linkedCalculations);
 foreach ($rows as $row):
 preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($row['work_period_text'] ?? ''), $m);
 ?>
 <tr><td><?= (int)$row['id'] ?></td><td><?= overtimeH((string)($row['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td>
-<td><?= overtimeH((string)overtimeExtractHoursByLabel((string)($row['calculation_html'] ?? ''), ['ИТОГО часы для оплаты единовременной премией'])) ?> <span class="overtime-view-marker">C&B</span></td>
-<td><?= overtimeH((string)overtimeExtractHoursByLabel((string)($row['calculation_html'] ?? ''), ['ИТОГО сверхурочных часов по ТК РФ','ИТОГО часов работы в выходной день по ТК РФ'])) ?> <span class="overtime-view-marker">КА</span></td>
+<td><?= overtimeH((string)($row['total_premium_hours'] ?? '0')) ?></td>
+<td><?= overtimeH((string)($row['total_ot_hours'] ?? '0')) ?></td>
 <td><?= overtimeH((string)($row['payment_type_name'] ?? '')) ?></td></tr>
 <?php endforeach; ?></table>
 <?php else: ?><div>Заявка с ID <?= (int)$requestId ?> не найдена.</div><?php endif; ?>
 
 <?php if ($approvalTask): ?>
-<div class="overtime-view-approval"><div><?= overtimeH($bpTaskTitle) ?></div>
-<form method="post"><?= bitrix_sessid_post() ?>
-<?php if ($bpDescriptionForForm !== ''): ?><div><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div><?php endif; ?>
-<div><?= overtimeH($bpCommentLabel) ?></div><textarea name="bp_comment"></textarea>
-<input type="hidden" name="bp_action" value=""><?php foreach ($approvalButtons as $button): ?><button type="submit" onclick="this.form.bp_action.value='<?= overtimeH((string)$button['code']) ?>';return true;"><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?>
+<div class="overtime-view-approval">
+<div class="overtime-view-approval-title"><?= overtimeH($bpTaskTitle) ?></div>
+<?php if ($bpActionError !== ''): ?><div class="ui-alert ui-alert-danger" style="margin-bottom:10px;"><span class="ui-alert-message"><?= overtimeH($bpActionError) ?></span></div><?php endif; ?>
+<form method="post" style="margin:0;"><?= bitrix_sessid_post() ?>
+<?php if ($bpDescriptionForForm !== ''): ?><div class="overtime-view-approval-comment"><div class="overtime-view-approval-description"><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?>
+<div class="overtime-view-approval-comment"><div style="margin-bottom:6px;"><?= overtimeH($bpCommentLabel) ?></div><textarea name="bp_comment" id="bp-comment-field"></textarea></div>
+<div class="overtime-view-approval-actions"><input type="hidden" name="bp_action" value=""><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type="submit" class="<?= overtimeH($buttonClass) ?>" onclick="this.form.bp_action.value='<?= overtimeH((string)$button['code']) ?>';return true;"><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div>
 </form></div>
 <?php endif; ?>
-</div>
+</div></div>
 <?php require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
