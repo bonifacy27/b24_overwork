@@ -1256,6 +1256,7 @@ $approvalButtons = [];
 $bpActionError = '';
 $bpCommentLabel = 'Комментарий';
 $bpDescriptionForForm = '';
+$bpTaskTitle = 'Согласование заявки';
 
 if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
@@ -1263,6 +1264,7 @@ if ($viewData && $currentUserId > 0) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
         $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
+        $bpTaskTitle = trim((string)($approvalTask['NAME'] ?? '')) ?: $bpDescriptionForForm ?: 'Согласование заявки';
         $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
@@ -1293,6 +1295,7 @@ if ($viewData && $currentUserId > 0) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
         $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
         $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
+        $bpTaskTitle = trim((string)($approvalTask['NAME'] ?? '')) ?: $bpDescriptionForForm ?: 'Согласование заявки';
         $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
@@ -1456,7 +1459,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
 
         <?php if ($approvalTask): ?>
             <div class="overtime-view-approval">
-                <div class="overtime-view-approval-title">Согласование заявки</div>
+                <div class="overtime-view-approval-title"><?= overtimeH($bpTaskTitle) ?></div>
                 <?php if ($bpActionError !== ''): ?>
                     <div class="ui-alert ui-alert-danger" style="margin-bottom:10px;">
                         <span class="ui-alert-message"><?= overtimeH($bpActionError) ?></span>
