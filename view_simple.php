@@ -111,6 +111,36 @@ function overtimeGetStatusClass(string $statusName): string
     return 'status-default';
 }
 
+
+function overtimeGetStatusColorById(int $statusId): string
+{
+    static $cache = [];
+
+    if ($statusId <= 0) {
+        return '';
+    }
+    if (array_key_exists($statusId, $cache)) {
+        return $cache[$statusId];
+    }
+
+    $res = CIBlockElement::GetList([], ['ID' => $statusId], false, false, ['ID', 'PROPERTY_COLOR']);
+    $row = $res->Fetch();
+    $color = trim((string)($row['PROPERTY_COLOR_VALUE'] ?? ''));
+    if ($color !== '' && preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) {
+        $cache[$statusId] = strtoupper($color);
+        return $cache[$statusId];
+    }
+
+    $cache[$statusId] = '';
+    return '';
+}
+
+function overtimeGetStatusPillStyle(int $statusId): string
+{
+    $color = overtimeGetStatusColorById($statusId);
+    return $color !== '' ? 'background:' . $color . ';' : '';
+}
+
 function overtimeGetRequestViewData(int $requestId, array $config): ?array
 {
     if ($requestId <= 0) {
@@ -156,6 +186,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
     $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
+    $statusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
     $statusName = overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? '');
 
     $employee = overtimeGetUserDataById($employeeId);
@@ -195,6 +226,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
         'status_name' => $statusName,
+        'status_id' => $statusId,
         'employee_id' => $employeeId,
         'total_ot_hours' => $displayHours['tk_hours'],
         'total_premium_hours' => $displayHours['premium_hours'],
@@ -254,6 +286,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'total_premium_hours' => $displayHours['premium_hours'],
             'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0),
         ];
     }
 
@@ -309,6 +342,7 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'calculation_html' => $calculationHtml,
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0),
         ];
     }
 

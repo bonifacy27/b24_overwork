@@ -111,6 +111,36 @@ function overtimeGetStatusClass(string $statusName): string
     return 'status-default';
 }
 
+
+function overtimeGetStatusColorById(int $statusId): string
+{
+    static $cache = [];
+
+    if ($statusId <= 0) {
+        return '';
+    }
+    if (array_key_exists($statusId, $cache)) {
+        return $cache[$statusId];
+    }
+
+    $res = CIBlockElement::GetList([], ['ID' => $statusId], false, false, ['ID', 'PROPERTY_COLOR']);
+    $row = $res->Fetch();
+    $color = trim((string)($row['PROPERTY_COLOR_VALUE'] ?? ''));
+    if ($color !== '' && preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) {
+        $cache[$statusId] = strtoupper($color);
+        return $cache[$statusId];
+    }
+
+    $cache[$statusId] = '';
+    return '';
+}
+
+function overtimeGetStatusPillStyle(int $statusId): string
+{
+    $color = overtimeGetStatusColorById($statusId);
+    return $color !== '' ? 'background:' . $color . ';' : '';
+}
+
 function overtimeGetRequestViewData(int $requestId, array $config): ?array
 {
     if ($requestId <= 0) {
@@ -154,6 +184,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
     $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
+    $statusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
     $statusName = overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? '');
 
     $employee = overtimeGetUserDataById($employeeId);
@@ -192,6 +223,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
         'status_name' => $statusName,
+        'status_id' => $statusId,
     ];
 }
 
@@ -241,6 +273,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0),
         ];
     }
 
@@ -293,6 +326,7 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'calculation_html' => $calculationHtml,
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0),
         ];
     }
 
@@ -1363,7 +1397,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
             <div class="overtime-view-title">Заявка #<?= (int)$viewData['id'] ?></div>
             <?php if ($viewData['status_name'] !== ''): ?>
                 <div style="margin-bottom:10px;">
-                    <span class="status-pill <?= overtimeH(overtimeGetStatusClass((string)$viewData['status_name'])) ?>"><?= overtimeH($viewData['status_name']) ?></span>
+                    <span class="status-pill <?= overtimeH(overtimeGetStatusClass((string)$viewData['status_name'])) ?>" style="<?= overtimeH(overtimeGetStatusPillStyle((int)($viewData['status_id'] ?? 0))) ?>"><?= overtimeH($viewData['status_name']) ?></span>
                 </div>
             <?php endif; ?>
 
@@ -1417,7 +1451,7 @@ $APPLICATION->SetTitle('Просмотр заявки');
                                 <div class="overtime-view-meta-label" style="margin-bottom:6px;">
                                     Сотрудник: <?= overtimeH($linked['employee_name']) ?> · Тип оплаты: <?= overtimeH($linked['payment_type_name']) ?>
                                     <?php if (($linked['status_name'] ?? '') !== ''): ?>
-                                        · <span class="status-pill <?= overtimeH(overtimeGetStatusClass((string)$linked['status_name'])) ?>"><?= overtimeH((string)$linked['status_name']) ?></span>
+                                        · <span class="status-pill <?= overtimeH(overtimeGetStatusClass((string)$linked['status_name'])) ?>" style="<?= overtimeH(overtimeGetStatusPillStyle((int)($linked['status_id'] ?? 0))) ?>"><?= overtimeH((string)$linked['status_name']) ?></span>
                                     <?php endif; ?>
                                 </div>
                                 <div class="overtime-view-calc overtime-view-linked-calc">

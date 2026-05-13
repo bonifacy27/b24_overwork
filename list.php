@@ -667,6 +667,37 @@ function getStatusClassCustom($statusName)
     return 'status-default';
 }
 
+
+function getStatusColorByIdCustom($statusId)
+{
+    static $cache = [];
+
+    $statusId = (int)$statusId;
+    if ($statusId <= 0) {
+        return '';
+    }
+    if (array_key_exists($statusId, $cache)) {
+        return $cache[$statusId];
+    }
+
+    $res = CIBlockElement::GetList([], ['ID' => $statusId], false, false, ['ID', 'PROPERTY_COLOR']);
+    $row = $res->Fetch();
+    $color = trim((string)($row['PROPERTY_COLOR_VALUE'] ?? ''));
+    if ($color !== '' && preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) {
+        $cache[$statusId] = strtoupper($color);
+        return $cache[$statusId];
+    }
+
+    $cache[$statusId] = '';
+    return '';
+}
+
+function getStatusPillStyleCustom($statusId)
+{
+    $color = getStatusColorByIdCustom($statusId);
+    return $color !== '' ? 'background:' . $color . ';' : '';
+}
+
 function normalizeTextKeyCustom($value)
 {
     $value = mb_strtolower(trim((string)$value), 'UTF-8');
@@ -994,6 +1025,7 @@ while ($ob = $rsItems->GetNextElement()) {
         'STATUS_ID'       => $statusId,
         'STATUS_NAME'     => $statusName,
         'STATUS_CLASS'    => getStatusClassCustom($statusName),
+        'STATUS_STYLE'    => getStatusPillStyleCustom($statusId),
         'HISTORY_RAW'     => is_array($v3082) ? implode("\n", $v3082) : (string)$v3082,
         'INITIATOR'       => $initiatorName,
         'RELATED_IDS'     => $relatedIds,
@@ -1757,7 +1789,7 @@ profilerStopCustom('total_backend');
                                 <td>
                                     <?php if ($a['STATUS_NAME'] !== ''): ?>
                                         <button type="button" class="status-open-btn js-executors-btn" data-executors-id="executors-<?= (int)$a['ID'] ?>">
-                                            <span class="status-pill <?= h($a['STATUS_CLASS']) ?>"><?= h($a['STATUS_NAME']) ?></span>
+                                            <span class="status-pill <?= h($a['STATUS_CLASS']) ?>" style="<?= h((string)($a['STATUS_STYLE'] ?? '')) ?>"><?= h($a['STATUS_NAME']) ?></span>
                                         </button>
                                         <div id="executors-<?= (int)$a['ID'] ?>" class="d-none">
                                             <?php if (!empty($a['CURRENT_EXECUTORS'])): ?>
@@ -1836,7 +1868,7 @@ profilerStopCustom('total_backend');
                                 <td class="pair-divider-cell">
                                     <?php if ($b['STATUS_NAME'] !== ''): ?>
                                         <button type="button" class="status-open-btn js-executors-btn" data-executors-id="executors-<?= (int)$b['ID'] ?>">
-                                            <span class="status-pill <?= h($b['STATUS_CLASS']) ?>"><?= h($b['STATUS_NAME']) ?></span>
+                                            <span class="status-pill <?= h($b['STATUS_CLASS']) ?>" style="<?= h((string)($b['STATUS_STYLE'] ?? '')) ?>"><?= h($b['STATUS_NAME']) ?></span>
                                         </button>
                                         <div id="executors-<?= (int)$b['ID'] ?>" class="d-none">
                                             <?php if (!empty($b['CURRENT_EXECUTORS'])): ?>
@@ -1917,7 +1949,7 @@ profilerStopCustom('total_backend');
                                 <td>
                                     <?php if ($row['STATUS_NAME'] !== ''): ?>
                                         <button type="button" class="status-open-btn js-executors-btn" data-executors-id="executors-<?= (int)$row['ID'] ?>">
-                                            <span class="status-pill <?= h($row['STATUS_CLASS']) ?>"><?= h($row['STATUS_NAME']) ?></span>
+                                            <span class="status-pill <?= h($row['STATUS_CLASS']) ?>" style="<?= h((string)($row['STATUS_STYLE'] ?? '')) ?>"><?= h($row['STATUS_NAME']) ?></span>
                                         </button>
                                         <div id="executors-<?= (int)$row['ID'] ?>" class="d-none">
                                             <?php if (!empty($row['CURRENT_EXECUTORS'])): ?>
