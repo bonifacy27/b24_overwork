@@ -239,6 +239,7 @@ BX.ready(function () {
             tab.classList.toggle('active', tab.dataset.mode === mode);
         });
 
+        updateCreateButtonLabel();
         toggleFileVisibility();
         requestPreview();
     }
@@ -455,6 +456,26 @@ BX.ready(function () {
         createBtn.disabled = blocked;
     }
 
+    function getPlannedRequestsCount() {
+        if (modeInput.value === 'single') {
+            return 1;
+        }
+        if (modeInput.value === 'multi_same') {
+            return document.querySelectorAll('.same-row').length;
+        }
+        return document.querySelectorAll('.diff-row').length;
+    }
+
+    function updateCreateButtonLabel() {
+        const createBtn = document.getElementById('create-btn');
+        if (!createBtn) {
+            return;
+        }
+
+        createBtn.textContent = getPlannedRequestsCount() > 1 ? 'Создать заявки' : 'Создать заявку';
+    }
+
+
     function collectPayload() {
         const mode = modeInput.value;
 
@@ -607,6 +628,7 @@ BX.ready(function () {
                     toggleFileVisibility();
                     lastPreviewResponse = response;
                     updateLateWarningUiFromPreview(response);
+                    updateCreateButtonLabel();
                     updateCreateButtonState(response);
 
                     if (!response || (response.success === false && response.errors)) {
@@ -964,8 +986,10 @@ BX.ready(function () {
             div.querySelector('.remove-same-row').addEventListener('click', function(){
                 div.remove();
                 rebuildSameIndexes();
+                updateCreateButtonLabel();
                 requestPreview();
             });
+            updateCreateButtonLabel();
             requestPreview();
         });
     }
@@ -974,6 +998,7 @@ BX.ready(function () {
         btn.addEventListener('click', function(){
             btn.closest('.same-row').remove();
             rebuildSameIndexes();
+            updateCreateButtonLabel();
             requestPreview();
         });
     });
@@ -1021,6 +1046,7 @@ BX.ready(function () {
             div.querySelector('.remove-diff-row').addEventListener('click', function(){
                 div.remove();
                 rebuildDiffIndexes();
+                updateCreateButtonLabel();
                 requestPreview();
             });
             requestPreview();
@@ -1031,6 +1057,7 @@ BX.ready(function () {
         btn.addEventListener('click', function(){
             btn.closest('.diff-row').remove();
             rebuildDiffIndexes();
+            updateCreateButtonLabel();
             requestPreview();
         });
     });
