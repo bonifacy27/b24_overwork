@@ -316,6 +316,16 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
             }
         }
 
+        if (!$isWeekendType && $error === '') {
+            $timeStart = (string)$request->getPost('time_start');
+            $timeEnd = (string)$request->getPost('time_end');
+            $startDateTime = overtimeParseDateTimeFromHtml($dateStart, $timeStart);
+            $endDateTime = overtimeParseDateTimeFromHtml($dateEnd, $timeEnd);
+            if (!$startDateTime || !$endDateTime || overtimeIntervalOverlapsBusinessHours($startDateTime, $endDateTime)) {
+                $error = 'Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).';
+            }
+        }
+
         if ($error === '') {
             $fields = [
                 $overtimeConfig['REQ_PROP_WORK_START_DATE'] => $dateStart,
@@ -400,9 +410,17 @@ BX.ready(function(){
  function isWeekend(d){const day=(new Date(d+'T00:00:00')).getDay();return day===0||day===6;}
  function validateDates(){
    const ds=document.getElementById('date_start').value,de=document.getElementById('date_end').value;
+   const ts=document.getElementById('time_start').value,te=document.getElementById('time_end').value;
    if(!ds||!de){return true;}
    if(isWeekendType){ if(!isWeekend(ds)||!isWeekend(de)){alert('Разрешены только выходные/праздничные дни.'); return false;} }
-   else { if(isWeekend(ds)||isWeekend(de)){alert('Для сверхурочной заявки дата начала и окончания должны быть рабочими днями.'); return false;} }
+   else {
+     if(isWeekend(ds)||isWeekend(de)){alert('Для сверхурочной заявки дата начала и окончания должны быть рабочими днями.'); return false;}
+     const start = new Date(`${ds}T${ts}:00`);
+     const end = new Date(`${de}T${te}:00`);
+     const businessStart = new Date(start); businessStart.setHours(9,0,0,0);
+     const businessEnd = new Date(start); businessEnd.setHours(18,0,0,0);
+     if(start < businessEnd && end > businessStart){alert('Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).'); return false;}
+   }
    return true;
  }
  document.getElementById('approve_btn').onclick=function(){if(!validateDates())return;document.getElementById('task_action').value='<?= overtimeH((string)$taskButtons['approve']['code']) ?>';document.getElementById('task_kind').value='approve';document.getElementById('refine-form').submit();};

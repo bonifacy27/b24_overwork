@@ -815,6 +815,37 @@ function overtimeValidateCreatorEmployeeAccess(int $employeeId, array $config): 
     ];
 }
 
+
+function overtimeIntervalOverlapsBusinessHours(DateTime $start, DateTime $end, string $businessStart = '09:00', string $businessEnd = '18:00'): bool
+{
+    if ($start >= $end) {
+        return false;
+    }
+
+    $cursor = new DateTime($start->format('Y-m-d 00:00:00'));
+    $lastDay = $end->format('Y-m-d');
+
+    while ($cursor->format('Y-m-d') <= $lastDay) {
+        $dayStart = clone $cursor;
+        [$bsh, $bsm] = array_map('intval', explode(':', $businessStart));
+        [$beh, $bem] = array_map('intval', explode(':', $businessEnd));
+        $businessFrom = (clone $dayStart)->setTime($bsh, $bsm, 0);
+        $businessTo = (clone $dayStart)->setTime($beh, $bem, 0);
+
+        $segmentFrom = $start > $dayStart ? $start : $dayStart;
+        $dayEnd = (clone $dayStart)->modify('+1 day');
+        $segmentTo = $end < $dayEnd ? $end : $dayEnd;
+
+        if ($segmentFrom < $segmentTo && $segmentFrom < $businessTo && $segmentTo > $businessFrom) {
+            return true;
+        }
+
+        $cursor->modify('+1 day');
+    }
+
+    return false;
+}
+
 function overtimeValidatePastDateRestriction(int $employeeId, DateTime $start, DateTime $end, array $config): array
 {
     if (!empty($config['SKIP_PAST_DATE_RESTRICTION'])) {
@@ -877,6 +908,10 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
     if (!$pastDateValidation['allowed']) {
         $errors[] = $pastDateValidation['error'];
         $blockCreate = true;
+    }
+
+    if (!$isDuty && overtimeIntervalOverlapsBusinessHours($start, $end)) {
+        $errors[] = 'Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).';
     }
 
     if (!empty($errors)) {
