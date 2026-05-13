@@ -111,6 +111,36 @@ function overtimeGetStatusClass(string $statusName): string
     return 'status-default';
 }
 
+
+function overtimeGetStatusColorById(int $statusId): string
+{
+    static $cache = [];
+
+    if ($statusId <= 0) {
+        return '';
+    }
+    if (array_key_exists($statusId, $cache)) {
+        return $cache[$statusId];
+    }
+
+    $res = CIBlockElement::GetList([], ['ID' => $statusId], false, false, ['ID', 'PROPERTY_COLOR']);
+    $row = $res->Fetch();
+    $color = trim((string)($row['PROPERTY_COLOR_VALUE'] ?? ''));
+    if ($color !== '' && preg_match('/^#[0-9A-Fa-f]{6}$/', $color)) {
+        $cache[$statusId] = strtoupper($color);
+        return $cache[$statusId];
+    }
+
+    $cache[$statusId] = '';
+    return '';
+}
+
+function overtimeGetStatusPillStyle(int $statusId): string
+{
+    $color = overtimeGetStatusColorById($statusId);
+    return $color !== '' ? 'background:' . $color . ';' : '';
+}
+
 function overtimeGetRequestViewData(int $requestId, array $config): ?array
 {
     if ($requestId <= 0) {
@@ -156,6 +186,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
     $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
+    $statusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
     $statusName = overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? '');
 
     $employee = overtimeGetUserDataById($employeeId);
@@ -195,6 +226,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_ids' => array_values(array_unique(array_filter(array_map('intval', (array)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? []))))),
         'status_name' => $statusName,
+        'status_id' => $statusId,
         'employee_id' => $employeeId,
         'total_ot_hours' => $displayHours['tk_hours'],
         'total_premium_hours' => $displayHours['premium_hours'],
@@ -254,6 +286,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'total_premium_hours' => $displayHours['premium_hours'],
             'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0),
         ];
     }
 
@@ -316,6 +349,7 @@ function overtimeGetGroupRequestCalculations(array $groupIds, int $currentReques
             'total_premium_hours' => $displayHours['premium_hours'],
             'calculation_html' => $calculationHtml,
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0),
         ];
     }
 
@@ -1409,10 +1443,10 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <div style="margin-bottom:10px;"><b>ФИО инициатора заявки:</b> <?= overtimeH($viewData['initiator_name']) ?></div>
 <div style="margin-bottom:10px;"><b>Обоснование:</b> <?= nl2br(overtimeH((string)$viewData['justification'])) ?></div>
 <table class='overtime-simple-table'><tr><th>ID</th><th>Статус</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы премией <span class='overtime-view-marker'>C&B</span></th><th>Часы бухгалтерией <span class='overtime-view-marker'>КА</span></th><th>Тип оплаты</th></tr>
-<?php $rows = array_merge([['id'=>$viewData['id'],'work_type_name'=>$viewData['work_type_name'],'work_period_text'=>$viewData['work_period_text'],'payment_type_name'=>$viewData['payment_type_name'],'total_premium_hours'=>$viewData['total_premium_hours'] ?? '0','total_ot_hours'=>$viewData['total_ot_hours'] ?? '0','status_name'=>$viewData['status_name'] ?? '']], $linkedCalculations); foreach ($rows as $row): preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($row['work_period_text'] ?? ''), $m); ?><tr><td><?= (int)$row['id'] ?></td><td><span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($row['status_name'] ?? ''))) ?>'><?= overtimeH((string)($row['status_name'] ?? '')) ?></span></td><td><?= overtimeH((string)($row['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td><td><?= overtimeH((string)($row['total_premium_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['total_ot_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['payment_type_name'] ?? '')) ?></td></tr><?php endforeach; ?></table>
+<?php $rows = array_merge([['id'=>$viewData['id'],'work_type_name'=>$viewData['work_type_name'],'work_period_text'=>$viewData['work_period_text'],'payment_type_name'=>$viewData['payment_type_name'],'total_premium_hours'=>$viewData['total_premium_hours'] ?? '0','total_ot_hours'=>$viewData['total_ot_hours'] ?? '0','status_name'=>$viewData['status_name'] ?? '']], $linkedCalculations); foreach ($rows as $row): preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($row['work_period_text'] ?? ''), $m); ?><tr><td><?= (int)$row['id'] ?></td><td><span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($row['status_name'] ?? ''))) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($row['status_id'] ?? 0))) ?>'><?= overtimeH((string)($row['status_name'] ?? '')) ?></span></td><td><?= overtimeH((string)($row['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td><td><?= overtimeH((string)($row['total_premium_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['total_ot_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['payment_type_name'] ?? '')) ?></td></tr><?php endforeach; ?></table>
 <?php else: ?>
 <div class='overtime-view-meta'>
-<div class='overtime-view-meta-item'><b>Статус заявки:</b> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)$viewData['status_name'])) ?>'><?= overtimeH((string)$viewData['status_name']) ?></span></div>
+<div class='overtime-view-meta-item'><b>Статус заявки:</b> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)$viewData['status_name'])) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($viewData['status_id'] ?? 0))) ?>'><?= overtimeH((string)$viewData['status_name']) ?></span></div>
 <div class='overtime-view-meta-item'><b>Сотрудник:</b> <?= overtimeH($viewData['employee_name']) ?></div>
 <div class='overtime-view-meta-item'><b>Тип заявки и период работ:</b> <?= overtimeH((string)$viewData['work_type_name']) ?> <?= overtimeH((string)$viewData['work_period_text']) ?></div>
 <div class='overtime-view-meta-item'><b>Тип оплаты:</b> <?= overtimeH((string)$viewData['payment_type_name']) ?></div>
@@ -1424,7 +1458,7 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <details>
 <summary>#<?= (int)$linked['id'] ?> — <?= overtimeH((string)$linked['employee_name']) ?></summary>
 <div class='overtime-view-meta'>
-<div class='overtime-view-meta-item'><b>Статус заявки:</b> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)$linked['status_name'])) ?>'><?= overtimeH((string)$linked['status_name']) ?></span></div>
+<div class='overtime-view-meta-item'><b>Статус заявки:</b> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)$linked['status_name'])) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($linked['status_id'] ?? 0))) ?>'><?= overtimeH((string)$linked['status_name']) ?></span></div>
 <div class='overtime-view-meta-item'><b>Сотрудник:</b> <?= overtimeH((string)$linked['employee_name']) ?></div>
 <div class='overtime-view-meta-item'><b>Тип заявки и период работ:</b> <?= overtimeH((string)($linked['work_type_name'] ?? '')) ?> <?= overtimeH((string)($linked['work_period_text'] ?? '')) ?></div>
 <div class='overtime-view-meta-item'><b>Тип оплаты:</b> <?= overtimeH((string)($linked['payment_type_name'] ?? '')) ?></div>
@@ -1441,10 +1475,10 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <h3>Групповая заявка</h3>
 <?php if ($viewMode === 'simple'): ?>
 <table class='overtime-simple-table'><tr><th>ID</th><th>Статус</th><th>ФИО сотрудника</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы премией <span class='overtime-view-marker'>C&B</span></th><th>Часы бухгалтерией <span class='overtime-view-marker'>КА</span></th><th>Тип оплаты</th></tr>
-<?php foreach ($groupCalculations as $group): preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($group['work_period_text'] ?? ''), $m); ?><tr><td><a href='view.php?id=<?= (int)$group['id'] ?>'><?= (int)$group['id'] ?></a></td><td><span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></td><td><?= overtimeH((string)($group['employee_name'] ?? '')) ?></td><td><?= overtimeH((string)($group['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td><td><?= overtimeH((string)($group['total_premium_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($group['total_ot_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($group['payment_type_name'] ?? '')) ?></td></tr><?php endforeach; ?>
+<?php foreach ($groupCalculations as $group): preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($group['work_period_text'] ?? ''), $m); ?><tr><td><a href='view.php?id=<?= (int)$group['id'] ?>'><?= (int)$group['id'] ?></a></td><td><span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($group['status_id'] ?? 0))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></td><td><?= overtimeH((string)($group['employee_name'] ?? '')) ?></td><td><?= overtimeH((string)($group['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td><td><?= overtimeH((string)($group['total_premium_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($group['total_ot_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($group['payment_type_name'] ?? '')) ?></td></tr><?php endforeach; ?>
 </table>
 <?php else: ?>
-<?php foreach ($groupCalculations as $group): ?><details><summary><a href='view.php?id=<?= (int)$group['id'] ?>'>Заявка #<?= (int)$group['id'] ?></a> — <?= overtimeH((string)$group['employee_name']) ?>: <?= overtimeH((string)($group['work_type_name'] ?? '')) ?> <?= overtimeH((string)($group['work_period_text'] ?? '')) ?> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></summary><div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$group['calculation_html']) ?></div></details><?php endforeach; ?>
+<?php foreach ($groupCalculations as $group): ?><details><summary><a href='view.php?id=<?= (int)$group['id'] ?>'>Заявка #<?= (int)$group['id'] ?></a> — <?= overtimeH((string)$group['employee_name']) ?>: <?= overtimeH((string)($group['work_type_name'] ?? '')) ?> <?= overtimeH((string)($group['work_period_text'] ?? '')) ?> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($group['status_id'] ?? 0))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></summary><div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$group['calculation_html']) ?></div></details><?php endforeach; ?>
 <?php endif; ?>
 </div>
 <?php endif; ?>
