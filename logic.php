@@ -815,6 +815,46 @@ function overtimeValidateCreatorEmployeeAccess(int $employeeId, array $config): 
     ];
 }
 
+
+function overtimeIntervalOverlapsBusinessHours(DateTime $start, DateTime $end, string $businessStart = '09:00', string $businessEnd = '18:00'): bool
+{
+    $startTs = strtotime($start->format('Y-m-d H:i:s'));
+    $endTs = strtotime($end->format('Y-m-d H:i:s'));
+
+    if ($startTs === false || $endTs === false || $startTs >= $endTs) {
+        return false;
+    }
+
+    [$bsh, $bsm] = array_map('intval', explode(':', $businessStart));
+    [$beh, $bem] = array_map('intval', explode(':', $businessEnd));
+
+    $cursorTs = strtotime(date('Y-m-d 00:00:00', $startTs));
+    $lastDayTs = strtotime(date('Y-m-d 00:00:00', $endTs));
+
+    while ($cursorTs !== false && $lastDayTs !== false && $cursorTs <= $lastDayTs) {
+        $currentDate = date('Y-m-d', $cursorTs);
+        $dayStartTs = $cursorTs;
+        $dayEndTs = strtotime('+1 day', $dayStartTs);
+
+        if (overtimeIsWorkday1C($currentDate)) {
+            $businessFromTs = strtotime($currentDate . sprintf(' %02d:%02d:00', $bsh, $bsm));
+            $businessToTs = strtotime($currentDate . sprintf(' %02d:%02d:00', $beh, $bem));
+
+            if ($businessFromTs !== false && $businessToTs !== false && $dayEndTs !== false) {
+                $segmentFromTs = max($startTs, $dayStartTs);
+                $segmentToTs = min($endTs, $dayEndTs);
+                if ($segmentFromTs < $segmentToTs && $segmentFromTs < $businessToTs && $segmentToTs > $businessFromTs) {
+                    return true;
+                }
+            }
+        }
+
+        $cursorTs = strtotime('+1 day', $cursorTs);
+    }
+
+    return false;
+}
+
 function overtimeValidatePastDateRestriction(int $employeeId, DateTime $start, DateTime $end, array $config): array
 {
     if (!empty($config['SKIP_PAST_DATE_RESTRICTION'])) {
@@ -877,6 +917,10 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
     if (!$pastDateValidation['allowed']) {
         $errors[] = $pastDateValidation['error'];
         $blockCreate = true;
+    }
+
+    if (!$isDuty && overtimeIntervalOverlapsBusinessHours($start, $end)) {
+        $errors[] = 'Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).';
     }
 
     if (!empty($errors)) {
