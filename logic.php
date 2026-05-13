@@ -832,17 +832,20 @@ function overtimeIntervalOverlapsBusinessHours(DateTime $start, DateTime $end, s
     $lastDayTs = strtotime(date('Y-m-d 00:00:00', $endTs));
 
     while ($cursorTs !== false && $lastDayTs !== false && $cursorTs <= $lastDayTs) {
-        $businessFromTs = strtotime(date('Y-m-d', $cursorTs) . sprintf(' %02d:%02d:00', $bsh, $bsm));
-        $businessToTs = strtotime(date('Y-m-d', $cursorTs) . sprintf(' %02d:%02d:00', $beh, $bem));
-
+        $currentDate = date('Y-m-d', $cursorTs);
         $dayStartTs = $cursorTs;
         $dayEndTs = strtotime('+1 day', $dayStartTs);
 
-        if ($businessFromTs !== false && $businessToTs !== false && $dayEndTs !== false) {
-            $segmentFromTs = max($startTs, $dayStartTs);
-            $segmentToTs = min($endTs, $dayEndTs);
-            if ($segmentFromTs < $segmentToTs && $segmentFromTs < $businessToTs && $segmentToTs > $businessFromTs) {
-                return true;
+        if (overtimeIsWorkday1C($currentDate)) {
+            $businessFromTs = strtotime($currentDate . sprintf(' %02d:%02d:00', $bsh, $bsm));
+            $businessToTs = strtotime($currentDate . sprintf(' %02d:%02d:00', $beh, $bem));
+
+            if ($businessFromTs !== false && $businessToTs !== false && $dayEndTs !== false) {
+                $segmentFromTs = max($startTs, $dayStartTs);
+                $segmentToTs = min($endTs, $dayEndTs);
+                if ($segmentFromTs < $segmentToTs && $segmentFromTs < $businessToTs && $segmentToTs > $businessFromTs) {
+                    return true;
+                }
             }
         }
 

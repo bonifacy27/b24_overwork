@@ -417,9 +417,24 @@ BX.ready(function(){
      if(isWeekend(ds)||isWeekend(de)){alert('Для сверхурочной заявки дата начала и окончания должны быть рабочими днями.'); return false;}
      const start = new Date(`${ds}T${ts}:00`);
      const end = new Date(`${de}T${te}:00`);
-     const businessStart = new Date(start); businessStart.setHours(9,0,0,0);
-     const businessEnd = new Date(start); businessEnd.setHours(18,0,0,0);
-     if(start < businessEnd && end > businessStart){alert('Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).'); return false;}
+     const dayCursor = new Date(`${ds}T00:00:00`);
+     while(dayCursor <= end){
+       const dayStart = new Date(dayCursor);
+       const dayEnd = new Date(dayCursor); dayEnd.setDate(dayEnd.getDate()+1);
+       const dayNo = dayCursor.getDay();
+       const isWorkday = dayNo !== 0 && dayNo !== 6;
+       if(isWorkday){
+         const segStart = start > dayStart ? start : dayStart;
+         const segEnd = end < dayEnd ? end : dayEnd;
+         const businessStart = new Date(dayStart); businessStart.setHours(9,0,0,0);
+         const businessEnd = new Date(dayStart); businessEnd.setHours(18,0,0,0);
+         if(segStart < segEnd && segStart < businessEnd && segEnd > businessStart){
+           alert('Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).');
+           return false;
+         }
+       }
+       dayCursor.setDate(dayCursor.getDate()+1);
+     }
    }
    return true;
  }
