@@ -358,7 +358,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
 
         <div class="overtime-modal-actions">
             <button type="button" class="ui-btn ui-btn-light-border" id="overtime-confirm-cancel">Отмена</button>
-            <button type="button" class="ui-btn ui-btn-success" id="overtime-confirm-submit">Создать заявки</button>
+            <button type="button" class="ui-btn ui-btn-success" id="overtime-confirm-submit">Отправить на согласование</button>
         </div>
     </div>
 </div>
