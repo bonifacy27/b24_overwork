@@ -1434,11 +1434,8 @@ profilerStopCustom('total_backend');
     }
 
     .filter-item.status-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
         min-width: 280px;
-        flex: 1 1 auto;
+        flex: 1 1 320px;
     }
 
     .filter-item .form-control {
@@ -1452,13 +1449,62 @@ profilerStopCustom('total_backend');
         margin-bottom: 0;
     }
 
-    .status-inline-group {
+    .status-dropdown {
+        position: relative;
+    }
+
+    .status-dropdown-toggle {
+        width: 100%;
+        text-align: left;
+        padding-right: 28px;
+        position: relative;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .status-dropdown-toggle::after {
+        content: '▾';
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        color: #6c757d;
+        font-size: 12px;
+    }
+
+    .status-dropdown-menu {
+        position: absolute;
+        z-index: 20;
+        left: 0;
+        right: 0;
+        margin-top: 4px;
+        max-height: 260px;
+        overflow-y: auto;
+        background: #fff;
+        border: 1px solid #d7dee6;
+        border-radius: 8px;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+        padding: 8px;
+        display: none;
+    }
+
+    .status-dropdown.open .status-dropdown-menu {
+        display: block;
+    }
+
+    .status-option {
         display: flex;
         align-items: center;
         gap: 8px;
-        overflow-x: auto;
-        padding-bottom: 2px;
-        white-space: nowrap;
+        padding: 6px 4px;
+        margin: 0;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .status-option:hover {
+        background: #f6f8fa;
     }
 
     .status-chip {
@@ -1595,6 +1641,17 @@ profilerStopCustom('total_backend');
     <?php endif; ?>
 
     <?php asort($statusVariants, SORT_NATURAL | SORT_FLAG_CASE); ?>
+    <?php
+    $selectedStatusNames = [];
+    foreach ($statusInput as $selectedStatusId) {
+        if (isset($statusVariants[$selectedStatusId])) {
+            $selectedStatusNames[] = (string)$statusVariants[$selectedStatusId];
+        }
+    }
+    $statusSelectCaption = empty($selectedStatusNames)
+        ? 'Статусы: все'
+        : 'Статусы: ' . implode(', ', $selectedStatusNames);
+    ?>
 
     <form method="get" class="card mb-3">
         <input type="hidden" name="group_filter" value="<?= $groupFilter > 0 ? (int)$groupFilter : '' ?>">
@@ -1638,19 +1695,24 @@ profilerStopCustom('total_backend');
             </div>
 
             <div class="filter-item status-item">
-                <span class="filter-label-compact">Статусы:</span>
-                <div class="status-inline-group">
-                    <?php foreach ($statusVariants as $statusId => $statusName): ?>
-                        <label class="status-chip">
-                            <input
-                                type="checkbox"
-                                name="status[]"
-                                value="<?= (int)$statusId ?>"
-                                <?= in_array((int)$statusId, $statusInput, true) ? 'checked' : '' ?>
-                            >
-                            <span><?= h($statusName) ?></span>
-                        </label>
-                    <?php endforeach; ?>
+                <label class="filter-label-compact mb-1">Статусы:</label>
+                <div class="status-dropdown js-status-dropdown">
+                    <button type="button" class="btn btn-light btn-sm status-dropdown-toggle js-status-dropdown-toggle" aria-expanded="false">
+                        <?= h($statusSelectCaption) ?>
+                    </button>
+                    <div class="status-dropdown-menu">
+                        <?php foreach ($statusVariants as $statusId => $statusName): ?>
+                            <label class="status-option">
+                                <input
+                                    type="checkbox"
+                                    name="status[]"
+                                    value="<?= (int)$statusId ?>"
+                                    <?= in_array((int)$statusId, $statusInput, true) ? 'checked' : '' ?>
+                                >
+                                <span><?= h($statusName) ?></span>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
                 </div>
             </div>
 
@@ -2072,6 +2134,33 @@ profilerStopCustom('total_backend');
 
         if (e.target === backdrop || (e.target.closest && e.target.closest('.js-history-close'))) {
             closeHistory();
+        }
+    });
+})();
+</script>
+
+
+<script>
+(function () {
+    var dropdown = document.querySelector('.js-status-dropdown');
+    if (!dropdown) {
+        return;
+    }
+
+    var toggle = dropdown.querySelector('.js-status-dropdown-toggle');
+    if (!toggle) {
+        return;
+    }
+
+    toggle.addEventListener('click', function () {
+        var isOpen = dropdown.classList.toggle('open');
+        toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    });
+
+    document.addEventListener('click', function (event) {
+        if (!dropdown.contains(event.target)) {
+            dropdown.classList.remove('open');
+            toggle.setAttribute('aria-expanded', 'false');
         }
     });
 })();
