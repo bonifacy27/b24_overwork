@@ -193,7 +193,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'justification' => $justification,
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         'linked_request_ids' => array_values($linkedRequestIds),
-        'group_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? 0),
+        'group_ids' => array_values(array_unique(array_filter(array_map('intval', (array)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? []))))),
         'status_name' => $statusName,
         'employee_id' => $employeeId,
         'total_ot_hours' => $displayHours['tk_hours'],
@@ -260,9 +260,12 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
     return $result;
 }
 
-function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId, array $config): array
+function overtimeGetGroupRequestCalculations(array $groupIds, int $currentRequestId, array $config): array
 {
-    if ($groupId <= 0) {
+    $groupIds = array_values(array_unique(array_filter(array_map('intval', $groupIds), static function (int $groupId): bool {
+        return $groupId > 0;
+    })));
+    if (empty($groupIds)) {
         return [];
     }
 
@@ -271,8 +274,7 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
         ['ID' => 'ASC'],
         [
             'IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'],
-            'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] => $groupId,
-            '!ID' => $currentRequestId,
+            'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] => $groupIds,
         ],
         false,
         false,
@@ -302,17 +304,22 @@ function overtimeGetGroupRequestCalculations(int $groupId, int $currentRequestId
             $calculationHtml = (string)($item['PROPERTY_' . $config['REQ_PROP_CALCULATION_HTML'] . '_VALUE']['TEXT'] ?? '');
         }
 
-        $result[] = [
+        $requestId = (int)$item['ID'];
+        $result[$requestId] = [
             'id' => (int)$item['ID'],
             'name' => (string)$item['NAME'],
             'employee_name' => $employee['name'] ?: 'Не указан',
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
+            'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_TYPE'])),
+            'work_period_text' => overtimeBuildWorkPeriodTextByRequestItem($item, $config),
+            'total_ot_hours' => $displayHours['tk_hours'],
+            'total_premium_hours' => $displayHours['premium_hours'],
             'calculation_html' => $calculationHtml,
             'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
         ];
     }
 
-    return $result;
+    return array_values($result);
 }
 
 function overtimeBuildOptionalPropertySelect(array $config): array
@@ -1323,7 +1330,7 @@ function overtimeRenderTextWithLinks(string $text): string
 
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
-$groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((int)$viewData['group_id'], (int)$viewData['id'], $overtimeConfig) : [];
+$groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((array)($viewData['group_ids'] ?? []), (int)$viewData['id'], $overtimeConfig) : [];
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
 $approvalButtons = [];
@@ -1379,7 +1386,7 @@ require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
 $APPLICATION->SetTitle('Просмотр и согласование заявки');
 $viewMode = trim((string)$request->getQuery('mode')) === 'extended' ? 'extended' : 'simple';
 ?>
-<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}</style>
+<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-separator{margin:20px 0 12px;border:0;border-top:1px solid #dfe3e8}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}</style>
 <div class='overtime-view-wrap'><div class='overtime-view-box'>
 <div class='overtime-view-modes'><a class='overtime-view-mode-link <?= $viewMode === "simple" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=simple'>Простой режим</a><a class='overtime-view-mode-link <?= $viewMode === "extended" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=extended'>Расширенный режим</a></div>
 <?php if ($viewData): ?>
@@ -1400,8 +1407,9 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <div><b>Должность:</b> <?= overtimeH($position !== '' ? $position : 'Не указана') ?></div>
 <div><b>Подразделение:</b> <?= overtimeH($department !== '' ? $department : 'Не указано') ?></div>
 <div style="margin-bottom:10px;"><b>ФИО инициатора заявки:</b> <?= overtimeH($viewData['initiator_name']) ?></div>
-<table class='overtime-simple-table'><tr><th>ID</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы премией <span class='overtime-view-marker'>C&B</span></th><th>Часы бухгалтерией <span class='overtime-view-marker'>КА</span></th><th>Тип оплаты</th></tr>
-<?php $rows = array_merge([['id'=>$viewData['id'],'work_type_name'=>$viewData['work_type_name'],'work_period_text'=>$viewData['work_period_text'],'payment_type_name'=>$viewData['payment_type_name'],'total_premium_hours'=>$viewData['total_premium_hours'] ?? '0','total_ot_hours'=>$viewData['total_ot_hours'] ?? '0']], $linkedCalculations); foreach ($rows as $row): preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($row['work_period_text'] ?? ''), $m); ?><tr><td><?= (int)$row['id'] ?></td><td><?= overtimeH((string)($row['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td><td><?= overtimeH((string)($row['total_premium_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['total_ot_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['payment_type_name'] ?? '')) ?></td></tr><?php endforeach; ?></table>
+<div style="margin-bottom:10px;"><b>Обоснование:</b> <?= nl2br(overtimeH((string)$viewData['justification'])) ?></div>
+<table class='overtime-simple-table'><tr><th>ID</th><th>Статус</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы премией <span class='overtime-view-marker'>C&B</span></th><th>Часы бухгалтерией <span class='overtime-view-marker'>КА</span></th><th>Тип оплаты</th></tr>
+<?php $rows = array_merge([['id'=>$viewData['id'],'work_type_name'=>$viewData['work_type_name'],'work_period_text'=>$viewData['work_period_text'],'payment_type_name'=>$viewData['payment_type_name'],'total_premium_hours'=>$viewData['total_premium_hours'] ?? '0','total_ot_hours'=>$viewData['total_ot_hours'] ?? '0','status_name'=>$viewData['status_name'] ?? '']], $linkedCalculations); foreach ($rows as $row): preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($row['work_period_text'] ?? ''), $m); ?><tr><td><?= (int)$row['id'] ?></td><td><span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($row['status_name'] ?? ''))) ?>'><?= overtimeH((string)($row['status_name'] ?? '')) ?></span></td><td><?= overtimeH((string)($row['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td><td><?= overtimeH((string)($row['total_premium_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['total_ot_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($row['payment_type_name'] ?? '')) ?></td></tr><?php endforeach; ?></table>
 <?php else: ?>
 <div class='overtime-view-meta'>
 <div class='overtime-view-meta-item'><b>Статус заявки:</b> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)$viewData['status_name'])) ?>'><?= overtimeH((string)$viewData['status_name']) ?></span></div>
@@ -1424,8 +1432,24 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$linked['calculation_html']) ?></div>
 </details>
 <?php endforeach; ?>
-<?php foreach ($groupCalculations as $group): ?><details><summary>Связанная по группе #<?= (int)$group['id'] ?> — <?= overtimeH((string)$group['employee_name']) ?></summary><div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$group['calculation_html']) ?></div></details><?php endforeach; ?>
 <?php endif; ?>
 <?php else: ?><div>Заявка с ID <?= (int)$requestId ?> не найдена.</div><?php endif; ?>
-<?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?></div></div>
+<?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?>
+<?php if ($viewData && !empty($groupCalculations)): ?>
+<div class='overtime-view-linked'>
+<?php if ($viewMode === 'simple'): ?><hr class='overtime-view-separator'><?php endif; ?>
+<h3>Групповая заявка</h3>
+<?php if ($viewMode === 'simple'): ?>
+<table class='overtime-simple-table'><tr><th>ID</th><th>Статус</th><th>ФИО сотрудника</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы премией <span class='overtime-view-marker'>C&B</span></th><th>Часы бухгалтерией <span class='overtime-view-marker'>КА</span></th><th>Тип оплаты</th></tr>
+<?php foreach ($groupCalculations as $group): preg_match('/(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}).*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})/u', (string)($group['work_period_text'] ?? ''), $m); ?><tr><td><a href='view.php?id=<?= (int)$group['id'] ?>'><?= (int)$group['id'] ?></a></td><td><span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></td><td><?= overtimeH((string)($group['employee_name'] ?? '')) ?></td><td><?= overtimeH((string)($group['work_type_name'] ?? '')) ?></td><td><?= overtimeH((string)($m[1] ?? '')) ?></td><td><?= overtimeH((string)($m[2] ?? '')) ?></td><td><?= overtimeH((string)($group['total_premium_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($group['total_ot_hours'] ?? '0')) ?></td><td><?= overtimeH((string)($group['payment_type_name'] ?? '')) ?></td></tr><?php endforeach; ?>
+</table>
+<?php else: ?>
+<?php foreach ($groupCalculations as $group): ?><details><summary><a href='view.php?id=<?= (int)$group['id'] ?>'>Заявка #<?= (int)$group['id'] ?></a> — <?= overtimeH((string)$group['employee_name']) ?>: <?= overtimeH((string)($group['work_type_name'] ?? '')) ?> <?= overtimeH((string)($group['work_period_text'] ?? '')) ?> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></summary><div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$group['calculation_html']) ?></div></details><?php endforeach; ?>
+<?php endif; ?>
+</div>
+<?php endif; ?>
+<div style='margin-top:16px;'>
+<a href='list.php' class='overtime-btn'>Вернуться к списку</a>
+</div>
+</div></div>
 <?php require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
