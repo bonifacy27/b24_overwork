@@ -818,29 +818,35 @@ function overtimeValidateCreatorEmployeeAccess(int $employeeId, array $config): 
 
 function overtimeIntervalOverlapsBusinessHours(DateTime $start, DateTime $end, string $businessStart = '09:00', string $businessEnd = '18:00'): bool
 {
-    if ($start >= $end) {
+    $startTs = strtotime($start->format('Y-m-d H:i:s'));
+    $endTs = strtotime($end->format('Y-m-d H:i:s'));
+
+    if ($startTs === false || $endTs === false || $startTs >= $endTs) {
         return false;
     }
 
-    $cursor = new DateTime($start->format('Y-m-d 00:00:00'));
-    $lastDay = $end->format('Y-m-d');
+    [$bsh, $bsm] = array_map('intval', explode(':', $businessStart));
+    [$beh, $bem] = array_map('intval', explode(':', $businessEnd));
 
-    while ($cursor->format('Y-m-d') <= $lastDay) {
-        $dayStart = clone $cursor;
-        [$bsh, $bsm] = array_map('intval', explode(':', $businessStart));
-        [$beh, $bem] = array_map('intval', explode(':', $businessEnd));
-        $businessFrom = (clone $dayStart)->setTime($bsh, $bsm, 0);
-        $businessTo = (clone $dayStart)->setTime($beh, $bem, 0);
+    $cursorTs = strtotime(date('Y-m-d 00:00:00', $startTs));
+    $lastDayTs = strtotime(date('Y-m-d 00:00:00', $endTs));
 
-        $segmentFrom = $start > $dayStart ? $start : $dayStart;
-        $dayEnd = (clone $dayStart)->modify('+1 day');
-        $segmentTo = $end < $dayEnd ? $end : $dayEnd;
+    while ($cursorTs !== false && $lastDayTs !== false && $cursorTs <= $lastDayTs) {
+        $businessFromTs = strtotime(date('Y-m-d', $cursorTs) . sprintf(' %02d:%02d:00', $bsh, $bsm));
+        $businessToTs = strtotime(date('Y-m-d', $cursorTs) . sprintf(' %02d:%02d:00', $beh, $bem));
 
-        if ($segmentFrom < $segmentTo && $segmentFrom < $businessTo && $segmentTo > $businessFrom) {
-            return true;
+        $dayStartTs = $cursorTs;
+        $dayEndTs = strtotime('+1 day', $dayStartTs);
+
+        if ($businessFromTs !== false && $businessToTs !== false && $dayEndTs !== false) {
+            $segmentFromTs = max($startTs, $dayStartTs);
+            $segmentToTs = min($endTs, $dayEndTs);
+            if ($segmentFromTs < $segmentToTs && $segmentFromTs < $businessToTs && $segmentToTs > $businessFromTs) {
+                return true;
+            }
         }
 
-        $cursor->modify('+1 day');
+        $cursorTs = strtotime('+1 day', $cursorTs);
     }
 
     return false;
