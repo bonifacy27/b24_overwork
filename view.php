@@ -275,7 +275,6 @@ function overtimeGetGroupRequestCalculations(array $groupIds, int $currentReques
         [
             'IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'],
             'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] => $groupIds,
-            '!ID' => $currentRequestId,
         ],
         false,
         false,
@@ -1449,5 +1448,8 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <?php endif; ?>
 </div>
 <?php endif; ?>
+<div style='margin-top:16px;'>
+<a href='list.php' class='overtime-btn'>Вернуться к списку</a>
+</div>
 </div></div>
 <?php require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
