@@ -1416,7 +1416,7 @@ profilerStopCustom('total_backend');
         align-items: center;
         gap: 12px;
         flex-wrap: nowrap;
-        overflow-x: auto;
+        overflow: visible;
         padding: 12px 14px;
     }
 
@@ -1434,8 +1434,7 @@ profilerStopCustom('total_backend');
     }
 
     .filter-item.status-item {
-        min-width: 280px;
-        flex: 1 1 320px;
+        width: 230px;
     }
 
     .filter-item .form-control {
@@ -1455,6 +1454,7 @@ profilerStopCustom('total_backend');
 
     .status-dropdown-toggle {
         width: 100%;
+        max-width: 230px;
         text-align: left;
         padding-right: 28px;
         position: relative;
@@ -1475,7 +1475,7 @@ profilerStopCustom('total_backend');
 
     .status-dropdown-menu {
         position: absolute;
-        z-index: 20;
+        z-index: 10000;
         left: 0;
         right: 0;
         margin-top: 4px;
@@ -1695,7 +1695,6 @@ profilerStopCustom('total_backend');
             </div>
 
             <div class="filter-item status-item">
-                <label class="filter-label-compact mb-1">Статусы:</label>
                 <div class="status-dropdown js-status-dropdown">
                     <button type="button" class="btn btn-light btn-sm status-dropdown-toggle js-status-dropdown-toggle" aria-expanded="false">
                         <?= h($statusSelectCaption) ?>
