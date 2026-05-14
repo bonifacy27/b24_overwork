@@ -321,6 +321,26 @@ function buildListUrlCustom($groupId, $iblockId)
     return "/workgroups/group/" . (int)$groupId . "/lists/" . (int)$iblockId . "/view/0/?list_section_id=";
 }
 
+function findEnumIdByValueCustom($iblockId, $propertyId, $targetValue)
+{
+    $targetValue = trim((string)$targetValue);
+    if ((int)$iblockId <= 0 || (int)$propertyId <= 0 || $targetValue === '') {
+        return 0;
+    }
+
+    $rsEnum = CIBlockPropertyEnum::GetList(
+        ['SORT' => 'ASC', 'ID' => 'ASC'],
+        ['IBLOCK_ID' => (int)$iblockId, 'PROPERTY_ID' => (int)$propertyId]
+    );
+    while ($enum = $rsEnum->Fetch()) {
+        if (trim((string)($enum['VALUE'] ?? '')) === $targetValue) {
+            return (int)$enum['ID'];
+        }
+    }
+
+    return 0;
+}
+
 function parseHoursNumericCustom($hoursRaw)
 {
     $hoursRaw = trim((string)$hoursRaw);
@@ -850,6 +870,54 @@ $canUseSubtypeFilter =
 
 if (!$canUseSubtypeFilter) {
     $subtypeInput = '';
+}
+
+$cancelError = '';
+$cancelSuccess = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && (string)($_POST['action'] ?? '') === 'cancel_request') {
+    if (!check_bitrix_sessid()) {
+        $cancelError = 'Сессия истекла. Обновите страницу и повторите попытку.';
+    } else {
+        $cancelRequestId = (int)($_POST['request_id'] ?? 0);
+        $cancelComment = trim((string)($_POST['cancel_comment'] ?? ''));
+        if ($cancelRequestId <= 0) {
+            $cancelError = 'Не удалось определить заявку для отмены.';
+        } elseif ($cancelComment === '') {
+            $cancelError = 'Комментарий при отмене обязателен.';
+        } else {
+            $statusDoneEnumId = findEnumIdByValueCustom($IBLOCK_ID, 3081, 'Выполнена');
+            $statusCanceledEnumId = findEnumIdByValueCustom($IBLOCK_ID, 3081, 'Отменена');
+            if ($statusCanceledEnumId <= 0) {
+                $cancelError = 'Не найден статус "Отменена" в справочнике статусов.';
+            } else {
+                $statusPropRes = CIBlockElement::GetProperty($IBLOCK_ID, $cancelRequestId, [], ['ID' => 3081]);
+                $statusProp = $statusPropRes->Fetch();
+                $currentStatusId = (int)($statusProp['VALUE'] ?? 0);
+                if ($statusDoneEnumId > 0 && $currentStatusId !== $statusDoneEnumId) {
+                    $cancelError = 'Отменять можно только заявки в статусе "Выполнена".';
+                } else {
+                    CIBlockElement::SetPropertyValuesEx($cancelRequestId, $IBLOCK_ID, [3081 => $statusCanceledEnumId]);
+                    $executorName = userNameById($currentUserId);
+                    if ($executorName === '') {
+                        $executorName = 'Пользователь ID ' . $currentUserId;
+                    }
+                    $historyLine = sprintf(
+                        '[%s] Заявка отменена (%s). Комментарий: %s',
+                        date('d.m.Y H:i:s'),
+                        $executorName,
+                        $cancelComment
+                    );
+                    CIBlockElement::SetPropertyValuesEx($cancelRequestId, $IBLOCK_ID, [3082 => $historyLine]);
+                    LocalRedirect($APPLICATION->GetCurPageParam('cancel_success=Y', ['cancel_success']));
+                }
+            }
+        }
+    }
+}
+
+if ((string)($_GET['cancel_success'] ?? '') === 'Y') {
+    $cancelSuccess = 'Заявка успешно отменена.';
 }
 
 $qLower = ($q !== '') ? mb_strtolower($q, 'UTF-8') : '';
@@ -1559,6 +1627,12 @@ profilerStopCustom('total_backend');
 </style>
 
 <div class="container-fluid page-wrap">
+    <?php if ($cancelError !== ''): ?>
+        <div class="alert alert-danger"><?= h($cancelError) ?></div>
+    <?php endif; ?>
+    <?php if ($cancelSuccess !== ''): ?>
+        <div class="alert alert-success"><?= h($cancelSuccess) ?></div>
+    <?php endif; ?>
     <h2 class="mb-3">Заявки на сверхурочную работу / работу в выходной / дежурство</h2>
 
     <div class="d-flex flex-wrap align-items-center mb-3">
@@ -1896,6 +1970,9 @@ profilerStopCustom('total_backend');
                                         <?php if ((int)$a['TASK_ID'] > 0): ?>
                                             <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$a['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
                                         <?php endif; ?>
+                                        <?php if (mb_strtolower(trim((string)$a['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                            <button type="button" class="btn btn-outline-danger btn-sm js-cancel-btn" data-cancel-id="<?= (int)$a['ID'] ?>" data-cancel-fio="<?= h($a['FIO']) ?>" data-cancel-work="<?= h($a['TIP_RABOTY']) ?>" data-cancel-payment="<?= h($a['TIP_OPLATY']) ?>">Отменить заявку</button>
+                                        <?php endif; ?>
                                     </div>
                                 </td>
                             </tr>
@@ -1974,6 +2051,9 @@ profilerStopCustom('total_backend');
                                         <a href="<?= h($b['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
                                         <?php if ((int)$b['TASK_ID'] > 0): ?>
                                             <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$b['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
+                                        <?php endif; ?>
+                                        <?php if (mb_strtolower(trim((string)$b['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                            <button type="button" class="btn btn-outline-danger btn-sm js-cancel-btn" data-cancel-id="<?= (int)$b['ID'] ?>" data-cancel-fio="<?= h($b['FIO']) ?>" data-cancel-work="<?= h($b['TIP_RABOTY']) ?>" data-cancel-payment="<?= h($b['TIP_OPLATY']) ?>">Отменить заявку</button>
                                         <?php endif; ?>
                                     </div>
                                 </td>
@@ -2056,6 +2136,9 @@ profilerStopCustom('total_backend');
                                         <?php if ((int)$row['TASK_ID'] > 0): ?>
                                             <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$row['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
                                         <?php endif; ?>
+                                        <?php if (mb_strtolower(trim((string)$row['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                            <button type="button" class="btn btn-outline-danger btn-sm js-cancel-btn" data-cancel-id="<?= (int)$row['ID'] ?>" data-cancel-fio="<?= h($row['FIO']) ?>" data-cancel-work="<?= h($row['TIP_RABOTY']) ?>" data-cancel-payment="<?= h($row['TIP_OPLATY']) ?>">Отменить заявку</button>
+                                        <?php endif; ?>
                                     </div>
                                 </td>
                             </tr>
@@ -2065,6 +2148,20 @@ profilerStopCustom('total_backend');
             </table>
         </div>
     <?php endif; ?>
+</div>
+
+<div id="cancel-modal-data" class="d-none">
+    <form method="post">
+        <?= bitrix_sessid_post() ?>
+        <input type="hidden" name="action" value="cancel_request">
+        <input type="hidden" name="request_id" id="cancel-request-id" value="">
+        <div id="cancel-request-info" class="mb-3"></div>
+        <div class="form-group">
+            <label for="cancel-comment"><strong>Комментарий (обязательно):</strong></label>
+            <textarea class="form-control" id="cancel-comment" name="cancel_comment" rows="4" required></textarea>
+        </div>
+        <button type="submit" class="btn btn-danger mt-2">Отменить заявку</button>
+    </form>
 </div>
 
 <div id="history-modal-backdrop" class="history-modal-backdrop">
@@ -2127,6 +2224,30 @@ profilerStopCustom('total_backend');
             var executorsContainer = document.getElementById(executorsId);
             if (executorsContainer) {
                 openModal('Текущие исполнители', executorsContainer.innerHTML);
+            }
+            return;
+        }
+
+        var cancelBtn = e.target.closest ? e.target.closest('.js-cancel-btn') : null;
+        if (cancelBtn) {
+            var template = document.getElementById('cancel-modal-data');
+            if (!template) {
+                return;
+            }
+            openModal('Отмена выполненной заявки', template.innerHTML);
+            var requestIdInput = document.getElementById('cancel-request-id');
+            var infoContainer = document.getElementById('cancel-request-info');
+            var requestId = cancelBtn.getAttribute('data-cancel-id') || '';
+            if (requestIdInput) {
+                requestIdInput.value = requestId;
+            }
+            if (infoContainer) {
+                infoContainer.innerHTML =
+                    '<p><strong>Номер заявки:</strong> #' + requestId + '</p>' +
+                    '<p><strong>ФИО сотрудника:</strong> ' + (cancelBtn.getAttribute('data-cancel-fio') || '—') + '</p>' +
+                    '<p><strong>Тип работ:</strong> ' + (cancelBtn.getAttribute('data-cancel-work') || '—') + '</p>' +
+                    '<p><strong>Тип оплаты:</strong> ' + (cancelBtn.getAttribute('data-cancel-payment') || '—') + '</p>' +
+                    '<p><strong>Важно:</strong> Вы отменяете выполненную заявку, проверьте отмену проведения документов по этой заявке в 1С.</p>';
             }
             return;
         }
