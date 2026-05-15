@@ -44,26 +44,43 @@ if (!$item) {
     return;
 }
 
-$statusEnumId = (int)($item['PROPERTY_' . $statusPropId . '_ENUM_ID'] ?? 0);
-$statusName = trim((string)($item['PROPERTY_' . $statusPropId . '_VALUE'] ?? ''));
+$statusElementId = (int)($item['PROPERTY_' . $statusPropId . '_VALUE'] ?? 0);
+$statusName = '';
+if ($statusElementId > 0) {
+    $statusRes = CIBlockElement::GetList([], ['ID' => $statusElementId], false, false, ['ID', 'NAME']);
+    if ($statusRow = $statusRes->Fetch()) {
+        $statusName = trim((string)$statusRow['NAME']);
+    }
+}
 $fio = trim((string)($item['PROPERTY_' . $fioPropId . '_VALUE'] ?? ''));
 $workType = trim((string)($item['PROPERTY_' . $workTypePropId . '_VALUE'] ?? ''));
 $payType = trim((string)($item['PROPERTY_' . $payTypePropId . '_VALUE'] ?? ''));
 $historyCurrent = trim((string)($item['PROPERTY_' . $historyPropId . '_VALUE'] ?? ''));
 
-if ($statusEnumId <= 0 || mb_strtolower($statusName, 'UTF-8') !== 'выполнена') {
+if ($statusElementId <= 0 || mb_strtolower($statusName, 'UTF-8') !== 'выполнена') {
     require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
     ShowError('Отменить можно только заявку в статусе "Выполнена".');
     require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
     return;
 }
 
-function overtimeCancelFindStatusEnumId(int $iblockId, int $propId, string $value): int
+function overtimeCancelFindStatusElementId(string $value): int
 {
-    $enumRes = CIBlockPropertyEnum::GetList(['SORT' => 'ASC'], ['IBLOCK_ID' => $iblockId, 'PROPERTY_ID' => $propId]);
-    while ($enum = $enumRes->Fetch()) {
-        if (mb_strtolower(trim((string)$enum['VALUE']), 'UTF-8') === mb_strtolower(trim($value), 'UTF-8')) {
-            return (int)$enum['ID'];
+    $res = CIBlockElement::GetList(
+        ['ID' => 'ASC'],
+        ['IBLOCK_ID' => 388, 'NAME' => $value, 'ACTIVE' => 'Y'],
+        false,
+        ['nTopCount' => 1],
+        ['ID', 'NAME']
+    );
+    if ($row = $res->Fetch()) {
+        return (int)$row['ID'];
+    }
+
+    $res = CIBlockElement::GetList(['ID' => 'ASC'], ['IBLOCK_ID' => 388, 'ACTIVE' => 'Y'], false, false, ['ID', 'NAME']);
+    while ($row = $res->Fetch()) {
+        if (mb_strtolower(trim((string)$row['NAME']), 'UTF-8') === mb_strtolower(trim($value), 'UTF-8')) {
+            return (int)$row['ID'];
         }
     }
     return 0;
@@ -91,8 +108,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && check_bitrix_sessid()) {
             $cancelledBy = 'Неизвестный пользователь';
         }
 
-        $cancelStatusEnumId = overtimeCancelFindStatusEnumId($iblockId, $statusPropId, 'Отменена');
-        if ($cancelStatusEnumId <= 0) {
+        $cancelStatusElementId = overtimeCancelFindStatusElementId('Отменена');
+        if ($cancelStatusElementId <= 0) {
             $error = 'Не найден статус "Отменена" в справочнике статусов.';
         } else {
             $historyLine = sprintf('[%s] %s отменил(а) заявку. Комментарий: %s', date('d.m.Y H:i'), $cancelledBy, $comment);
@@ -100,7 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && check_bitrix_sessid()) {
 
             $el = new CIBlockElement();
             CIBlockElement::SetPropertyValuesEx($requestId, $iblockId, [
-                $statusPropId => $cancelStatusEnumId,
+                $statusPropId => $cancelStatusElementId,
                 $historyPropId => $newHistory,
             ]);
 
