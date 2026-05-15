@@ -53,8 +53,8 @@ if ($statusElementId > 0) {
     }
 }
 $fio = trim((string)($item['PROPERTY_' . $fioPropId . '_VALUE'] ?? ''));
-$workType = trim((string)($item['PROPERTY_' . $workTypePropId . '_VALUE'] ?? ''));
-$payType = trim((string)($item['PROPERTY_' . $payTypePropId . '_VALUE'] ?? ''));
+$workType = overtimeCancelResolveLinkedValue($item['PROPERTY_' . $workTypePropId . '_VALUE'] ?? '');
+$payType = overtimeCancelResolveLinkedValue($item['PROPERTY_' . $payTypePropId . '_VALUE'] ?? '');
 $historyCurrent = trim((string)($item['PROPERTY_' . $historyPropId . '_VALUE'] ?? ''));
 
 if ($statusElementId <= 0 || mb_strtolower($statusName, 'UTF-8') !== 'выполнена') {
@@ -62,6 +62,35 @@ if ($statusElementId <= 0 || mb_strtolower($statusName, 'UTF-8') !== 'выпол
     ShowError('Отменить можно только заявку в статусе "Выполнена".');
     require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
     return;
+}
+
+
+function overtimeCancelResolveLinkedValue($value): string
+{
+    if ($value === null || $value === '') {
+        return '';
+    }
+
+    if (is_array($value)) {
+        $parts = [];
+        foreach ($value as $item) {
+            $resolved = overtimeCancelResolveLinkedValue($item);
+            if ($resolved !== '') {
+                $parts[] = $resolved;
+            }
+        }
+        return implode(', ', $parts);
+    }
+
+    $id = (int)$value;
+    if ($id > 0) {
+        $res = CIBlockElement::GetList([], ['ID' => $id], false, false, ['ID', 'NAME']);
+        if ($row = $res->Fetch()) {
+            return trim((string)$row['NAME']);
+        }
+    }
+
+    return (string)$value;
 }
 
 function overtimeCancelFindStatusElementId(string $value): int
@@ -131,53 +160,57 @@ require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
 $APPLICATION->SetTitle('Отмена заявки #' . $requestId);
 ?>
 <style>
-.cancel-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9999}
-.cancel-modal{width:min(760px,96vw);background:#fff;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.2);padding:20px}
-.cancel-modal h2{margin-top:0}
-.cancel-info{background:#f8f9fa;border:1px solid #e9ecef;border-radius:8px;padding:12px;margin-bottom:14px}
-.cancel-info p{margin:0 0 8px}
-.cancel-info p:last-child{margin-bottom:0}
-.req-text{margin:10px 0 14px;color:#8a4b00;background:#fff3cd;border:1px solid #ffe69c;padding:10px;border-radius:6px}
+.cancel-page-wrap{max-width:900px;margin:24px auto;padding:0 12px}
+.cancel-card{background:#fff;border:1px solid #dfe3e8;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.06)}
+.cancel-card-head{padding:16px 20px;border-bottom:1px solid #eef1f4}
+.cancel-card-body{padding:20px}
+.cancel-grid{display:grid;grid-template-columns:220px 1fr;gap:10px 14px;margin-bottom:16px}
+.cancel-grid-label{color:#6c757d}
+.cancel-warning{margin:12px 0 16px;color:#8a4b00;background:#fff3cd;border:1px solid #ffe69c;padding:10px 12px;border-radius:6px}
+@media (max-width: 680px){.cancel-grid{grid-template-columns:1fr}}
 </style>
 
-<div class="cancel-modal-backdrop">
-    <div class="cancel-modal">
-        <h2>Отмена заявки #<?= (int)$requestId ?></h2>
-
-        <?php if ($error !== ''): ?>
-            <div class="alert alert-danger"><?= htmlspecialcharsbx($error) ?></div>
-        <?php endif; ?>
-        <?php if ($ok !== ''): ?>
-            <div class="alert alert-success"><?= htmlspecialcharsbx($ok) ?></div>
-        <?php endif; ?>
-
-        <div class="cancel-info">
-            <p><strong>Номер заявки:</strong> #<?= (int)$requestId ?></p>
-            <p><strong>ФИО сотрудника:</strong> <?= htmlspecialcharsbx($fio !== '' ? $fio : '—') ?></p>
-            <p><strong>Тип работ:</strong> <?= htmlspecialcharsbx($workType !== '' ? $workType : '—') ?></p>
-            <p><strong>Тип оплаты:</strong> <?= htmlspecialcharsbx($payType !== '' ? $payType : '—') ?></p>
-            <p><strong>Текущий статус:</strong> <?= htmlspecialcharsbx($statusName) ?></p>
+<div class="cancel-page-wrap">
+    <div class="cancel-card">
+        <div class="cancel-card-head">
+            <h2 style="margin:0;">Отмена заявки #<?= (int)$requestId ?></h2>
         </div>
+        <div class="cancel-card-body">
+            <?php if ($error !== ''): ?>
+                <div class="alert alert-danger"><?= htmlspecialcharsbx($error) ?></div>
+            <?php endif; ?>
+            <?php if ($ok !== ''): ?>
+                <div class="alert alert-success"><?= htmlspecialcharsbx($ok) ?></div>
+            <?php endif; ?>
 
-        <div class="req-text">
-            Вы отменяете выполненную заявку. Проверьте, что в 1С также отменено проведение документов по этой заявке.
+            <div class="cancel-grid">
+                <div class="cancel-grid-label">Номер заявки</div><div><strong>#<?= (int)$requestId ?></strong></div>
+                <div class="cancel-grid-label">ФИО сотрудника</div><div><?= htmlspecialcharsbx($fio !== '' ? $fio : '—') ?></div>
+                <div class="cancel-grid-label">Тип работ</div><div><?= htmlspecialcharsbx($workType !== '' ? $workType : '—') ?></div>
+                <div class="cancel-grid-label">Тип оплаты</div><div><?= htmlspecialcharsbx($payType !== '' ? $payType : '—') ?></div>
+                <div class="cancel-grid-label">Текущий статус</div><div><?= htmlspecialcharsbx($statusName) ?></div>
+            </div>
+
+            <div class="cancel-warning">
+                Вы отменяете выполненную заявку. Проверьте, что в 1С также отменено проведение документов по этой заявке.
+            </div>
+
+            <?php if ($ok === ''): ?>
+                <form method="post">
+                    <?= bitrix_sessid_post() ?>
+                    <div class="form-group">
+                        <label for="cancel_comment"><strong>Комментарий при отмене (обязательно)</strong></label>
+                        <textarea class="form-control" name="cancel_comment" id="cancel_comment" rows="4" required><?= htmlspecialcharsbx($comment) ?></textarea>
+                    </div>
+                    <div style="margin-top:12px; display:flex; gap:8px;">
+                        <button type="submit" class="btn btn-danger">Отменить заявку</button>
+                        <a href="list.php" class="btn btn-secondary">К списку</a>
+                    </div>
+                </form>
+            <?php else: ?>
+                <a href="list.php" class="btn btn-primary">Вернуться к списку</a>
+            <?php endif; ?>
         </div>
-
-        <?php if ($ok === ''): ?>
-            <form method="post">
-                <?= bitrix_sessid_post() ?>
-                <div class="form-group">
-                    <label for="cancel_comment"><strong>Комментарий при отмене (обязательно)</strong></label>
-                    <textarea class="form-control" name="cancel_comment" id="cancel_comment" rows="4" required><?= htmlspecialcharsbx($comment) ?></textarea>
-                </div>
-                <div class="mt-3" style="margin-top:12px; display:flex; gap:8px;">
-                    <button type="submit" class="btn btn-danger">Отменить заявку</button>
-                    <a href="list.php" class="btn btn-secondary">К списку</a>
-                </div>
-            </form>
-        <?php else: ?>
-            <a href="list.php" class="btn btn-primary">Вернуться к списку</a>
-        <?php endif; ?>
     </div>
 </div>
 
