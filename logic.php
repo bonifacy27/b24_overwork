@@ -941,6 +941,45 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
 
     $isDuty = overtimeIsDutyRequestedAndAllowed($isDuty, $config);
     $segments = overtimeBuildSegments($start, $end, $isDuty, $config);
+    foreach ($segments as $segment) {
+        $blockingDuplicate = overtimeFindBlockingDuplicateRequest(
+            $employeeId,
+            $segment['start'],
+            $segment['end'],
+            $config
+        );
+        if ($blockingDuplicate !== null) {
+            $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
+            $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
+            $duplicatePeriod = trim((string)($blockingDuplicate['start'] ?? '')) . ' — ' . trim((string)($blockingDuplicate['end'] ?? ''));
+            $statusText = $duplicateStatus !== '' ? (' (статус: ' . $duplicateStatus . ')') : '';
+            $errors[] = 'Обнаружено пересечение с существующей заявкой сотрудника '
+                . overtimeGetUserNameById($employeeId)
+                . ': #' . $duplicateId
+                . $statusText
+                . ', период ' . $duplicatePeriod . '.'
+                . ' Создание дубля невозможно.';
+            $blockCreate = true;
+            break;
+        }
+    }
+
+    if (!empty($errors)) {
+        return [
+            'success' => false,
+            'errors' => $errors,
+            'messages' => [],
+            'all_check_messages' => [],
+            'segments' => [],
+            'segments_json' => '[]',
+            'late_warning_required' => false,
+            'late_warning_text' => '',
+            'split_warning_required' => false,
+            'split_warning_text' => '',
+            'block_create' => $blockCreate,
+        ];
+    }
+
     $messages = [];
     $checkResult = [
         'messages' => [],
