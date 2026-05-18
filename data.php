@@ -540,9 +540,12 @@ function overtimeFindBlockingDuplicateRequest(
     DateTime $start,
     DateTime $end,
     array $config,
-    array $ignoreRequestIds = []
+    array $ignoreRequestIds = [],
+    array &$diagnostics = []
 ): ?array {
+    $diagnostics = [];
     if ($employeeId <= 0) {
+        $diagnostics[] = 'duplicate_check: employeeId<=0';
         return null;
     }
 
@@ -561,9 +564,6 @@ function overtimeFindBlockingDuplicateRequest(
         'ACTIVE' => 'Y',
         'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] => $employeeId,
     ];
-    if (!empty($excludedStatuses)) {
-        $filter['!=PROPERTY_' . $config['REQ_PROP_STATUS']] = $excludedStatuses;
-    }
     if (!empty($ignoreRequestIds)) {
         $filter['!ID'] = $ignoreRequestIds;
     }
@@ -584,14 +584,24 @@ function overtimeFindBlockingDuplicateRequest(
 
     $newStartTs = strtotime($start->format('Y-m-d H:i:s'));
     $newEndTs = strtotime($end->format('Y-m-d H:i:s'));
+    $diagnostics[] = 'duplicate_check: new_period=' . date('d.m.Y H:i:s', $newStartTs) . ' - ' . date('d.m.Y H:i:s', $newEndTs);
     if ($newEndTs <= $newStartTs) {
+        $diagnostics[] = 'duplicate_check: invalid new period';
         return null;
     }
 
+    $checked = 0;
     while ($item = $res->Fetch()) {
+        $checked++;
         $existingStartRaw = (string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? '');
         $existingEndRaw = (string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? '');
+        $existingStatusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
+        if (in_array($existingStatusId, $excludedStatuses, true)) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': excluded status=' . $existingStatusId;
+            continue;
+        }
         if ($existingStartRaw === '' || $existingEndRaw === '') {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': empty dates';
             continue;
         }
 
@@ -599,21 +609,25 @@ function overtimeFindBlockingDuplicateRequest(
             $existingStart = new DateTime($existingStartRaw);
             $existingEnd = new DateTime($existingEndRaw);
         } catch (Throwable $e) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': parse error';
             continue;
         }
 
         $existingStartTs = strtotime($existingStart->format('Y-m-d H:i:s'));
         $existingEndTs = strtotime($existingEnd->format('Y-m-d H:i:s'));
         if ($existingEndTs <= $existingStartTs) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': invalid period';
             continue;
         }
 
         $hasOverlap = ($newStartTs < $existingEndTs) && ($newEndTs > $existingStartTs);
         $isExactDuplicate = ($newStartTs === $existingStartTs) && ($newEndTs === $existingEndTs);
         if (!$hasOverlap && !$isExactDuplicate) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': no overlap';
             continue;
         }
 
+        $diagnostics[] = 'block #' . (int)$item['ID'] . ': overlap detected';
         return [
             'id' => (int)($item['ID'] ?? 0),
             'name' => (string)($item['NAME'] ?? ''),
@@ -623,6 +637,7 @@ function overtimeFindBlockingDuplicateRequest(
         ];
     }
 
+    $diagnostics[] = 'duplicate_check: checked=' . $checked . ', conflicts=0';
     return null;
 }
 

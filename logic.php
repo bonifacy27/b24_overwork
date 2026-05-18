@@ -941,13 +941,22 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
 
     $isDuty = overtimeIsDutyRequestedAndAllowed($isDuty, $config);
     $segments = overtimeBuildSegments($start, $end, $isDuty, $config);
+    $duplicateDiagnostics = [];
     foreach ($segments as $segment) {
+        $segmentDiagnostics = [];
         $blockingDuplicate = overtimeFindBlockingDuplicateRequest(
             $employeeId,
             $segment['start'],
             $segment['end'],
-            $config
+            $config,
+            [],
+            $segmentDiagnostics
         );
+        if (!empty($config['DEBUG']) && !empty($segmentDiagnostics)) {
+            foreach ($segmentDiagnostics as $diagLine) {
+                $duplicateDiagnostics[] = '[duplicate-check] ' . $diagLine;
+            }
+        }
         if ($blockingDuplicate !== null) {
             $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
             $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
@@ -969,7 +978,9 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
             'success' => false,
             'errors' => $errors,
             'messages' => [],
-            'all_check_messages' => [],
+            'all_check_messages' => array_map(static function (string $line): array {
+                return ['type' => 'warning', 'text' => $line];
+            }, $duplicateDiagnostics),
             'segments' => [],
             'segments_json' => '[]',
             'late_warning_required' => false,
@@ -1014,7 +1025,12 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
         'success' => true,
         'errors' => [],
         'messages' => $messages,
-        'all_check_messages' => $checkResult['messages'],
+        'all_check_messages' => array_merge(
+            $checkResult['messages'],
+            array_map(static function (string $line): array {
+                return ['type' => 'info', 'text' => $line];
+            }, $duplicateDiagnostics)
+        ),
         'segments' => $preparedSegments,
         'segments_json' => Json::encode(overtimeNormalizeSegments($segments)),
         'late_warning_required' => $lateWarning['required'],
