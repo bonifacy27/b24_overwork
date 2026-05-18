@@ -1373,7 +1373,8 @@ function overtimeCreateEmployeeRequestPack(
     int $createdBy,
     array $config,
     int $groupId = 0,
-    array $workflowParameters = []
+    array $workflowParameters = [],
+    array $ignoreRequestIds = []
 ): array {
     $segments = overtimeRestoreSegments($segmentsRaw);
     $errors = [];
@@ -1419,6 +1420,26 @@ function overtimeCreateEmployeeRequestPack(
 
     foreach ($segments as $index => $segment) {
         $paymentTypeId = (int)$paymentTypes[$index];
+        $blockingDuplicate = overtimeFindBlockingDuplicateRequest(
+            $employeeId,
+            $segment['start'],
+            $segment['end'],
+            $config,
+            $ignoreRequestIds
+        );
+        if ($blockingDuplicate !== null) {
+            $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
+            $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
+            $duplicatePeriod = trim((string)($blockingDuplicate['start'] ?? '')) . ' — ' . trim((string)($blockingDuplicate['end'] ?? ''));
+            $statusText = $duplicateStatus !== '' ? (' (статус: ' . $duplicateStatus . ')') : '';
+            $errors[] = 'Обнаружено пересечение с существующей заявкой сотрудника '
+                . overtimeGetUserNameById($employeeId)
+                . ': #' . $duplicateId
+                . $statusText
+                . ', период ' . $duplicatePeriod . '.'
+                . ' Создание дубля невозможно.';
+            break;
+        }
 
         $fields = [
             'IBLOCK_ID' => $config['IBLOCK_REQUESTS'],

@@ -535,6 +535,90 @@ function overtimeGetExistingOvertimeHoursByDay(int $employeeId, DateTime $period
     return $result;
 }
 
+function overtimeFindBlockingDuplicateRequest(
+    int $employeeId,
+    DateTime $start,
+    DateTime $end,
+    array $config,
+    array $ignoreRequestIds = []
+): ?array {
+    if ($employeeId <= 0) {
+        return null;
+    }
+
+    $ignoreRequestIds = array_values(array_unique(array_map('intval', $ignoreRequestIds)));
+    $excludedStatuses = [
+        (int)($config['STATUS_REJECTED_ID'] ?? 0),
+        (int)($config['STATUS_CANCELLED_ID'] ?? 0),
+        (int)($config['STATUS_TRANSFERRED_ID'] ?? 0),
+    ];
+    $excludedStatuses = array_values(array_filter($excludedStatuses, static function (int $statusId): bool {
+        return $statusId > 0;
+    }));
+
+    $filter = [
+        'IBLOCK_ID' => $config['IBLOCK_REQUESTS'],
+        'ACTIVE' => 'Y',
+        'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] => $employeeId,
+    ];
+    if (!empty($excludedStatuses)) {
+        $filter['!PROPERTY_' . $config['REQ_PROP_STATUS']] = $excludedStatuses;
+    }
+    if (!empty($ignoreRequestIds)) {
+        $filter['!ID'] = $ignoreRequestIds;
+    }
+
+    $res = CIBlockElement::GetList(
+        ['ID' => 'ASC'],
+        $filter,
+        false,
+        false,
+        [
+            'ID',
+            'NAME',
+            'PROPERTY_' . $config['REQ_PROP_START'],
+            'PROPERTY_' . $config['REQ_PROP_END'],
+            'PROPERTY_' . $config['REQ_PROP_STATUS'],
+        ]
+    );
+
+    $newStartTs = strtotime($start->format('Y-m-d H:i:s'));
+    $newEndTs = strtotime($end->format('Y-m-d H:i:s'));
+    if ($newEndTs <= $newStartTs) {
+        return null;
+    }
+
+    while ($item = $res->Fetch()) {
+        $existingStartRaw = (string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? '');
+        $existingEndRaw = (string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? '');
+        if ($existingStartRaw === '' || $existingEndRaw === '') {
+            continue;
+        }
+
+        $existingStartTs = strtotime($existingStartRaw);
+        $existingEndTs = strtotime($existingEndRaw);
+        if (!$existingStartTs || !$existingEndTs || $existingEndTs <= $existingStartTs) {
+            continue;
+        }
+
+        $hasOverlap = ($newStartTs < $existingEndTs) && ($newEndTs > $existingStartTs);
+        $isExactDuplicate = ($newStartTs === $existingStartTs) && ($newEndTs === $existingEndTs);
+        if (!$hasOverlap && !$isExactDuplicate) {
+            continue;
+        }
+
+        return [
+            'id' => (int)($item['ID'] ?? 0),
+            'name' => (string)($item['NAME'] ?? ''),
+            'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'start' => date('d.m.Y H:i', $existingStartTs),
+            'end' => date('d.m.Y H:i', $existingEndTs),
+        ];
+    }
+
+    return null;
+}
+
 function overtimeBuildDefaultFormData(int $currentUserId): array
 {
     return [
