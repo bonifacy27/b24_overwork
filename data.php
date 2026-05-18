@@ -562,7 +562,7 @@ function overtimeFindBlockingDuplicateRequest(
         'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] => $employeeId,
     ];
     if (!empty($excludedStatuses)) {
-        $filter['!PROPERTY_' . $config['REQ_PROP_STATUS']] = $excludedStatuses;
+        $filter['!=PROPERTY_' . $config['REQ_PROP_STATUS']] = $excludedStatuses;
     }
     if (!empty($ignoreRequestIds)) {
         $filter['!ID'] = $ignoreRequestIds;
@@ -595,9 +595,16 @@ function overtimeFindBlockingDuplicateRequest(
             continue;
         }
 
-        $existingStartTs = strtotime($existingStartRaw);
-        $existingEndTs = strtotime($existingEndRaw);
-        if (!$existingStartTs || !$existingEndTs || $existingEndTs <= $existingStartTs) {
+        try {
+            $existingStart = new DateTime($existingStartRaw);
+            $existingEnd = new DateTime($existingEndRaw);
+        } catch (Throwable $e) {
+            continue;
+        }
+
+        $existingStartTs = strtotime($existingStart->format('Y-m-d H:i:s'));
+        $existingEndTs = strtotime($existingEnd->format('Y-m-d H:i:s'));
+        if ($existingEndTs <= $existingStartTs) {
             continue;
         }
 
