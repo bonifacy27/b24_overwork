@@ -579,6 +579,10 @@ function overtimeFindBlockingDuplicateRequest(
             'PROPERTY_' . $config['REQ_PROP_START'],
             'PROPERTY_' . $config['REQ_PROP_END'],
             'PROPERTY_' . $config['REQ_PROP_STATUS'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
         ]
     );
 
@@ -593,16 +597,28 @@ function overtimeFindBlockingDuplicateRequest(
     $checked = 0;
     while ($item = $res->Fetch()) {
         $checked++;
-        $existingStartRaw = (string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? '');
-        $existingEndRaw = (string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? '');
+        $existingStartRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? ''));
+        $existingEndRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? ''));
         $existingStatusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
         if (in_array($existingStatusId, $excludedStatuses, true)) {
             $diagnostics[] = 'skip #' . (int)$item['ID'] . ': excluded status=' . $existingStatusId;
             continue;
         }
+
         if ($existingStartRaw === '' || $existingEndRaw === '') {
-            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': empty dates';
-            continue;
+            $workStartDate = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'] . '_VALUE'] ?? ''));
+            $workEndDate = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'] . '_VALUE'] ?? ''));
+            $workStartTime = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'] . '_VALUE'] ?? ''));
+            $workEndTime = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'] . '_VALUE'] ?? ''));
+
+            if ($workStartDate !== '' && $workEndDate !== '' && $workStartTime !== '' && $workEndTime !== '') {
+                $existingStartRaw = $workStartDate . ' ' . $workStartTime . ':00';
+                $existingEndRaw = $workEndDate . ' ' . $workEndTime . ':00';
+                $diagnostics[] = 'fallback #' . (int)$item['ID'] . ': using work date/time properties';
+            } else {
+                $diagnostics[] = 'skip #' . (int)$item['ID'] . ': empty dates';
+                continue;
+            }
         }
 
         try {
