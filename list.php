@@ -1893,6 +1893,9 @@ profilerStopCustom('total_backend');
                                 <td class="nowrap">
                                     <div class="actions-cell">
                                         <a href="<?= h($a['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                        <?php if (mb_strtolower(trim((string)$a['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                            <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$a['ID']) ?>">Отменить заявку</a>
+                                        <?php endif; ?>
                                         <?php if ((int)$a['TASK_ID'] > 0): ?>
                                             <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$a['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
                                         <?php endif; ?>
@@ -1972,6 +1975,9 @@ profilerStopCustom('total_backend');
                                 <td class="nowrap pair-divider-cell">
                                     <div class="actions-cell">
                                         <a href="<?= h($b['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                        <?php if (mb_strtolower(trim((string)$b['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                            <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$b['ID']) ?>">Отменить заявку</a>
+                                        <?php endif; ?>
                                         <?php if ((int)$b['TASK_ID'] > 0): ?>
                                             <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$b['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
                                         <?php endif; ?>
@@ -2053,6 +2059,9 @@ profilerStopCustom('total_backend');
                                 <td class="nowrap">
                                     <div class="actions-cell">
                                         <a href="<?= h($row['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                        <?php if (mb_strtolower(trim((string)$row['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                            <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$row['ID']) ?>">Отменить заявку</a>
+                                        <?php endif; ?>
                                         <?php if ((int)$row['TASK_ID'] > 0): ?>
                                             <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$row['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
                                         <?php endif; ?>
