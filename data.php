@@ -40,6 +40,39 @@ function overtimeGetUserNameById(int $userId): string
     return $data['name'];
 }
 
+function overtimeResolveEnumOrElementValueSafe($value): string
+{
+    if (is_array($value)) {
+        $parts = [];
+        foreach ($value as $item) {
+            $resolved = overtimeResolveEnumOrElementValueSafe($item);
+            if ($resolved !== '') {
+                $parts[] = $resolved;
+            }
+        }
+        return implode(', ', array_values(array_unique($parts)));
+    }
+
+    $stringValue = trim((string)$value);
+    if ($stringValue === '') {
+        return '';
+    }
+
+    if (is_numeric($stringValue) && (int)$stringValue > 0) {
+        $statusRes = CIBlockElement::GetList([], ['ID' => (int)$stringValue], false, false, ['ID', 'NAME']);
+        if ($status = $statusRes->Fetch()) {
+            return trim((string)($status['NAME'] ?? ''));
+        }
+
+        $enum = CIBlockPropertyEnum::GetByID((int)$stringValue);
+        if ($enum && !empty($enum['VALUE'])) {
+            return trim((string)$enum['VALUE']);
+        }
+    }
+
+    return $stringValue;
+}
+
 
 
 function overtimeGetDutyAllowedEmployeeIds(array $config): array
@@ -647,7 +680,7 @@ function overtimeFindBlockingDuplicateRequest(
         return [
             'id' => (int)($item['ID'] ?? 0),
             'name' => (string)($item['NAME'] ?? ''),
-            'status_name' => overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
             'start' => date('d.m.Y H:i', $existingStartTs),
             'end' => date('d.m.Y H:i', $existingEndTs),
         ];
