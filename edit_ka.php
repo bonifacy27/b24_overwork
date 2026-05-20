@@ -219,6 +219,55 @@ function overtimeGetElementName(int $elementId): string
     return $row ? trim((string)$row['NAME']) : '';
 }
 
+function overtimeGetLinkedRequestIds(int $requestId, array $config): array
+{
+    if ($requestId <= 0) {
+        return [];
+    }
+
+    $propRes = CIBlockElement::GetProperty(
+        (int)$config['IBLOCK_REQUESTS'],
+        $requestId,
+        ['sort' => 'asc'],
+        ['CODE' => (string)$config['REQ_PROP_LINKED_REQUESTS']]
+    );
+
+    $linkedIds = [];
+    while ($prop = $propRes->Fetch()) {
+        $linkedId = (int)($prop['VALUE'] ?? 0);
+        if ($linkedId > 0 && $linkedId !== $requestId) {
+            $linkedIds[$linkedId] = $linkedId;
+        }
+    }
+
+    return array_values($linkedIds);
+}
+
+function overtimeMergeLinkedRequestIds(int $requestId, array $idsToMerge, array $config): void
+{
+    if ($requestId <= 0) {
+        return;
+    }
+
+    $currentIds = overtimeGetLinkedRequestIds($requestId, $config);
+    $merged = [];
+
+    foreach (array_merge($currentIds, $idsToMerge) as $id) {
+        $id = (int)$id;
+        if ($id > 0 && $id !== $requestId) {
+            $merged[$id] = $id;
+        }
+    }
+
+    CIBlockElement::SetPropertyValuesEx(
+        $requestId,
+        (int)$config['IBLOCK_REQUESTS'],
+        [
+            $config['REQ_PROP_LINKED_REQUESTS'] => array_values($merged),
+        ]
+    );
+}
+
 $request = Context::getCurrent()->getRequest();
 $requestId = (int)$request->getQuery('id');
 
@@ -350,6 +399,15 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
             }
 
             if (empty($errors)) {
+                $sourceLinkedIds = overtimeGetLinkedRequestIds($requestId, $overtimeConfig);
+                $allRelatedIds = array_values(array_unique(array_merge([$requestId], $sourceLinkedIds)));
+
+                overtimeMergeLinkedRequestIds($newRequestId, $allRelatedIds, $overtimeConfig);
+
+                foreach ($allRelatedIds as $relatedId) {
+                    overtimeMergeLinkedRequestIds((int)$relatedId, [$newRequestId], $overtimeConfig);
+                }
+
                 CIBlockElement::SetPropertyValuesEx(
                     $requestId,
                     (int)$overtimeConfig['IBLOCK_REQUESTS'],
