@@ -40,6 +40,39 @@ function overtimeGetUserNameById(int $userId): string
     return $data['name'];
 }
 
+function overtimeResolveEnumOrElementValueSafe($value): string
+{
+    if (is_array($value)) {
+        $parts = [];
+        foreach ($value as $item) {
+            $resolved = overtimeResolveEnumOrElementValueSafe($item);
+            if ($resolved !== '') {
+                $parts[] = $resolved;
+            }
+        }
+        return implode(', ', array_values(array_unique($parts)));
+    }
+
+    $stringValue = trim((string)$value);
+    if ($stringValue === '') {
+        return '';
+    }
+
+    if (is_numeric($stringValue) && (int)$stringValue > 0) {
+        $statusRes = CIBlockElement::GetList([], ['ID' => (int)$stringValue], false, false, ['ID', 'NAME']);
+        if ($status = $statusRes->Fetch()) {
+            return trim((string)($status['NAME'] ?? ''));
+        }
+
+        $enum = CIBlockPropertyEnum::GetByID((int)$stringValue);
+        if ($enum && !empty($enum['VALUE'])) {
+            return trim((string)$enum['VALUE']);
+        }
+    }
+
+    return $stringValue;
+}
+
 
 
 function overtimeGetDutyAllowedEmployeeIds(array $config): array
@@ -533,6 +566,128 @@ function overtimeGetExistingOvertimeHoursByDay(int $employeeId, DateTime $period
     }
 
     return $result;
+}
+
+function overtimeFindBlockingDuplicateRequest(
+    int $employeeId,
+    DateTime $start,
+    DateTime $end,
+    array $config,
+    array $ignoreRequestIds = [],
+    array &$diagnostics = []
+): ?array {
+    $diagnostics = [];
+    if ($employeeId <= 0) {
+        $diagnostics[] = 'duplicate_check: employeeId<=0';
+        return null;
+    }
+
+    $ignoreRequestIds = array_values(array_unique(array_map('intval', $ignoreRequestIds)));
+    $excludedStatuses = [
+        (int)($config['STATUS_REJECTED_ID'] ?? 0),
+        (int)($config['STATUS_CANCELLED_ID'] ?? 0),
+        (int)($config['STATUS_TRANSFERRED_ID'] ?? 0),
+    ];
+    $excludedStatuses = array_values(array_filter($excludedStatuses, static function (int $statusId): bool {
+        return $statusId > 0;
+    }));
+
+    $filter = [
+        'IBLOCK_ID' => $config['IBLOCK_REQUESTS'],
+        'ACTIVE' => 'Y',
+        'PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] => $employeeId,
+    ];
+    if (!empty($ignoreRequestIds)) {
+        $filter['!ID'] = $ignoreRequestIds;
+    }
+
+    $res = CIBlockElement::GetList(
+        ['ID' => 'ASC'],
+        $filter,
+        false,
+        false,
+        [
+            'ID',
+            'NAME',
+            'PROPERTY_' . $config['REQ_PROP_START'],
+            'PROPERTY_' . $config['REQ_PROP_END'],
+            'PROPERTY_' . $config['REQ_PROP_STATUS'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
+        ]
+    );
+
+    $newStartTs = strtotime($start->format('Y-m-d H:i:s'));
+    $newEndTs = strtotime($end->format('Y-m-d H:i:s'));
+    $diagnostics[] = 'duplicate_check: new_period=' . date('d.m.Y H:i:s', $newStartTs) . ' - ' . date('d.m.Y H:i:s', $newEndTs);
+    if ($newEndTs <= $newStartTs) {
+        $diagnostics[] = 'duplicate_check: invalid new period';
+        return null;
+    }
+
+    $checked = 0;
+    while ($item = $res->Fetch()) {
+        $checked++;
+        $existingStartRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? ''));
+        $existingEndRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? ''));
+        $existingStatusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
+        if (in_array($existingStatusId, $excludedStatuses, true)) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': excluded status=' . $existingStatusId;
+            continue;
+        }
+
+        if ($existingStartRaw === '' || $existingEndRaw === '') {
+            $workStartDate = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_START_DATE'] . '_VALUE'] ?? ''));
+            $workEndDate = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'] . '_VALUE'] ?? ''));
+            $workStartTime = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'] . '_VALUE'] ?? ''));
+            $workEndTime = trim((string)($item['PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'] . '_VALUE'] ?? ''));
+
+            if ($workStartDate !== '' && $workEndDate !== '' && $workStartTime !== '' && $workEndTime !== '') {
+                $existingStartRaw = $workStartDate . ' ' . $workStartTime . ':00';
+                $existingEndRaw = $workEndDate . ' ' . $workEndTime . ':00';
+                $diagnostics[] = 'fallback #' . (int)$item['ID'] . ': using work date/time properties';
+            } else {
+                $diagnostics[] = 'skip #' . (int)$item['ID'] . ': empty dates';
+                continue;
+            }
+        }
+
+        try {
+            $existingStart = new DateTime($existingStartRaw);
+            $existingEnd = new DateTime($existingEndRaw);
+        } catch (Throwable $e) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': parse error';
+            continue;
+        }
+
+        $existingStartTs = strtotime($existingStart->format('Y-m-d H:i:s'));
+        $existingEndTs = strtotime($existingEnd->format('Y-m-d H:i:s'));
+        if ($existingEndTs <= $existingStartTs) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': invalid period';
+            continue;
+        }
+
+        $hasOverlap = ($newStartTs < $existingEndTs) && ($newEndTs > $existingStartTs);
+        $isExactDuplicate = ($newStartTs === $existingStartTs) && ($newEndTs === $existingEndTs);
+        if (!$hasOverlap && !$isExactDuplicate) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': no overlap';
+            continue;
+        }
+
+        $diagnostics[] = 'block #' . (int)$item['ID'] . ': overlap detected';
+        return [
+            'id' => (int)($item['ID'] ?? 0),
+            'name' => (string)($item['NAME'] ?? ''),
+            'status_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'start' => date('d.m.Y H:i', $existingStartTs),
+            'end' => date('d.m.Y H:i', $existingEndTs),
+        ];
+    }
+
+    $diagnostics[] = 'duplicate_check: checked=' . $checked . ', conflicts=0';
+    return null;
 }
 
 function overtimeBuildDefaultFormData(int $currentUserId): array

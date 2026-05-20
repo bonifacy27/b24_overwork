@@ -941,6 +941,56 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
 
     $isDuty = overtimeIsDutyRequestedAndAllowed($isDuty, $config);
     $segments = overtimeBuildSegments($start, $end, $isDuty, $config);
+    $duplicateDiagnostics = [];
+    foreach ($segments as $segment) {
+        $segmentDiagnostics = [];
+        $blockingDuplicate = overtimeFindBlockingDuplicateRequest(
+            $employeeId,
+            $segment['start'],
+            $segment['end'],
+            $config,
+            [],
+            $segmentDiagnostics
+        );
+        if (!empty($config['DEBUG']) && !empty($segmentDiagnostics)) {
+            foreach ($segmentDiagnostics as $diagLine) {
+                $duplicateDiagnostics[] = '[duplicate-check] ' . $diagLine;
+            }
+        }
+        if ($blockingDuplicate !== null) {
+            $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
+            $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
+            $duplicatePeriod = trim((string)($blockingDuplicate['start'] ?? '')) . ' — ' . trim((string)($blockingDuplicate['end'] ?? ''));
+            $statusText = $duplicateStatus !== '' ? (' (статус: ' . $duplicateStatus . ')') : '';
+            $errors[] = 'Обнаружено пересечение с существующей заявкой сотрудника '
+                . overtimeGetUserNameById($employeeId)
+                . ': #' . $duplicateId
+                . $statusText
+                . ', период ' . $duplicatePeriod . '.'
+                . ' Создание дубля невозможно.';
+            $blockCreate = true;
+            break;
+        }
+    }
+
+    if (!empty($errors)) {
+        return [
+            'success' => false,
+            'errors' => $errors,
+            'messages' => [],
+            'all_check_messages' => array_map(static function (string $line): array {
+                return ['type' => 'warning', 'text' => $line];
+            }, $duplicateDiagnostics),
+            'segments' => [],
+            'segments_json' => '[]',
+            'late_warning_required' => false,
+            'late_warning_text' => '',
+            'split_warning_required' => false,
+            'split_warning_text' => '',
+            'block_create' => $blockCreate,
+        ];
+    }
+
     $messages = [];
     $checkResult = [
         'messages' => [],
@@ -975,7 +1025,12 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
         'success' => true,
         'errors' => [],
         'messages' => $messages,
-        'all_check_messages' => $checkResult['messages'],
+        'all_check_messages' => array_merge(
+            $checkResult['messages'],
+            array_map(static function (string $line): array {
+                return ['type' => 'info', 'text' => $line];
+            }, $duplicateDiagnostics)
+        ),
         'segments' => $preparedSegments,
         'segments_json' => Json::encode(overtimeNormalizeSegments($segments)),
         'late_warning_required' => $lateWarning['required'],
@@ -1373,7 +1428,8 @@ function overtimeCreateEmployeeRequestPack(
     int $createdBy,
     array $config,
     int $groupId = 0,
-    array $workflowParameters = []
+    array $workflowParameters = [],
+    array $ignoreRequestIds = []
 ): array {
     $segments = overtimeRestoreSegments($segmentsRaw);
     $errors = [];
@@ -1419,6 +1475,26 @@ function overtimeCreateEmployeeRequestPack(
 
     foreach ($segments as $index => $segment) {
         $paymentTypeId = (int)$paymentTypes[$index];
+        $blockingDuplicate = overtimeFindBlockingDuplicateRequest(
+            $employeeId,
+            $segment['start'],
+            $segment['end'],
+            $config,
+            $ignoreRequestIds
+        );
+        if ($blockingDuplicate !== null) {
+            $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
+            $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
+            $duplicatePeriod = trim((string)($blockingDuplicate['start'] ?? '')) . ' — ' . trim((string)($blockingDuplicate['end'] ?? ''));
+            $statusText = $duplicateStatus !== '' ? (' (статус: ' . $duplicateStatus . ')') : '';
+            $errors[] = 'Обнаружено пересечение с существующей заявкой сотрудника '
+                . overtimeGetUserNameById($employeeId)
+                . ': #' . $duplicateId
+                . $statusText
+                . ', период ' . $duplicatePeriod . '.'
+                . ' Создание дубля невозможно.';
+            break;
+        }
 
         $fields = [
             'IBLOCK_ID' => $config['IBLOCK_REQUESTS'],
