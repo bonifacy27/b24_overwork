@@ -233,6 +233,69 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     ];
 }
 
+function overtimeCollectAllLinkedRequestIds(int $requestId, array $config): array
+{
+    if ($requestId <= 0) {
+        return [];
+    }
+
+    $iblockId = (int)($config['IBLOCK_REQUESTS'] ?? 0);
+    $linkedPropCode = trim((string)($config['REQ_PROP_LINKED_REQUESTS'] ?? ''));
+    if ($iblockId <= 0 || $linkedPropCode === '') {
+        return [];
+    }
+
+    $visited = [$requestId => true];
+    $result = [];
+    $queue = [$requestId];
+
+    while (!empty($queue)) {
+        $batchIds = array_values(array_unique(array_map('intval', $queue)));
+        $queue = [];
+
+        $res = CIBlockElement::GetList(
+            [],
+            [
+                'IBLOCK_ID' => $iblockId,
+                'ID' => $batchIds,
+            ],
+            false,
+            false,
+            [
+                'ID',
+                'PROPERTY_' . $linkedPropCode,
+            ]
+        );
+
+        while ($item = $res->Fetch()) {
+            $currentId = (int)($item['ID'] ?? 0);
+            if ($currentId <= 0) {
+                continue;
+            }
+
+            $linkedValue = $item['PROPERTY_' . $linkedPropCode . '_VALUE'] ?? [];
+            if (!is_array($linkedValue)) {
+                $linkedValue = [$linkedValue];
+            }
+
+            foreach ($linkedValue as $value) {
+                $linkedId = (int)$value;
+                if ($linkedId <= 0 || $linkedId === $requestId) {
+                    continue;
+                }
+
+                $result[$linkedId] = $linkedId;
+                if (!isset($visited[$linkedId])) {
+                    $visited[$linkedId] = true;
+                    $queue[] = $linkedId;
+                }
+            }
+        }
+    }
+
+    return array_values($result);
+}
+
 function overtimeGetLinkedRequestCalculations(array $requestIds, array $config): array
 {
     $requestIds = array_values(array_unique(array_map('intval', $requestIds)));
@@ -1363,7 +1426,8 @@ function overtimeRenderTextWithLinks(string $text): string
 }
 
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
-$linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($viewData['linked_request_ids'], $overtimeConfig) : [];
+$allLinkedRequestIds = $viewData ? overtimeCollectAllLinkedRequestIds((int)$viewData['id'], $overtimeConfig) : [];
+$linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($allLinkedRequestIds, $overtimeConfig) : [];
 $groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((array)($viewData['group_ids'] ?? []), (int)$viewData['id'], $overtimeConfig) : [];
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
