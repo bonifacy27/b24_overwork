@@ -1174,34 +1174,41 @@ foreach ($rowsSorted as $row) {
 
     $paired = false;
 
-    if (count($row['RELATED_IDS']) === 1) {
-        $relatedId = (int)$row['RELATED_IDS'][0];
+    if (!empty($row['RELATED_IDS'])) {
+        foreach ($row['RELATED_IDS'] as $candidateRelatedId) {
+            $relatedId = (int)$candidateRelatedId;
 
-        if ($relatedId > 0 && isset($rows[$relatedId]) && !isset($usedIds[$relatedId])) {
+            if ($relatedId <= 0 || !isset($rows[$relatedId]) || isset($usedIds[$relatedId])) {
+                continue;
+            }
+
             $other = $rows[$relatedId];
 
             $isMutual = in_array($id, $other['RELATED_IDS'], true);
             $sameFio = ($row['FIO_KEY'] !== '' && $row['FIO_KEY'] === $other['FIO_KEY']);
             $sameObosnovanie = ($row['OBOSNOVANIE_KEY'] === $other['OBOSNOVANIE_KEY']);
 
-            if ($isMutual && $sameFio && $sameObosnovanie) {
-                $pairItems = [$row, $other];
-
-                usort($pairItems, function ($a, $b) {
-                    return $a['START_TS'] <=> $b['START_TS'];
-                });
-
-                $displayRows[] = [
-                    'MODE'       => 'PAIR',
-                    'COMMON_FIO' => $row['FIO'],
-                    'COMMON_OBOS' => $row['OBOSNOVANIE'],
-                    'ITEMS'      => $pairItems,
-                ];
-
-                $usedIds[$id] = true;
-                $usedIds[$relatedId] = true;
-                $paired = true;
+            if (!$isMutual || !$sameFio || !$sameObosnovanie) {
+                continue;
             }
+
+            $pairItems = [$row, $other];
+
+            usort($pairItems, function ($a, $b) {
+                return $a['START_TS'] <=> $b['START_TS'];
+            });
+
+            $displayRows[] = [
+                'MODE'       => 'PAIR',
+                'COMMON_FIO' => $row['FIO'],
+                'COMMON_OBOS' => $row['OBOSNOVANIE'],
+                'ITEMS'      => $pairItems,
+            ];
+
+            $usedIds[$id] = true;
+            $usedIds[$relatedId] = true;
+            $paired = true;
+            break;
         }
     }
 
