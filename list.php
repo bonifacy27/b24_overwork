@@ -1172,12 +1172,16 @@ foreach ($rowsSorted as $row) {
         continue;
     }
 
-    $paired = false;
+    $groupItems = [$row];
 
-    if (count($row['RELATED_IDS']) === 1) {
-        $relatedId = (int)$row['RELATED_IDS'][0];
+    if (!empty($row['RELATED_IDS'])) {
+        foreach ($row['RELATED_IDS'] as $candidateRelatedId) {
+            $relatedId = (int)$candidateRelatedId;
 
-        if ($relatedId > 0 && isset($rows[$relatedId]) && !isset($usedIds[$relatedId])) {
+            if ($relatedId <= 0 || !isset($rows[$relatedId]) || isset($usedIds[$relatedId])) {
+                continue;
+            }
+
             $other = $rows[$relatedId];
 
             $isMutual = in_array($id, $other['RELATED_IDS'], true);
@@ -1185,27 +1189,28 @@ foreach ($rowsSorted as $row) {
             $sameObosnovanie = ($row['OBOSNOVANIE_KEY'] === $other['OBOSNOVANIE_KEY']);
 
             if ($isMutual && $sameFio && $sameObosnovanie) {
-                $pairItems = [$row, $other];
-
-                usort($pairItems, function ($a, $b) {
-                    return $a['START_TS'] <=> $b['START_TS'];
-                });
-
-                $displayRows[] = [
-                    'MODE'       => 'PAIR',
-                    'COMMON_FIO' => $row['FIO'],
-                    'COMMON_OBOS' => $row['OBOSNOVANIE'],
-                    'ITEMS'      => $pairItems,
-                ];
-
-                $usedIds[$id] = true;
-                $usedIds[$relatedId] = true;
-                $paired = true;
+                $groupItems[$relatedId] = $other;
             }
         }
     }
 
-    if (!$paired) {
+    $groupItems = array_values($groupItems);
+    usort($groupItems, function ($a, $b) {
+        return $a['START_TS'] <=> $b['START_TS'];
+    });
+
+    if (count($groupItems) > 1) {
+        $displayRows[] = [
+            'MODE'        => count($groupItems) === 2 ? 'PAIR' : 'GROUP',
+            'COMMON_FIO'  => $row['FIO'],
+            'COMMON_OBOS' => $row['OBOSNOVANIE'],
+            'ITEMS'       => $groupItems,
+        ];
+
+        foreach ($groupItems as $groupItem) {
+            $usedIds[(int)$groupItem['ID']] = true;
+        }
+    } else {
         $displayRows[] = [
             'MODE'        => 'SINGLE',
             'COMMON_FIO'  => $row['FIO'],
@@ -1985,6 +1990,97 @@ profilerStopCustom('total_backend');
                                 </td>
                             </tr>
 
+                        <?php elseif ($displayRow['MODE'] === 'GROUP'): ?>
+                            <?php
+                            $groupItems = $displayRow['ITEMS'];
+                            $groupVariantClass = 'pair-variant-' . ($pairVariantIndex % 3);
+                            $groupRowspan = count($groupItems);
+                            $pairVariantIndex++;
+                            ?>
+                            <?php foreach ($groupItems as $groupIndex => $groupItem): ?>
+                                <tr class="<?= $groupIndex === 0 ? 'pair-top-row ' : 'pair-bottom-row ' ?><?= h($groupVariantClass) ?>">
+                                    <td class="nowrap<?= $groupIndex > 0 ? ' pair-divider-cell' : '' ?>">
+                                        <button
+                                            type="button"
+                                            class="number-link js-request-btn"
+                                            data-request-id="request-<?= (int)$groupItem['ID'] ?>"
+                                        >
+                                            #<?= (int)$groupItem['ID'] ?>
+                                        </button>
+                                        <div id="request-<?= (int)$groupItem['ID'] ?>" class="d-none">
+                                            <ul class="list-unstyled mb-0">
+                                                <li><strong>ФИО сотрудника:</strong> <?= h($groupItem['FIO']) ?></li>
+                                                <li><strong>Тип работ:</strong> <?= h($groupItem['TIP_RABOTY']) ?></li>
+                                                <li><strong>Периоды работы:</strong> <?= h($groupItem['START']) ?> — <?= h($groupItem['END']) ?></li>
+                                                <li><strong>Обоснование:</strong><br><?= nl2br(h($groupItem['OBOSNOVANIE'])) ?></li>
+                                                <li><strong>Инициатор заявки:</strong> <?= h($groupItem['INITIATOR'] !== '' ? $groupItem['INITIATOR'] : '—') ?></li>
+                                            </ul>
+                                        </div>
+                                    </td>
+                                    <?php if ($groupIndex === 0): ?>
+                                        <td rowspan="<?= (int)$groupRowspan ?>" class="shared-cell">
+                                            <?= h($displayRow['COMMON_FIO']) ?>
+                                        </td>
+                                    <?php endif; ?>
+                                    <td class="<?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>"><?= h($groupItem['TIP_RABOTY']) ?></td>
+                                    <td class="nowrap <?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>"><?= h($groupItem['START']) ?></td>
+                                    <td class="nowrap <?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>"><?= h($groupItem['END']) ?></td>
+                                    <td class="nowrap <?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>"><?= h($groupItem['HOURS']) ?></td>
+                                    <td class="<?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>"><?= h($groupItem['TIP_OPLATY']) ?></td>
+                                    <td class="<?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>">
+                                        <?php if ($groupItem['STATUS_NAME'] !== ''): ?>
+                                            <button type="button" class="status-open-btn js-executors-btn" data-executors-id="executors-<?= (int)$groupItem['ID'] ?>">
+                                                <span class="status-pill <?= h($groupItem['STATUS_CLASS']) ?>" style="<?= h((string)($groupItem['STATUS_STYLE'] ?? '')) ?>"><?= h($groupItem['STATUS_NAME']) ?></span>
+                                            </button>
+                                            <div id="executors-<?= (int)$groupItem['ID'] ?>" class="d-none">
+                                                <?php if (!empty($groupItem['CURRENT_EXECUTORS'])): ?>
+                                                    <ul class="mb-0">
+                                                        <?php foreach ($groupItem['CURRENT_EXECUTORS'] as $executorName): ?>
+                                                            <li><?= h($executorName) ?></li>
+                                                        <?php endforeach; ?>
+                                                    </ul>
+                                                <?php else: ?>
+                                                    <div class="text-muted">Текущие исполнители не найдены.</div>
+                                                <?php endif; ?>
+                                            </div>
+                                        <?php else: ?>
+                                            <span class="text-muted">—</span>
+                                        <?php endif; ?>
+
+                                        <?php if (trim($groupItem['HISTORY_RAW']) !== ''): ?>
+                                            <button
+                                                type="button"
+                                                class="history-btn js-history-btn"
+                                                title="Показать историю заявки"
+                                                data-history-id="history-<?= (int)$groupItem['ID'] ?>"
+                                            >i</button>
+                                            <div id="history-<?= (int)$groupItem['ID'] ?>" class="d-none">
+                                                <?= renderHistoryHtmlCustom($groupItem['HISTORY_RAW']) ?>
+                                            </div>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="<?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>">
+                                        <?php if ((int)$groupItem['GROUP_ID'] > 0): ?>
+                                            <a class="group-pill" href="<?= h(buildGroupFilterUrlCustom((int)$groupItem['GROUP_ID'])) ?>">
+                                                Группа #<?= (int)$groupItem['GROUP_ID'] ?>
+                                            </a>
+                                        <?php else: ?>
+                                            <span class="text-muted">—</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td class="nowrap <?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>">
+                                        <div class="actions-cell">
+                                            <a href="<?= h($groupItem['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
+                                            <?php if (mb_strtolower(trim((string)$groupItem['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                                <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$groupItem['ID']) ?>">Отменить заявку</a>
+                                            <?php endif; ?>
+                                            <?php if ((int)$groupItem['TASK_ID'] > 0): ?>
+                                                <a class="btn btn-outline-primary btn-sm" href="<?= h(buildBizprocTaskUrlCustom((int)$groupItem['TASK_ID'], $LIST_PAGE_URL)) ?>" target="_blank" rel="noopener">Задание БП</a>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
                         <?php else: ?>
                             <?php $row = $displayRow['ITEMS'][0]; ?>
                             <tr>
