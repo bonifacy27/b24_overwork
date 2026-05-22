@@ -514,55 +514,10 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
             </table>
 
             <div style="margin-top:16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                <button type="submit" class="ui-btn">Показать изменения</button>
                 <button type="submit" class="ui-btn ui-btn-success" name="confirm_transfer" value="Y">Подтвердить перенос</button>
+                <a href="/forms/hr_administration/overtime/list.php" class="ui-btn ui-btn-light-border">Вернуться в список</a>
             </div>
         </form>
-
-        <div style="padding:14px; border:1px solid #d5d5d5; background:#fff;">
-            <h3 style="margin-top:0;">Что изменится в новой заявке</h3>
-            <div style="margin-bottom:8px;">
-                <b>Было:</b>
-                <?= htmlspecialcharsbx(overtimeFormatDateRu($sourceDateStartInput) . ' ' . $sourceTimeStart) ?> —
-                <?= htmlspecialcharsbx(overtimeFormatDateRu($sourceDateEndInput) . ' ' . $sourceTimeEnd) ?>
-            </div>
-            <div style="margin-bottom:12px;">
-                <b>Станет:</b>
-                <?= htmlspecialcharsbx(overtimeFormatDateRu($editDateStart) . ' ' . $sourceTimeStart) ?> —
-                <?= htmlspecialcharsbx(overtimeFormatDateRu($editDateEnd) . ' ' . $sourceTimeEnd) ?>
-                <?php if ($editDateStart !== $sourceDateStartInput || $editDateEnd !== $sourceDateEndInput): ?>
-                    <span style="margin-left:8px; color:#2f8a3b; font-weight:600;">(даты изменены)</span>
-                <?php else: ?>
-                    <span style="margin-left:8px; color:#777;">(без изменений)</span>
-                <?php endif; ?>
-            </div>
-
-            <?php if (!empty($previewRows)): ?>
-                <div style="font-weight:600; margin-bottom:8px;">Новые сегменты/заявки после перерасчета:</div>
-                <table style="width:100%; border-collapse:collapse;">
-                    <thead>
-                    <tr>
-                        <th style="border:1px solid #ddd; padding:6px; text-align:left;">Тип</th>
-                        <th style="border:1px solid #ddd; padding:6px; text-align:left;">Начало</th>
-                        <th style="border:1px solid #ddd; padding:6px; text-align:left;">Окончание</th>
-                        <th style="border:1px solid #ddd; padding:6px; text-align:left;">Часы</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($previewRows as $row): ?>
-                        <tr>
-                            <td style="border:1px solid #ddd; padding:6px;"><?= htmlspecialcharsbx($row['type_name']) ?></td>
-                            <td style="border:1px solid #ddd; padding:6px;"><?= htmlspecialcharsbx($row['start']) ?></td>
-                            <td style="border:1px solid #ddd; padding:6px;"><?= htmlspecialcharsbx($row['end']) ?></td>
-                            <td style="border:1px solid #ddd; padding:6px;"><?= htmlspecialcharsbx((string)$row['hours']) ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php else: ?>
-                <div style="color:#666;">Нажмите «Показать изменения», чтобы увидеть структуру новой заявки после перерасчёта.</div>
-            <?php endif; ?>
-        </div>
     <?php endif; ?>
 </div>
 <script>
