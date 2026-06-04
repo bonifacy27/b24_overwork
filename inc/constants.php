@@ -40,6 +40,7 @@ $overtimeConfig = [
 
     // Типы оплаты
     'PAYMENT_PROP_WORK_TYPES' => 'TIPY_RABOTY',
+    'PAYMENT_TYPE_TIME_OFF_ID' => 3537688,
 
     // Инфоблок 391
     'REQ_PROP_EMPLOYEE'        => 'SOTRUDNIK',
