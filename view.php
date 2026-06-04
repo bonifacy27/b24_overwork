@@ -184,6 +184,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
 
     $employeeId = (int)($item['PROPERTY_' . $config['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
     $workTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
+    $paymentTypeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_PAYMENT_TYPE']);
     $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
     $statusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
@@ -220,6 +221,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'employee_name' => $employee['name'] ?: 'Не указан',
         'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], $workTypeId),
         'work_period_text' => $workPeriod,
+        'payment_type_id' => $paymentTypeId,
         'payment_type_name' => $paymentTypeName,
         'justification' => $justification,
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
@@ -342,6 +344,7 @@ function overtimeGetLinkedRequestCalculations(array $requestIds, array $config):
             'id' => (int)$item['ID'],
             'name' => (string)$item['NAME'],
             'employee_name' => $employee['name'] ?: 'Не указан',
+            'payment_type_id' => (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_PAYMENT_TYPE']),
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_TYPE'])),
             'work_period_text' => overtimeBuildWorkPeriodTextByRequestItem($item, $config),
@@ -405,6 +408,7 @@ function overtimeGetGroupRequestCalculations(array $groupIds, int $currentReques
             'id' => (int)$item['ID'],
             'name' => (string)$item['NAME'],
             'employee_name' => $employee['name'] ?: 'Не указан',
+            'payment_type_id' => (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_PAYMENT_TYPE']),
             'payment_type_name' => overtimeResolvePaymentTypeNameByItem($item, $config),
             'work_type_name' => overtimeGetElementNameById((int)$config['IBLOCK_WORK_TYPES'], (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_WORK_TYPE'])),
             'work_period_text' => overtimeBuildWorkPeriodTextByRequestItem($item, $config),
@@ -1429,6 +1433,14 @@ $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $allLinkedRequestIds = $viewData ? overtimeCollectAllLinkedRequestIds((int)$viewData['id'], $overtimeConfig) : [];
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($allLinkedRequestIds, $overtimeConfig) : [];
 $groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((array)($viewData['group_ids'] ?? []), (int)$viewData['id'], $overtimeConfig) : [];
+if ($viewData && !empty($groupCalculations)) {
+    $currentRequestHasTimeOffPayment = overtimeIsTimeOffPaymentType((int)($viewData['payment_type_id'] ?? 0), $overtimeConfig);
+    $groupCalculations = array_values(array_filter($groupCalculations, static function (array $groupRequest) use ($currentRequestHasTimeOffPayment, $overtimeConfig): bool {
+        $groupRequestHasTimeOffPayment = overtimeIsTimeOffPaymentType((int)($groupRequest['payment_type_id'] ?? 0), $overtimeConfig);
+
+        return $currentRequestHasTimeOffPayment === $groupRequestHasTimeOffPayment;
+    }));
+}
 $currentUserId = (int)($GLOBALS['USER']->GetID() ?? 0);
 $approvalTask = null;
 $approvalButtons = [];
