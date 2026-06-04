@@ -21,7 +21,7 @@ $overtimeConfig = [
     'WORK_TYPE_WEEKEND_ID'  => 3537684,
     'WORK_TYPE_DUTY_ID'     => 3537685,
 
-    'STATUS_REJECTED_ID'    => 3511775,
+    'STATUS_REJECTED_ID'    => 3575323,
     'STATUS_CANCELLED_ID'   => 3511775,
     'STATUS_TRANSFERRED_ID' => 3580392,
 
@@ -40,6 +40,7 @@ $overtimeConfig = [
 
     // Типы оплаты
     'PAYMENT_PROP_WORK_TYPES' => 'TIPY_RABOTY',
+    'PAYMENT_TYPE_TIME_OFF_ID' => 3537688,
 
     // Инфоблок 391
     'REQ_PROP_EMPLOYEE'        => 'SOTRUDNIK',

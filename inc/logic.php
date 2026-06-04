@@ -1350,9 +1350,31 @@ function overtimeUpdateGroupRequestLinks(int $groupId, array $requestIds, array 
     );
 }
 
-function overtimeUpdateLinkedRequests(array $createdIds, array $config): void
+function overtimeIsTimeOffPaymentType(int $paymentTypeId, array $config): bool
+{
+    return $paymentTypeId > 0
+        && !empty($config['PAYMENT_TYPE_TIME_OFF_ID'])
+        && $paymentTypeId === (int)$config['PAYMENT_TYPE_TIME_OFF_ID'];
+}
+
+function overtimeHasTimeOffPaymentType(array $paymentTypeIds, array $config): bool
+{
+    foreach ($paymentTypeIds as $paymentTypeId) {
+        if (overtimeIsTimeOffPaymentType((int)$paymentTypeId, $config)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function overtimeUpdateLinkedRequests(array $createdIds, array $config, array $paymentTypeIdsByRequestId = []): void
 {
     if (count($createdIds) < 2) {
+        return;
+    }
+
+    if (overtimeHasTimeOffPaymentType($paymentTypeIdsByRequestId, $config)) {
         return;
     }
 
@@ -1435,6 +1457,7 @@ function overtimeCreateEmployeeRequestPack(
     $errors = [];
     $createdIds = [];
     $requestNamesById = [];
+    $paymentTypeIdsByRequestId = [];
 
     $accessValidation = overtimeValidateCreatorEmployeeAccess($employeeId, $config);
     if (!$accessValidation['allowed']) {
@@ -1580,6 +1603,7 @@ function overtimeCreateEmployeeRequestPack(
 
         $createdId = overtimeCreateRequestElement($fields, $propertyValues);
         $requestNamesById[$createdId] = (string)$fields['NAME'];
+        $paymentTypeIdsByRequestId[$createdId] = $paymentTypeId;
         $createdIds[] = $createdId;
     }
 
@@ -1591,7 +1615,7 @@ function overtimeCreateEmployeeRequestPack(
         ];
     }
 
-    overtimeUpdateLinkedRequests($createdIds, $config);
+    overtimeUpdateLinkedRequests($createdIds, $config, $paymentTypeIdsByRequestId);
 
     foreach ($createdIds as $createdId) {
         $workflowError = overtimeStartRequestWorkflow($createdId, $config, $workflowParameters);
