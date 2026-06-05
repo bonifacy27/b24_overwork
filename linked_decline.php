@@ -1,21 +1,35 @@
 <?php
 /**
- * linked_approve v1.1.1
+ * linked_decline v1.0.4
  *
  * Код для активити БП "PHP код" (Bitrix24).
  *
  * Логика:
  * 1) Находит связанные заявки по свойству SVYAZANNYE_ZAYAVKI.
  * 2) Проверяет, что связанная заявка в статусе "В работе C&B".
- * 3) Если есть текущее Running-задание БП по связанной заявке — выполняет его кнопкой "Согласовано".
+ * 3) Если есть текущее Running-задание БП по связанной заявке — выполняет его кнопкой "Отклонено".
  * 4) Пишет человекочитаемую историю в обе заявки.
- * 5) Для защиты от задвоения использует отдельное поле AUTO_APPROVE_MARKERS.
+ * 5) Для защиты от задвоения использует отдельное поле AUTO_DECLINE_MARKERS.
+ *
+ * Изменения v1.0.4:
+ * - добавлен приоритетный способ отклонения через CBPTaskService::CompleteTask со статусом No;
+ * - добавлен ранний DoTask с фактической кнопкой TaskButton2;
+ * - PostTaskForm/SendExternalEvent оставлены как fallback для совместимости.
+ *
+ * v1.0.4:
+ * - добавлена отправка отказа по фактическому HTML-полю задачи: nonapprove=Y;
+ * - добавлены служебные поля формы task popup: action=doTask, id, TASK_ID, workflow_id;
+ * - nonapprove=Y добавлен во все fallback-варианты PostTaskForm/DoTask.
+ *
+ * v1.0.4:
+ * - для SendExternalEvent добавлены поля APPROVE=0 и approve=N;
+ * - причина: стандартный activity approvecopyactiveschedule принимает отказ как отрицательный результат голосования, а не только как кнопку nonapprove.
  *
  * Изменения v1.1.1:
  * - служебный marker больше не выводится в ISTORIYA;
- * - marker хранится в отдельном множественном/строчном свойстве AUTO_APPROVE_MARKERS;
+ * - marker хранится в отдельном множественном/строчном свойстве AUTO_DECLINE_MARKERS;
  * - текст истории приведен к формату:
- *   05.06.2026 10:47:03 Связанная заявка #3603166 согласована автоматически. Согласовал: ФИО.
+ *   05.06.2026 10:47:03 Связанная заявка #3603166 отклонена автоматически. Отклонил: ФИО.
  * - добавлены appendHistoryLine() и addMarkerOnce();
  * - защита от повторного зеркального запуска сохраняется через marker пары заявок.
  */
@@ -24,10 +38,10 @@ $iblockId = 391;
 $propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
 $propertyCodeStatus = 'STATUS';
 $propertyCodeHistory = 'ISTORIYA';
-$propertyCodeAutoApproveMarkers = 'AUTO_APPROVE_MARKERS';
+$propertyCodeAutoDeclineMarkers = 'AUTO_DECLINE_MARKERS';
 
-$statusApproveElementId = 3578386; // ID элемента статуса "В работе C&B" в справочнике статусов.
-$statusApproveName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
+$statusDeclineElementId = 3578386; // ID элемента статуса "В работе C&B" в справочнике статусов.
+$statusDeclineName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
 
 $debugEnabled = true; // При необходимости после проверки можно поставить false.
 $executorUserId = 1; // Выполняем задания БП от имени администратора, если исполнитель задания не сработал.
@@ -39,12 +53,12 @@ $currentElementId = is_array($documentIdRaw) ? end($documentIdRaw) : $documentId
 $currentElementId = (int)str_replace('element_', '', (string)$currentElementId);
 
 if ($currentElementId <= 0) {
-    $this->WriteToTrackingService('linked_approve: Не удалось определить ID текущей заявки');
+    $this->WriteToTrackingService('linked_decline: Не удалось определить ID текущей заявки');
     return;
 }
 
 if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc')) {
-    $this->WriteToTrackingService('linked_approve: Не удалось подключить модули iblock/bizproc');
+    $this->WriteToTrackingService('linked_decline: Не удалось подключить модули iblock/bizproc');
     return;
 }
 
@@ -70,7 +84,7 @@ if ($userData = $userRs->Fetch()) {
 
 $debugLog = function (string $message) use ($debugEnabled): void {
     if ($debugEnabled) {
-        $this->WriteToTrackingService('linked_approve [debug]: ' . $message);
+        $this->WriteToTrackingService('linked_decline [debug]: ' . $message);
     }
 };
 
@@ -84,7 +98,7 @@ while ($prop = $rsProps->Fetch()) {
 $linkedElementIds = array_values(array_unique(array_filter($linkedElementIds)));
 
 if (empty($linkedElementIds)) {
-    $this->WriteToTrackingService('linked_approve: Связанные заявки не найдены');
+    $this->WriteToTrackingService('linked_decline: Связанные заявки не найдены');
     return;
 }
 
@@ -96,7 +110,7 @@ $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $ib
 $buildPairMarker = static function (int $elementIdA, int $elementIdB): string {
     $ids = [$elementIdA, $elementIdB];
     sort($ids, SORT_NUMERIC);
-    return 'AUTO_APPROVE_LINKED_REQUEST:' . $ids[0] . ':' . $ids[1];
+    return 'AUTO_DECLINE_LINKED_REQUEST:' . $ids[0] . ':' . $ids[1];
 };
 
 /**
@@ -110,7 +124,7 @@ $acquirePairLock = static function (string $marker) use ($debugLog): bool {
     try {
         $connection = \Bitrix\Main\Application::getConnection();
         $sqlHelper = $connection->getSqlHelper();
-        $lockName = 'linked_approve_' . md5($marker);
+        $lockName = 'linked_decline_' . md5($marker);
         $lockNameSql = $sqlHelper->forSql($lockName);
         $lockResult = (int)$connection->queryScalar("SELECT GET_LOCK('{$lockNameSql}', 10)");
         $debugLog("GET_LOCK {$lockName}: result={$lockResult}");
@@ -131,7 +145,7 @@ $releasePairLock = static function (string $marker) use ($debugLog): void {
     try {
         $connection = \Bitrix\Main\Application::getConnection();
         $sqlHelper = $connection->getSqlHelper();
-        $lockName = 'linked_approve_' . md5($marker);
+        $lockName = 'linked_decline_' . md5($marker);
         $lockNameSql = $sqlHelper->forSql($lockName);
         $releaseResult = (int)$connection->queryScalar("SELECT RELEASE_LOCK('{$lockNameSql}')");
         $debugLog("RELEASE_LOCK {$lockName}: result={$releaseResult}");
@@ -144,14 +158,14 @@ $releasePairLock = static function (string $marker) use ($debugLog): void {
  * Получить все значения свойства marker-ов.
  * Поддерживает и множественное, и одиночное строковое свойство.
  */
-$getMarkers = static function (int $elementId) use ($iblockId, $propertyCodeAutoApproveMarkers): array {
+$getMarkers = static function (int $elementId) use ($iblockId, $propertyCodeAutoDeclineMarkers): array {
     $markers = [];
 
     if ($elementId <= 0) {
         return [];
     }
 
-    $res = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeAutoApproveMarkers]);
+    $res = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeAutoDeclineMarkers]);
     while ($prop = $res->Fetch()) {
         $value = trim((string)($prop['VALUE'] ?? ''));
         if ($value !== '') {
@@ -171,11 +185,11 @@ $hasMarker = static function (int $elementId, string $marker) use ($getMarkers):
 };
 
 /**
- * Добавить marker в AUTO_APPROVE_MARKERS один раз.
+ * Добавить marker в AUTO_DECLINE_MARKERS один раз.
  * Важно: если поле множественное, SetPropertyValuesEx принимает массив значений.
  * Если поле одиночное, будет сохранен массив как набор значений не всегда корректно — для надежности лучше сделать поле множественным.
  */
-$addMarkerOnce = static function (int $elementId, string $marker) use ($iblockId, $propertyCodeAutoApproveMarkers, $getMarkers): void {
+$addMarkerOnce = static function (int $elementId, string $marker) use ($iblockId, $propertyCodeAutoDeclineMarkers, $getMarkers): void {
     if ($elementId <= 0 || $marker === '') {
         return;
     }
@@ -189,7 +203,7 @@ $addMarkerOnce = static function (int $elementId, string $marker) use ($iblockId
     $markers = array_values(array_unique(array_filter(array_map('trim', $markers))));
 
     CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [
-        $propertyCodeAutoApproveMarkers => $markers,
+        $propertyCodeAutoDeclineMarkers => $markers,
     ]);
 };
 
@@ -232,7 +246,7 @@ $isTaskStillRunning = static function (int $taskId): bool {
     return (int)($task['STATUS'] ?? 0) === (int)CBPTaskStatus::Running;
 };
 
-$resolveApproveActionCode = static function (int $taskId): string {
+$resolveDeclineActionCode = static function (int $taskId): string {
     $controls = [];
     if (method_exists('CBPDocument', 'GetTaskControls')) {
         $controls = (array)CBPDocument::GetTaskControls($taskId);
@@ -247,16 +261,18 @@ $resolveApproveActionCode = static function (int $taskId): string {
         $idNorm = mb_strtolower($id);
 
         if (
-            strpos($label, 'соглас') !== false
-            || strpos($idNorm, 'approve') !== false
-            || $idNorm === 'yes'
-            || $idNorm === 'y'
+            strpos($label, 'отклон') !== false
+            || strpos($label, 'отказ') !== false
+            || strpos($idNorm, 'decline') !== false
+            || strpos($idNorm, 'reject') !== false
+            || $idNorm === 'no'
+            || $idNorm === 'n'
         ) {
-            return $id !== '' ? $id : 'Approve';
+            return $id !== '' ? $id : 'Decline';
         }
     }
 
-    return 'Approve';
+    return 'Decline';
 };
 
 $runAsUser = static function (int $userId, callable $callback) use ($debugLog) {
@@ -320,13 +336,13 @@ $collectTaskDiagnostics = static function (int $taskId, int $userId, string $sta
     $debugLog("diag[{$stage}] controls attempts: " . print_r($controlsAttempts, true));
 };
 
-$doApproveTask = static function (array $task, int $userId, string $comment = '', string $fallbackActivityName = '') use ($resolveApproveActionCode, $isTaskStillRunning, $debugLog, $collectTaskDiagnostics, $runAsUser): array {
+$doDeclineTask = static function (array $task, int $userId, string $comment = '', string $fallbackActivityName = '') use ($resolveDeclineActionCode, $isTaskStillRunning, $debugLog, $collectTaskDiagnostics, $runAsUser): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
     }
 
-    $actionCode = $resolveApproveActionCode($taskId);
+    $actionCode = $resolveDeclineActionCode($taskId);
     if ((string)($task['ACTIVITY_NAME'] ?? '') === '' && class_exists('CBPTaskService')) {
         $taskReloadRes = CBPTaskService::GetList(
             ['ID' => 'DESC'],
@@ -344,32 +360,156 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
         }
     }
 
-    $debugLog("Начало doApproveTask: taskId={$taskId}, userId={$userId}, actionCode={$actionCode}");
+    $debugLog("Начало doDeclineTask: taskId={$taskId}, userId={$userId}, actionCode={$actionCode}");
     $collectTaskDiagnostics($taskId, $userId, 'start');
     $debugLog('Task raw: ' . print_r($task, true));
 
     try {
+        // v1.0.4: по HTML формы кнопка отказа называется nonapprove, а не Decline/Reject.
+        // Поэтому первой попыткой отправляем payload, максимально похожий на реальную форму popup.php:
+        // action=doTask, id, TASK_ID, workflow_id, nonapprove=Y.
+        $workflowIdForForm = (string)($task['WORKFLOW_ID'] ?? '');
+        $browserRejectRequest = [
+            'action' => 'doTask',
+            'id' => $taskId,
+            'TASK_ID' => $taskId,
+            'workflow_id' => $workflowIdForForm,
+            'nonapprove' => 'Y',
+            'comment' => $comment,
+            'task_comment' => $comment,
+            'COMMENT' => $comment,
+            'USER_ID' => $userId,
+            'REAL_USER_ID' => $userId,
+        ];
+        if (function_exists('bitrix_sessid')) {
+            $browserRejectRequest['sessid'] = bitrix_sessid();
+        }
+
+        if (method_exists('CBPDocument', 'PostTaskForm')) {
+            $errors = [];
+            $debugLog("v1.0.4: Вызов CBPDocument::PostTaskForm как HTML popup form для taskId={$taskId}, поля: " . print_r($browserRejectRequest, true));
+            $postResult = $runAsUser($userId, static function () use ($taskId, $userId, $browserRejectRequest, &$errors) {
+                return CBPDocument::PostTaskForm($taskId, $userId, $browserRejectRequest, $errors, '', $userId);
+            });
+            $debugLog("v1.0.4: browser-like PostTaskForm result для taskId={$taskId}: " . print_r($postResult, true));
+            if (!empty($errors)) {
+                $debugLog("v1.0.4: browser-like PostTaskForm errors для taskId={$taskId}: " . print_r($errors, true));
+            }
+            if (empty($errors) && !$isTaskStillRunning($taskId)) {
+                $debugLog("v1.0.4: browser-like PostTaskForm успешно завершил taskId={$taskId}");
+                return [true, ''];
+            }
+            $collectTaskDiagnostics($taskId, $userId, 'after_browser_like_posttaskform');
+        }
+
+        // v1.0.4: для задания "Утверждение документа" надежнее сначала завершать task
+        // через статус пользователя "Нет/Отклонено". По логу у задания есть TaskButton2Message => Отклонить,
+        // а GetTaskControls/PostTaskForm могут возвращать ActivityNotFound, если PHP-действие запущено уже
+        // после прерывания текущего статуса БП.
+        if (class_exists('CBPTaskService') && method_exists('CBPTaskService', 'CompleteTask')) {
+            $declineStatuses = [];
+            if (class_exists('CBPTaskUserStatus') && defined('CBPTaskUserStatus::No')) {
+                $declineStatuses[] = CBPTaskUserStatus::No;
+            }
+            $declineStatuses[] = 2; // стандартное значение CBPTaskUserStatus::No в коробочном Битрикс.
+            $declineStatuses = array_values(array_unique(array_map('intval', $declineStatuses)));
+
+            foreach ($declineStatuses as $declineStatus) {
+                $completePayloads = [
+                    ['COMMENT' => $comment, 'comment' => $comment, 'task_comment' => $comment, 'nonapprove' => 'Y', 'action' => 'doTask', 'id' => $taskId, 'TASK_ID' => $taskId, 'workflow_id' => $workflowIdForForm, 'TaskButton2' => 'Y', 'ACTION' => 'TaskButton2'],
+                    ['COMMENT' => $comment, 'comment' => $comment, 'task_comment' => $comment],
+                ];
+
+                foreach ($completePayloads as $payloadIdx => $completePayload) {
+                    $completeAttempts = [
+                        [$taskId, $userId, $declineStatus, $completePayload],
+                        [$taskId, $userId, $declineStatus, [], $completePayload],
+                        [$taskId, $userId, $declineStatus],
+                    ];
+
+                    foreach ($completeAttempts as $attemptIdx => $completeArgs) {
+                        try {
+                            $debugLog(
+                                "Вызов CBPTaskService::CompleteTask для taskId={$taskId}, userId={$userId}, "
+                                . "declineStatus={$declineStatus}, payloadIdx={$payloadIdx}, attempt={$attemptIdx}, args="
+                                . print_r($completeArgs, true)
+                            );
+                            $completeResult = $runAsUser($userId, static function () use ($completeArgs) {
+                                return call_user_func_array(['CBPTaskService', 'CompleteTask'], $completeArgs);
+                            });
+                            $debugLog("CompleteTask result для taskId={$taskId}: " . print_r($completeResult, true));
+
+                            if (!$isTaskStillRunning($taskId)) {
+                                $debugLog("CompleteTask успешно завершил taskId={$taskId} со статусом отказа {$declineStatus}");
+                                return [true, ''];
+                            }
+                        } catch (\Throwable $e) {
+                            $debugLog("CompleteTask exception taskId={$taskId}, attempt={$attemptIdx}: " . $e->getMessage());
+                        }
+                    }
+                }
+            }
+            $debugLog("После всех попыток CompleteTask taskId={$taskId} всё ещё running");
+            $collectTaskDiagnostics($taskId, $userId, 'after_completetask');
+        }
+
+        // v1.0.4: если CompleteTask недоступен/не сработал, пробуем DoTask раньше PostTaskForm
+        // и первым вариантом передаем фактическую кнопку отказа TaskButton2.
+        if (class_exists('CBPTaskService') && method_exists('CBPTaskService', 'DoTask')) {
+            $doTaskPayloadsFirst = [
+                ['nonapprove' => 'Y', 'action' => 'doTask', 'id' => $taskId, 'TASK_ID' => $taskId, 'workflow_id' => $workflowIdForForm, 'TaskButton2' => 'Y', 'ACTION' => 'TaskButton2', 'COMMENT' => $comment, 'comment' => $comment, 'task_comment' => $comment],
+                ['nonapprove' => 'Y', 'action' => 'doTask', 'id' => $taskId, 'TASK_ID' => $taskId, 'workflow_id' => $workflowIdForForm, 'taskbutton2' => 'Y', 'ACTION' => 'taskbutton2', 'COMMENT' => $comment, 'comment' => $comment, 'task_comment' => $comment],
+                ['nonapprove' => 'Y', 'action' => 'doTask', 'id' => $taskId, 'TASK_ID' => $taskId, 'workflow_id' => $workflowIdForForm, 'BUTTON2' => 'Y', 'ACTION' => 'BUTTON2', 'COMMENT' => $comment, 'comment' => $comment, 'task_comment' => $comment],
+                ['nonapprove' => 'Y', 'action' => 'doTask', 'id' => $taskId, 'TASK_ID' => $taskId, 'workflow_id' => $workflowIdForForm, 'DECLINE' => 'Y', 'REJECT' => 'Y', 'APPROVE' => 'N', 'approve' => 'N', 'status' => 'N', 'COMMENT' => $comment, 'comment' => $comment, 'task_comment' => $comment],
+            ];
+            foreach ($doTaskPayloadsFirst as $payloadIdx => $payload) {
+                try {
+                    $debugLog("Ранний вызов CBPTaskService::DoTask для taskId={$taskId}, payloadIdx={$payloadIdx}, payload=" . print_r($payload, true));
+                    $doTaskResult = $runAsUser($userId, static function () use ($taskId, $userId, $payload) {
+                        return CBPTaskService::DoTask($taskId, $userId, $payload);
+                    });
+                    $debugLog("Ранний DoTask result для taskId={$taskId}, payloadIdx={$payloadIdx}: " . print_r($doTaskResult, true));
+                    if (!$isTaskStillRunning($taskId)) {
+                        $debugLog("Ранний DoTask успешно завершил taskId={$taskId}, payloadIdx={$payloadIdx}");
+                        return [true, ''];
+                    }
+                } catch (\Throwable $e) {
+                    $debugLog("Ранний DoTask exception taskId={$taskId}, payloadIdx={$payloadIdx}: " . $e->getMessage());
+                }
+            }
+            $debugLog("После ранних попыток DoTask taskId={$taskId} всё ещё running");
+            $collectTaskDiagnostics($taskId, $userId, 'after_early_dotask');
+        }
+
         $codesToTry = array_values(array_unique(array_filter([
+            'nonapprove',
+            'NONAPPROVE',
             $actionCode,
-            'approve',
-            'Approve',
-            'yes',
-            'YES',
-            'Y',
-            'TaskButton1',
-            'taskbutton1',
-            'BUTTON1',
-            'complete',
-            'Complete',
+            'decline',
+            'Decline',
+            'reject',
+            'Reject',
+            'no',
+            'NO',
+            'N',
+            'TaskButton2',
+            'taskbutton2',
+            'BUTTON2',
         ])));
 
         if (method_exists('CBPDocument', 'PostTaskForm')) {
             $requests = [
                 [
-                    'approve' => 'Y',
-                    'APPROVE' => 'Y',
-                    'ACTION' => 'approve',
-                    'status' => 'Y',
+                    'nonapprove' => 'Y',
+                    'action' => 'doTask',
+                    'id' => $taskId,
+                    'TASK_ID' => $taskId,
+                    'workflow_id' => $workflowIdForForm,
+                    'decline' => 'Y',
+                    'DECLINE' => 'Y',
+                    'REJECT' => 'Y',
+                    'ACTION' => 'decline',
+                    'status' => 'N',
                     'comment' => $comment,
                     'task_comment' => $comment,
                     'USER_ID' => $userId,
@@ -378,11 +518,19 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
             ];
             foreach ($codesToTry as $codeTry) {
                 $requests[] = [
-                    'approve' => $codeTry,
+                    'nonapprove' => 'Y',
+                    'action' => 'doTask',
+                    'id' => $taskId,
+                    'TASK_ID' => $taskId,
+                    'workflow_id' => $workflowIdForForm,
+                    'decline' => $codeTry,
                     $codeTry => 'Y',
                     'ACTION' => $codeTry,
-                    'APPROVE' => 'Y',
-                    'status' => 'Y',
+                    'DECLINE' => 'Y',
+                    'REJECT' => 'Y',
+                    'APPROVE' => 'N',
+                    'approve' => 'N',
+                    'status' => 'N',
                     'comment' => $comment,
                     'task_comment' => $comment,
                     'USER_ID' => $userId,
@@ -421,9 +569,20 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 'REAL_USER_ID' => $userId,
                 'COMMENT' => $comment,
                 'comment' => $comment,
-                'APPROVE' => 1,
-                'approve' => 'Y',
-                'status' => 'Y',
+                // В approve-activity отказ должен передаваться как отрицательный результат голосования.
+                // Для согласования рабочий payload: APPROVE=1, approve=Y, status=Y.
+                // Для отклонения зеркальный payload: APPROVE=0, approve=N, status=N.
+                'APPROVE' => 0,
+                'approve' => 'N',
+                // Для стандартного UI Битрикс кнопка отклонения у этого задания отправляет именно nonapprove=Y.
+                // В SendExternalEvent это критично: decline/reject/status=N сами по себе не завершают approvecopyactiveschedule.
+                'nonapprove' => 'Y',
+                'NONAPPROVE' => 'Y',
+                'DECLINE' => 1,
+                'REJECT' => 1,
+                'decline' => 'Y',
+                'reject' => 'Y',
+                'status' => 'N',
             ];
             foreach ($activityCandidates as $activityCandidate) {
                 $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activityCandidate}, payload=" . print_r($payload, true));
@@ -447,8 +606,11 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
                 $payload = [
                     'ACTION' => $codeTry,
                     $codeTry => 'Y',
-                    'APPROVE' => 'Y',
-                    'status' => 'Y',
+                    'DECLINE' => 'Y',
+                    'REJECT' => 'Y',
+                    'APPROVE' => 'N',
+                    'approve' => 'N',
+                    'status' => 'N',
                     'COMMENT' => $comment,
                     'comment' => $comment,
                     'task_comment' => $comment,
@@ -467,7 +629,7 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
             $collectTaskDiagnostics($taskId, $userId, 'after_dotask');
         }
     } catch (\Throwable $e) {
-        $debugLog("Throwable в doApproveTask для taskId={$taskId}: " . $e->getMessage());
+        $debugLog("Throwable в doDeclineTask для taskId={$taskId}: " . $e->getMessage());
         return [false, $e->getMessage()];
     }
 
@@ -480,7 +642,7 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
     }
     $debugLog("Итог: taskId={$taskId} не завершился. Controls: " . print_r($controlsDbg, true));
 
-    return [false, 'Задание не завершилось после попытки согласования'];
+    return [false, 'Задание не завершилось после попытки отклонения'];
 };
 
 foreach ($linkedElementIds as $linkedElementId) {
@@ -491,14 +653,14 @@ foreach ($linkedElementIds as $linkedElementId) {
     $pairMarker = $buildPairMarker($currentElementId, $linkedElementId);
 
     if (!$acquirePairLock($pairMarker)) {
-        $this->WriteToTrackingService("linked_approve: пара {$currentElementId}/{$linkedElementId} уже обрабатывается другим процессом");
+        $this->WriteToTrackingService("linked_decline: пара {$currentElementId}/{$linkedElementId} уже обрабатывается другим процессом");
         continue;
     }
 
     try {
         // Повторная проверка под lock: если любая из заявок уже содержит marker пары, повторно ничего не делаем.
         if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
-            $this->WriteToTrackingService("linked_approve: пара {$currentElementId}/{$linkedElementId} уже была обработана ранее, marker={$pairMarker}");
+            $this->WriteToTrackingService("linked_decline: пара {$currentElementId}/{$linkedElementId} уже была обработана ранее, marker={$pairMarker}");
             continue;
         }
 
@@ -511,17 +673,17 @@ foreach ($linkedElementIds as $linkedElementId) {
         }
 
         $isExpectedStatus = false;
-        if ($statusApproveElementId > 0 && $statusElementId > 0 && $statusElementId === $statusApproveElementId) {
+        if ($statusDeclineElementId > 0 && $statusElementId > 0 && $statusElementId === $statusDeclineElementId) {
             $isExpectedStatus = true;
         }
-        if (!$isExpectedStatus && $statusValue !== '' && $statusValue === $statusApproveName) {
+        if (!$isExpectedStatus && $statusValue !== '' && $statusValue === $statusDeclineName) {
             $isExpectedStatus = true;
         }
 
         if (!$isExpectedStatus) {
             $this->WriteToTrackingService(
-                "linked_approve: Заявка {$linkedElementId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
-                . "(ожидался '{$statusApproveName}', ID '{$statusApproveElementId}')"
+                "linked_decline: Заявка {$linkedElementId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
+                . "(ожидался '{$statusDeclineName}', ID '{$statusDeclineElementId}')"
             );
             continue;
         }
@@ -531,11 +693,11 @@ foreach ($linkedElementIds as $linkedElementId) {
         $debugLog("Найдены состояния БП для {$linkedElementId}: " . print_r($states, true));
 
         if (empty($states)) {
-            $this->WriteToTrackingService("linked_approve: У связанной заявки {$linkedElementId} нет активных БП");
+            $this->WriteToTrackingService("linked_decline: У связанной заявки {$linkedElementId} нет активных БП");
             continue;
         }
 
-        $approvedAny = false;
+        $declinedAny = false;
 
         foreach ($states as $state) {
             $workflowId = (string)($state['ID'] ?? '');
@@ -558,7 +720,7 @@ foreach ($linkedElementIds as $linkedElementId) {
             while ($task = $taskRes->Fetch()) {
                 // Еще одна защита внутри цикла: если marker появился после завершения другого task, не пишем повторно.
                 if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
-                    $this->WriteToTrackingService("linked_approve: marker появился во время обработки, повтор пропущен: {$pairMarker}");
+                    $this->WriteToTrackingService("linked_decline: marker появился во время обработки, повтор пропущен: {$pairMarker}");
                     break;
                 }
 
@@ -570,7 +732,7 @@ foreach ($linkedElementIds as $linkedElementId) {
 
                 $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
 
-                $comment = 'Автосогласовано по согласованию связанной заявки #' . $currentElementId;
+                $comment = 'Автоотклонено по связанной заявке #' . $currentElementId;
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
                 $executorCandidates = [];
                 if ($taskAssignedUserId > 0) {
@@ -584,7 +746,7 @@ foreach ($linkedElementIds as $linkedElementId) {
                 $successUserId = 0;
                 foreach ($executorCandidates as $candidateUserId) {
                     $debugLog("Пробуем завершить taskId={$taskId} от userId={$candidateUserId}");
-                    [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment, (string)($state['STATE_NAME'] ?? ''));
+                    [$ok, $err] = $doDeclineTask($task, $candidateUserId, $comment, (string)($state['STATE_NAME'] ?? ''));
                     if ($ok) {
                         $successUserId = $candidateUserId;
                         break;
@@ -594,34 +756,34 @@ foreach ($linkedElementIds as $linkedElementId) {
                 if ($ok) {
                     // После успешного завершения еще раз проверяем marker перед записью истории.
                     if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
-                        $this->WriteToTrackingService("linked_approve: task {$taskId} завершен, но история уже была записана ранее, marker={$pairMarker}");
-                        $approvedAny = true;
+                        $this->WriteToTrackingService("linked_decline: task {$taskId} завершен, но история уже была записана ранее, marker={$pairMarker}");
+                        $declinedAny = true;
                         break;
                     }
 
-                    $approvedAny = true;
+                    $declinedAny = true;
 
                     // Сначала фиксируем marker в обеих заявках, затем пишем историю.
-                    // Даже если зеркальный БП стартует сразу после Approve, он увидит marker и не продублирует запись.
+                    // Даже если зеркальный БП стартует сразу после Decline, он увидит marker и не продублирует запись.
                     $addMarkerOnce($currentElementId, $pairMarker);
                     $addMarkerOnce($linkedElementId, $pairMarker);
 
-                    $msgLinked = "Заявка согласована автоматически по связанной заявке #{$currentElementId}. Согласовал: {$currentUserName}.";
+                    $msgLinked = "Заявка отклонена автоматически по связанной заявке #{$currentElementId}. Отклонил: {$currentUserName}.";
                     CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $currentUserId);
                     $appendHistoryLine($linkedElementId, $msgLinked);
-                    $this->WriteToTrackingService("linked_approve: {$msgLinked}");
+                    $this->WriteToTrackingService("linked_decline: {$msgLinked}");
 
                     $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
-                    $msgMain = "Связанная заявка #{$linkedElementId} согласована автоматически. Согласовал: {$currentUserName}.";
+                    $msgMain = "Связанная заявка #{$linkedElementId} отклонена автоматически. Отклонил: {$currentUserName}.";
                     CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $currentUserId);
                     $appendHistoryLine($currentElementId, $msgMain);
-                    $this->WriteToTrackingService("linked_approve: {$msgMain}");
+                    $this->WriteToTrackingService("linked_decline: {$msgMain}");
 
                     break;
                 }
 
                 $this->WriteToTrackingService(
-                    "linked_approve: Ошибка автосогласования task {$taskId} по заявке {$linkedElementId}: {$err}"
+                    "linked_decline: Ошибка автоотклонения task {$taskId} по заявке {$linkedElementId}: {$err}"
                 );
             }
 
@@ -629,14 +791,14 @@ foreach ($linkedElementIds as $linkedElementId) {
                 $debugLog("По workflowId={$workflowId} не найдено задач по фильтру STATUS=Running (без USER_STATUS)");
             }
 
-            if ($approvedAny) {
+            if ($declinedAny) {
                 break;
             }
         }
 
-        if (!$approvedAny) {
+        if (!$declinedAny) {
             $this->WriteToTrackingService(
-                "linked_approve: У связанной заявки {$linkedElementId} не найдено ожидающих заданий БП для автосогласования"
+                "linked_decline: У связанной заявки {$linkedElementId} не найдено ожидающих заданий БП для автоотклонения"
             );
         }
     } finally {
