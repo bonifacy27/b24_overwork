@@ -16,6 +16,11 @@ $historyPropId = 3082;
 $fioPropId = 3085;
 $workTypePropId = 3080;
 $payTypePropId = 3087;
+$workStartDatePropId = 3113;
+$workStartTimePropId = 3115;
+$workEndDatePropId = 3114;
+$workEndTimePropId = 3116;
+$totalHoursPropId = 3086;
 
 $requestId = (int)($_REQUEST['id'] ?? 0);
 if ($requestId <= 0) {
@@ -33,6 +38,11 @@ $select = [
     'PROPERTY_' . $fioPropId,
     'PROPERTY_' . $workTypePropId,
     'PROPERTY_' . $payTypePropId,
+    'PROPERTY_' . $workStartDatePropId,
+    'PROPERTY_' . $workStartTimePropId,
+    'PROPERTY_' . $workEndDatePropId,
+    'PROPERTY_' . $workEndTimePropId,
+    'PROPERTY_' . $totalHoursPropId,
 ];
 
 $res = CIBlockElement::GetList([], ['IBLOCK_ID' => $iblockId, 'ID' => $requestId], false, false, $select);
@@ -55,6 +65,11 @@ if ($statusElementId > 0) {
 $fio = trim((string)($item['PROPERTY_' . $fioPropId . '_VALUE'] ?? ''));
 $workType = overtimeCancelResolveLinkedValue($item['PROPERTY_' . $workTypePropId . '_VALUE'] ?? '');
 $payType = overtimeCancelResolveLinkedValue($item['PROPERTY_' . $payTypePropId . '_VALUE'] ?? '');
+$workStartDate = trim((string)($item['PROPERTY_' . $workStartDatePropId . '_VALUE'] ?? ''));
+$workStartTime = trim((string)($item['PROPERTY_' . $workStartTimePropId . '_VALUE'] ?? ''));
+$workEndDate = trim((string)($item['PROPERTY_' . $workEndDatePropId . '_VALUE'] ?? ''));
+$workEndTime = trim((string)($item['PROPERTY_' . $workEndTimePropId . '_VALUE'] ?? ''));
+$totalHours = trim((string)($item['PROPERTY_' . $totalHoursPropId . '_VALUE'] ?? ''));
 $historyCurrent = trim((string)($item['PROPERTY_' . $historyPropId . '_VALUE'] ?? ''));
 
 if ($statusElementId <= 0 || mb_strtolower($statusName, 'UTF-8') !== 'выполнена') {
@@ -188,6 +203,9 @@ $APPLICATION->SetTitle('Отмена заявки #' . $requestId);
                 <div class="cancel-grid-label">ФИО сотрудника</div><div><?= htmlspecialcharsbx($fio !== '' ? $fio : '—') ?></div>
                 <div class="cancel-grid-label">Тип работ</div><div><?= htmlspecialcharsbx($workType !== '' ? $workType : '—') ?></div>
                 <div class="cancel-grid-label">Тип оплаты</div><div><?= htmlspecialcharsbx($payType !== '' ? $payType : '—') ?></div>
+                <div class="cancel-grid-label">Дата/время начала работ</div><div><?= htmlspecialcharsbx(trim($workStartDate . ' ' . $workStartTime) !== '' ? trim($workStartDate . ' ' . $workStartTime) : '—') ?></div>
+                <div class="cancel-grid-label">Дата/время окончания работ</div><div><?= htmlspecialcharsbx(trim($workEndDate . ' ' . $workEndTime) !== '' ? trim($workEndDate . ' ' . $workEndTime) : '—') ?></div>
+                <div class="cancel-grid-label">Количество часов работы</div><div><?= htmlspecialcharsbx($totalHours !== '' ? $totalHours : '—') ?></div>
                 <div class="cancel-grid-label">Текущий статус</div><div><?= htmlspecialcharsbx($statusName) ?></div>
             </div>
 

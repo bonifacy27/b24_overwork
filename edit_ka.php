@@ -287,6 +287,7 @@ $overtimeConfig['SKIP_PAST_DATE_RESTRICTION'] = true;
 $errors = [];
 $successMessage = '';
 $previewRows = [];
+$editComment = '';
 
 $sourceRequest = overtimeGetRequestById($requestId, $overtimeConfig);
 if (!$sourceRequest) {
@@ -318,10 +319,15 @@ $editDateEnd = overtimeCalculateEndDateByStart($sourceDateStartInput, $sourceDat
 
 if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bitrix_sessid()) {
     $editDateStart = overtimeNormalizeDateForInput((string)$request->getPost('date_start'));
+    $editComment = trim((string)$request->getPost('comment'));
     $editDateEnd = overtimeCalculateEndDateByStart($sourceDateStartInput, $sourceDateEndInput, $editDateStart);
 
     if ($editDateStart === '' || $editDateEnd === '') {
         $errors[] = 'Необходимо выбрать дату начала работ.';
+    }
+
+    if ($editComment === '') {
+        $errors[] = 'Необходимо заполнить комментарий.';
     }
 
     $preview = [];
@@ -429,12 +435,14 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
                     . ' — ' . overtimeFormatDateRu($sourceDateEndInput) . ' ' . $sourceTimeEnd;
                 $newPeriodText = overtimeFormatDateRu($editDateStart) . ' ' . $sourceTimeStart
                     . ' — ' . overtimeFormatDateRu($editDateEnd) . ' ' . $sourceTimeEnd;
+                $commentText = $editComment !== '' ? '. Комментарий: ' . $editComment : '';
                 overtimeAppendRequestHistory(
                     $requestId,
                     $now
                     . ' Перенесена в заявку #' . $newRequestId
                     . ' (' . $adminName . ')'
-                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText,
+                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText
+                    . $commentText,
                     $overtimeConfig
                 );
                 overtimeAppendRequestHistory(
@@ -442,7 +450,8 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
                     $now
                     . ' Создана перенесом после редактирования заявки #' . $requestId
                     . ' (' . $adminName . ')'
-                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText,
+                    . '. Период перенесен: ' . $oldPeriodText . ' → ' . $newPeriodText
+                    . $commentText,
                     $overtimeConfig
                 );
 
@@ -509,6 +518,13 @@ $APPLICATION->SetTitle('Редактирование заявки кадровы
                         <input type="date" id="date_end_display" value="<?= htmlspecialcharsbx($editDateEnd) ?>" disabled>
                         <input type="hidden" id="date_end" name="date_end" value="<?= htmlspecialcharsbx($editDateEnd) ?>">
                         <span style="margin-left:8px;color:#666;">время: <?= htmlspecialcharsbx($sourceTimeEnd) ?></span>
+                    </td>
+                </tr>
+                <tr>
+                    <td>Комментарий</td>
+                    <td>
+                        <textarea name="comment" rows="4" required style="width:100%; max-width:430px;"><?= htmlspecialcharsbx($editComment) ?></textarea>
+                        <div style="margin-top:4px;color:#666;">Комментарий будет добавлен в историю заявки вместе с ФИО пользователя.</div>
                     </td>
                 </tr>
             </table>
