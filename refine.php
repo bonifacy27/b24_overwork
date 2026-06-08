@@ -12,9 +12,9 @@ if (!Loader::includeModule('iblock') || !Loader::includeModule('main') || !Loade
     return;
 }
 
-require_once __DIR__ . '/constants.php';
-require_once __DIR__ . '/data.php';
-require_once __DIR__ . '/logic.php';
+require_once __DIR__ . '/inc/constants.php';
+require_once __DIR__ . '/inc/data.php';
+require_once __DIR__ . '/inc/logic.php';
 
 function overtimeRefineExtractRequestIdFromDocumentId(string $documentId, int $iblockId): int
 {
