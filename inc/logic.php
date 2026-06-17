@@ -1267,6 +1267,7 @@ function overtimeGetRequestById(int $requestId, array $config): ?array
         'PROPERTY_' . $config['REQ_PROP_JUST_FILE'],
         'PROPERTY_' . $config['REQ_PROP_STATUS'],
         'PROPERTY_' . $config['REQ_PROP_HISTORY'],
+        'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
     ];
 
     $res = CIBlockElement::GetList(

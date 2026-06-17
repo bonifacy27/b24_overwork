@@ -247,6 +247,29 @@ function overtimeGetRequestGroupIds(array $requestItem, array $config): array
         return [];
     }
 
+    $requestId = (int)($requestItem['ID'] ?? 0);
+    if ($requestId <= 0) {
+        return overtimeNormalizeIntIds($requestItem['PROPERTY_' . $propertyCode . '_VALUE'] ?? []);
+    }
+
+    $propRes = CIBlockElement::GetProperty(
+        (int)$config['IBLOCK_REQUESTS'],
+        $requestId,
+        ['sort' => 'asc'],
+        ['CODE' => $propertyCode]
+    );
+
+    $groupIds = [];
+    while ($prop = $propRes->Fetch()) {
+        foreach (overtimeNormalizeIntIds($prop['VALUE'] ?? []) as $groupId) {
+            $groupIds[$groupId] = $groupId;
+        }
+    }
+
+    if (!empty($groupIds)) {
+        return array_values($groupIds);
+    }
+
     return overtimeNormalizeIntIds($requestItem['PROPERTY_' . $propertyCode . '_VALUE'] ?? []);
 }
 
