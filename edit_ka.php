@@ -219,6 +219,86 @@ function overtimeGetElementName(int $elementId): string
     return $row ? trim((string)$row['NAME']) : '';
 }
 
+
+function overtimeNormalizeIntIds($value): array
+{
+    $values = is_array($value) ? $value : [$value];
+    $ids = [];
+
+    foreach ($values as $item) {
+        if (is_array($item)) {
+            $ids = array_merge($ids, overtimeNormalizeIntIds($item));
+            continue;
+        }
+
+        $id = (int)$item;
+        if ($id > 0) {
+            $ids[$id] = $id;
+        }
+    }
+
+    return array_values($ids);
+}
+
+function overtimeGetRequestGroupIds(array $requestItem, array $config): array
+{
+    $propertyCode = (string)($config['REQ_PROP_GROUP_LINK'] ?? '');
+    if ($propertyCode === '') {
+        return [];
+    }
+
+    return overtimeNormalizeIntIds($requestItem['PROPERTY_' . $propertyCode . '_VALUE'] ?? []);
+}
+
+function overtimeGetGroupLinkedRequestIds(int $groupId, array $config): array
+{
+    if ($groupId <= 0) {
+        return [];
+    }
+
+    $propRes = CIBlockElement::GetProperty(
+        (int)$config['IBLOCK_GROUP_REQUESTS'],
+        $groupId,
+        ['sort' => 'asc'],
+        ['CODE' => (string)$config['GROUP_PROP_LINKED_REQUESTS']]
+    );
+
+    $requestIds = [];
+    while ($prop = $propRes->Fetch()) {
+        foreach (overtimeNormalizeIntIds($prop['VALUE'] ?? []) as $requestId) {
+            $requestIds[$requestId] = $requestId;
+        }
+    }
+
+    return array_values($requestIds);
+}
+
+function overtimeAppendRequestToGroups(int $requestId, array $groupIds, array $config): void
+{
+    if ($requestId <= 0 || empty($groupIds)) {
+        return;
+    }
+
+    $groupIds = overtimeNormalizeIntIds($groupIds);
+    if (empty($groupIds)) {
+        return;
+    }
+
+    CIBlockElement::SetPropertyValuesEx(
+        $requestId,
+        (int)$config['IBLOCK_REQUESTS'],
+        [
+            $config['REQ_PROP_GROUP_LINK'] => $groupIds,
+        ]
+    );
+
+    foreach ($groupIds as $groupId) {
+        $linkedRequestIds = overtimeGetGroupLinkedRequestIds((int)$groupId, $config);
+        $linkedRequestIds[] = $requestId;
+        overtimeUpdateGroupRequestLinks((int)$groupId, $linkedRequestIds, $config);
+    }
+}
+
 function overtimeGetLinkedRequestIds(int $requestId, array $config): array
 {
     if ($requestId <= 0) {
@@ -299,6 +379,7 @@ $isDuty = $workTypeId === (int)$overtimeConfig['WORK_TYPE_DUTY_ID'];
 
 $employeeId = (int)($sourceRequest['PROPERTY_' . $overtimeConfig['REQ_PROP_EMPLOYEE'] . '_VALUE'] ?? 0);
 $paymentTypeId = (int)($sourceRequest['PROPERTY_' . $overtimeConfig['REQ_PROP_PAYMENT_TYPE'] . '_VALUE'] ?? 0);
+$sourceGroupIds = $sourceRequest ? overtimeGetRequestGroupIds((array)$sourceRequest, $overtimeConfig) : [];
 
 $initiatorId = (int)($sourceRequest['CREATED_BY'] ?? 0);
 $initiatorName = overtimeGetUserNameById($initiatorId);
@@ -391,7 +472,7 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
             true,
             $currentUserId,
             $overtimeConfig,
-            0,
+            (int)($sourceGroupIds[0] ?? 0),
             ['par_Start' => 'edit_ka'],
             [$requestId]
         );
@@ -405,6 +486,10 @@ if ($request->isPost() && $request->getPost('action') === 'edit_ka' && check_bit
             }
 
             if (empty($errors)) {
+                if (!empty($sourceGroupIds)) {
+                    overtimeAppendRequestToGroups($newRequestId, $sourceGroupIds, $overtimeConfig);
+                }
+
                 $sourceLinkedIds = overtimeGetLinkedRequestIds($requestId, $overtimeConfig);
                 $allRelatedIds = array_values(array_unique(array_merge([$requestId], $sourceLinkedIds)));
 
