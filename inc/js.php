@@ -371,7 +371,7 @@ BX.ready(function () {
         }
 
         const isDuty = !!(getModeDutyCheckbox() && getModeDutyCheckbox().checked);
-        let html = '<table class="overtime-table"><thead><tr><th>№</th><th>Тип</th><th>Начало</th><th>Окончание</th><th>Часы</th>' + (isDuty ? '' : '<th>Тип оплаты</th>') + '</tr></thead><tbody>';
+        let html = '<table class="overtime-table"><thead><tr><th>№</th><th>Тип</th>' + (isDuty ? '<th>Дата начала</th><th>Дата окончания</th>' : '<th>Начало</th><th>Окончание</th><th>Часы</th><th>Тип оплаты</th>') + '</tr></thead><tbody>';
 
         segments.forEach(function(segment, index){
             const selectedValue = getSelectedPaymentValue(rowName, index);
@@ -381,8 +381,8 @@ BX.ready(function () {
             html += '<td>' + escapeHtml(segment.type_name) + '</td>';
             html += '<td>' + escapeHtml(segment.start) + '</td>';
             html += '<td>' + escapeHtml(segment.end) + '</td>';
-            html += '<td>' + escapeHtml(segment.hours) + '</td>';
             if (!isDuty) {
+                html += '<td>' + escapeHtml(segment.hours) + '</td>';
                 html += '<td>';
 
                 if (segment.payment_types && segment.payment_types.length) {
@@ -831,7 +831,7 @@ BX.ready(function () {
         let html = collectDebugMessagesForModal();
 
         html += '<table class="overtime-table overtime-compact-table">';
-        html += '<thead><tr><th>Сотрудник</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы</th>' + (isDuty ? '' : '<th>Тип оплаты</th>') + '</tr></thead><tbody>';
+        html += '<thead><tr><th>Сотрудник</th><th>Тип заявки</th>' + (isDuty ? '<th>Дата начала</th><th>Дата окончания</th>' : '<th>Начало</th><th>Окончание</th><th>Часы</th><th>Тип оплаты</th>') + '</tr></thead><tbody>';
 
         rows.forEach(function(row){
             html += '<tr>';
@@ -839,14 +839,14 @@ BX.ready(function () {
             html += '<td>' + escapeHtml(row.type) + '</td>';
             html += '<td>' + escapeHtml(row.start) + '</td>';
             html += '<td>' + escapeHtml(row.end) + '</td>';
-            html += '<td>' + escapeHtml(row.hours) + '</td>';
             if (!isDuty) {
+                html += '<td>' + escapeHtml(row.hours) + '</td>';
                 html += '<td>' + escapeHtml(row.payment) + '</td>';
             }
             html += '</tr>';
 
             if (row.extraHtml) {
-                html += '<tr><td colspan="' + (isDuty ? '5' : '6') + '">' + row.extraHtml + '</td></tr>';
+                html += '<tr><td colspan="' + (isDuty ? '4' : '6') + '">' + row.extraHtml + '</td></tr>';
             }
         });
 

@@ -1458,6 +1458,27 @@ function overtimeFormatRequestDateOnly($value): string
     return $value;
 }
 
+
+function overtimeBuildRequestDatePeriodText(array $row): string
+{
+    $start = overtimeFormatRequestDateOnly($row['work_start_date'] ?? '');
+    $end = overtimeFormatRequestDateOnly($row['work_end_date'] ?? '');
+
+    if ($start === '' && $end === '') {
+        return '';
+    }
+
+    if ($start === $end || $end === '') {
+        return $start;
+    }
+
+    if ($start === '') {
+        return $end;
+    }
+
+    return $start . ' - ' . $end;
+}
+
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
 $allLinkedRequestIds = $viewData ? overtimeCollectAllLinkedRequestIds((int)$viewData['id'], $overtimeConfig) : [];
 $linkedCalculations = $viewData ? overtimeGetLinkedRequestCalculations($allLinkedRequestIds, $overtimeConfig) : [];
@@ -1551,8 +1572,8 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <div class='overtime-view-meta'>
 <div class='overtime-view-meta-item'><b>Статус заявки:</b> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)$viewData['status_name'])) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($viewData['status_id'] ?? 0))) ?>'><?= overtimeH((string)$viewData['status_name']) ?></span></div>
 <div class='overtime-view-meta-item'><b>Сотрудник:</b> <?= overtimeH($viewData['employee_name']) ?></div>
-<div class='overtime-view-meta-item'><b>Тип заявки и период работ:</b> <?= overtimeH((string)$viewData['work_type_name']) ?> <?= overtimeH((string)$viewData['work_period_text']) ?></div>
-<div class='overtime-view-meta-item'><b>Тип оплаты:</b> <?= overtimeH((string)$viewData['payment_type_name']) ?></div>
+<div class='overtime-view-meta-item'><b>Тип заявки и период работ:</b> <?= overtimeH((string)$viewData['work_type_name']) ?> <?= overtimeH(!empty($viewData['is_duty']) ? overtimeBuildRequestDatePeriodText($viewData) : (string)$viewData['work_period_text']) ?></div>
+<?php if (empty($viewData['is_duty'])): ?><div class='overtime-view-meta-item'><b>Тип оплаты:</b> <?= overtimeH((string)$viewData['payment_type_name']) ?></div><?php endif; ?>
 <div class='overtime-view-meta-item'><b>Инициатор:</b> <?= overtimeH($viewData['initiator_name']) ?></div>
 <div class='overtime-view-meta-item'><b>Обоснование:</b> <?= nl2br(overtimeH((string)$viewData['justification'])) ?></div>
 </div>
@@ -1563,8 +1584,8 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <div class='overtime-view-meta'>
 <div class='overtime-view-meta-item'><b>Статус заявки:</b> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)$linked['status_name'])) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($linked['status_id'] ?? 0))) ?>'><?= overtimeH((string)$linked['status_name']) ?></span></div>
 <div class='overtime-view-meta-item'><b>Сотрудник:</b> <?= overtimeH((string)$linked['employee_name']) ?></div>
-<div class='overtime-view-meta-item'><b>Тип заявки и период работ:</b> <?= overtimeH((string)($linked['work_type_name'] ?? '')) ?> <?= overtimeH((string)($linked['work_period_text'] ?? '')) ?></div>
-<div class='overtime-view-meta-item'><b>Тип оплаты:</b> <?= overtimeH((string)($linked['payment_type_name'] ?? '')) ?></div>
+<div class='overtime-view-meta-item'><b>Тип заявки и период работ:</b> <?= overtimeH((string)($linked['work_type_name'] ?? '')) ?> <?= overtimeH(!empty($viewData['is_duty']) ? overtimeBuildRequestDatePeriodText($linked) : (string)($linked['work_period_text'] ?? '')) ?></div>
+<?php if (empty($viewData['is_duty'])): ?><div class='overtime-view-meta-item'><b>Тип оплаты:</b> <?= overtimeH((string)($linked['payment_type_name'] ?? '')) ?></div><?php endif; ?>
 </div>
 <div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$linked['calculation_html']) ?></div>
 </details>
@@ -1587,7 +1608,7 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 </table>
 <?php endif; ?>
 <?php else: ?>
-<?php foreach ($groupCalculations as $group): ?><details><summary><a href='view.php?id=<?= (int)$group['id'] ?>'>Заявка #<?= (int)$group['id'] ?></a> — <?= overtimeH((string)$group['employee_name']) ?>: <?= overtimeH((string)($group['work_type_name'] ?? '')) ?> <?= overtimeH((string)($group['work_period_text'] ?? '')) ?> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($group['status_id'] ?? 0))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></summary><div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$group['calculation_html']) ?></div></details><?php endforeach; ?>
+<?php foreach ($groupCalculations as $group): ?><details><summary><a href='view.php?id=<?= (int)$group['id'] ?>'>Заявка #<?= (int)$group['id'] ?></a> — <?= overtimeH((string)$group['employee_name']) ?>: <?= overtimeH((string)($group['work_type_name'] ?? '')) ?> <?= overtimeH(!empty($viewData['is_duty']) ? overtimeBuildRequestDatePeriodText($group) : (string)($group['work_period_text'] ?? '')) ?> <span class='status-pill <?= overtimeH(overtimeGetStatusClass((string)($group['status_name'] ?? ''))) ?>' style='<?= overtimeH(overtimeGetStatusPillStyle((int)($group['status_id'] ?? 0))) ?>'><?= overtimeH((string)($group['status_name'] ?? '')) ?></span></summary><?php if (empty($viewData['is_duty'])): ?><div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$group['calculation_html']) ?></div><?php endif; ?></details><?php endforeach; ?>
 <?php endif; ?>
 </div>
 <?php endif; ?>

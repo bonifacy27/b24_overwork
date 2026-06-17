@@ -1013,14 +1013,16 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
 
     $preparedSegments = [];
     foreach ($segments as $segment) {
+        $segmentIsDuty = (int)$segment['type_id'] === (int)$config['WORK_TYPE_DUTY_ID'];
         $preparedSegments[] = [
             'type_id' => (int)$segment['type_id'],
             'type_name' => $segment['type_name'],
-            'start' => overtimeFormatHuman($segment['start']),
-            'end' => overtimeFormatHuman($segment['end']),
-            'hours' => $segment['hours'],
+            'start' => $segmentIsDuty ? $segment['start']->format('d.m.Y') : overtimeFormatHuman($segment['start']),
+            'end' => $segmentIsDuty ? $segment['end']->format('d.m.Y') : overtimeFormatHuman($segment['end']),
+            'hours' => $segmentIsDuty ? '' : $segment['hours'],
+            'is_duty' => $segmentIsDuty,
             'payment_types' => overtimeGetPaymentTypesByWorkType((int)$segment['type_id'], $config),
-            'debug_payment_breakdown' => !empty($config['DEBUG'])
+            'debug_payment_breakdown' => (!$segmentIsDuty && !empty($config['DEBUG']))
                 ? overtimeBuildPaymentBreakdown($employeeId, $segment, $config)
                 : [],
         ];
@@ -1126,12 +1128,14 @@ function overtimeBuildRequestName(int $employeeId, array $segment): string
 {
     $employeeName = overtimeGetUserNameById($employeeId);
 
+    $isDuty = ($segment['type_name'] ?? '') === 'Дежурство';
+
     return sprintf(
         '%s: %s (%s - %s)',
         $employeeName,
         $segment['type_name'],
-        $segment['start']->format('d.m.Y H:i'),
-        $segment['end']->format('d.m.Y H:i')
+        $isDuty ? $segment['start']->format('d.m.Y') : $segment['start']->format('d.m.Y H:i'),
+        $isDuty ? $segment['end']->format('d.m.Y') : $segment['end']->format('d.m.Y H:i')
     );
 }
 
@@ -1426,6 +1430,20 @@ function overtimeNeedFileJustificationFromSegments(array $segments): bool
     return false;
 }
 
+function overtimeHasDutySegment(array $segments, array $config): bool
+{
+    foreach ($segments as $segment) {
+        if ((int)($segment['type_id'] ?? 0) > 0 && (int)($segment['type_id'] ?? 0) === (int)$config['WORK_TYPE_DUTY_ID']) {
+            return true;
+        }
+        if (($segment['type_name'] ?? '') === 'Дежурство') {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function overtimeGetDefaultPaymentTypeForSegments(array $segments, array $config): int
 {
     foreach ($segments as $segment) {
@@ -1440,7 +1458,7 @@ function overtimeGetDefaultPaymentTypeForSegments(array $segments, array $config
 
 function overtimeApplyDefaultDutyPaymentTypes(array $segments, array $paymentTypes, array $config): array
 {
-    if (!overtimeHasDutySegment($segments)) {
+    if (!overtimeHasDutySegment($segments, $config)) {
         return $paymentTypes;
     }
 
