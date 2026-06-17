@@ -890,6 +890,11 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
         $blockCreate = true;
     }
 
+    if ($isDuty) {
+        $timeStart = $timeStart !== '' ? $timeStart : '00:00';
+        $timeEnd = $timeEnd !== '' ? $timeEnd : '23:59';
+    }
+
     $start = overtimeParseDateTimeFromHtml($dateStart, $timeStart);
     $end = overtimeParseDateTimeFromHtml($dateEnd, $timeEnd);
 
@@ -1418,12 +1423,39 @@ function overtimeNeedTextJustificationFromSegments(array $segments): bool
 
 function overtimeNeedFileJustificationFromSegments(array $segments): bool
 {
+    return false;
+}
+
+function overtimeGetDefaultPaymentTypeForSegments(array $segments, array $config): int
+{
     foreach ($segments as $segment) {
-        if ($segment['type_name'] === 'Дежурство') {
-            return true;
+        $paymentTypes = overtimeGetPaymentTypesByWorkType((int)($segment['type_id'] ?? 0), $config);
+        if (!empty($paymentTypes[0]['ID'])) {
+            return (int)$paymentTypes[0]['ID'];
         }
     }
-    return false;
+
+    return 0;
+}
+
+function overtimeApplyDefaultDutyPaymentTypes(array $segments, array $paymentTypes, array $config): array
+{
+    if (!overtimeHasDutySegment($segments)) {
+        return $paymentTypes;
+    }
+
+    $defaultPaymentTypeId = overtimeGetDefaultPaymentTypeForSegments($segments, $config);
+    if ($defaultPaymentTypeId <= 0) {
+        return $paymentTypes;
+    }
+
+    foreach ($segments as $index => $segment) {
+        if ((int)($segment['type_id'] ?? 0) === (int)$config['WORK_TYPE_DUTY_ID'] && empty($paymentTypes[$index])) {
+            $paymentTypes[$index] = $defaultPaymentTypeId;
+        }
+    }
+
+    return $paymentTypes;
 }
 
 function overtimeValidatePaymentTypes(array $segments, array $paymentTypes, int $employeeId): array
@@ -1472,6 +1504,7 @@ function overtimeCreateEmployeeRequestPack(
         }
     }
 
+    $paymentTypes = overtimeApplyDefaultDutyPaymentTypes($segments, $paymentTypes, $config);
     $errors = array_merge($errors, overtimeValidatePaymentTypes($segments, $paymentTypes, $employeeId));
 
     if (overtimeNeedTextJustificationFromSegments($segments) && trim($justification) === '') {

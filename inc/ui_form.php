@@ -103,7 +103,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                         <input type="date" name="single[date_start]" id="single_date_start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['single']['date_start']) ?>">
                     </div>
 
-                    <div class="overtime-field">
+                    <div class="overtime-field duty-hide-field" id="single_time_start_wrap">
                         <label>Время начала</label>
                         <select name="single[time_start]" id="single_time_start">
                             <option value="">Выберите время</option>
@@ -118,7 +118,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                         <input type="date" name="single[date_end]" id="single_date_end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['single']['date_end']) ?>">
                     </div>
 
-                    <div class="overtime-field">
+                    <div class="overtime-field duty-hide-field" id="single_time_end_wrap">
                         <label>Время окончания</label>
                         <select name="single[time_end]" id="single_time_end">
                             <option value="">Выберите время</option>
@@ -170,7 +170,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                         <input type="date" name="common[date_start]" id="same_date_start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['common']['date_start']) ?>">
                     </div>
 
-                    <div class="overtime-field">
+                    <div class="overtime-field duty-hide-field" id="same_time_start_wrap">
                         <label>Время начала</label>
                         <select name="common[time_start]" id="same_time_start">
                             <option value="">Выберите время</option>
@@ -185,7 +185,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                         <input type="date" name="common[date_end]" id="same_date_end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($formData['common']['date_end']) ?>">
                     </div>
 
-                    <div class="overtime-field">
+                    <div class="overtime-field duty-hide-field" id="same_time_end_wrap">
                         <label>Время окончания</label>
                         <select name="common[time_end]" id="same_time_end">
                             <option value="">Выберите время</option>
@@ -306,7 +306,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                                     <input type="date" name="rows_diff[<?= (int)$index ?>][date_start]" class="diff-date-start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($row['date_start']) ?>">
                                 </div>
 
-                                <div class="overtime-field">
+                                <div class="overtime-field duty-hide-field diff-time-wrap">
                                     <label>Время начала</label>
                                     <select name="rows_diff[<?= (int)$index ?>][time_start]" class="diff-time-start">
                                         <option value="">Выберите время</option>
@@ -321,7 +321,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                                     <input type="date" name="rows_diff[<?= (int)$index ?>][date_end]" class="diff-date-end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" value="<?= overtimeH($row['date_end']) ?>">
                                 </div>
 
-                                <div class="overtime-field">
+                                <div class="overtime-field duty-hide-field diff-time-wrap">
                                     <label>Время окончания</label>
                                     <select name="rows_diff[<?= (int)$index ?>][time_end]" class="diff-time-end">
                                         <option value="">Выберите время</option>
