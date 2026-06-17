@@ -120,22 +120,26 @@ BX.ready(function () {
         return document.getElementById('diff_is_duty');
     }
 
-    function toggleFileVisibility() {
+    function updateDutyFormVisibility() {
         const isDuty = !!(getModeDutyCheckbox() && getModeDutyCheckbox().checked);
+        const hideByMode = {
+            single: ['single_time_start_wrap', 'single_time_end_wrap', 'single_justification_wrap'],
+            multi_same: ['same_time_start_wrap', 'same_time_end_wrap', 'common_justification_wrap_same'],
+            multi_diff: ['common_justification_wrap_diff']
+        };
 
-        const singleFileWrap = document.getElementById('single_justification_file_wrap');
-        const sameFileWrap = document.getElementById('common_justification_file_wrap_same');
-        const diffFileWrap = document.getElementById('common_justification_file_wrap_diff');
+        Object.keys(hideByMode).forEach(function(mode){
+            hideByMode[mode].forEach(function(id){
+                const el = document.getElementById(id);
+                if (el) {
+                    el.style.display = (modeInput.value === mode && isDuty) ? 'none' : '';
+                }
+            });
+        });
 
-        if (singleFileWrap) {
-            singleFileWrap.style.display = (modeInput.value === 'single' && isDuty) ? '' : 'none';
-        }
-        if (sameFileWrap) {
-            sameFileWrap.style.display = (modeInput.value === 'multi_same' && isDuty) ? '' : 'none';
-        }
-        if (diffFileWrap) {
-            diffFileWrap.style.display = (modeInput.value === 'multi_diff' && isDuty) ? '' : 'none';
-        }
+        document.querySelectorAll('.diff-time-wrap').forEach(function(el){
+            el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'none' : '';
+        });
     }
 
     function hideAllLateWarningBlocks() {
@@ -240,7 +244,7 @@ BX.ready(function () {
         });
 
         updateCreateButtonLabel();
-        toggleFileVisibility();
+        updateDutyFormVisibility();
         requestPreview();
     }
 
@@ -366,7 +370,8 @@ BX.ready(function () {
             return '';
         }
 
-        let html = '<table class="overtime-table"><thead><tr><th>№</th><th>Тип</th><th>Начало</th><th>Окончание</th><th>Часы</th><th>Тип оплаты</th></tr></thead><tbody>';
+        const isDuty = !!(getModeDutyCheckbox() && getModeDutyCheckbox().checked);
+        let html = '<table class="overtime-table"><thead><tr><th>№</th><th>Тип</th>' + (isDuty ? '<th>Дата начала</th><th>Дата окончания</th>' : '<th>Начало</th><th>Окончание</th><th>Часы</th><th>Тип оплаты</th>') + '</tr></thead><tbody>';
 
         segments.forEach(function(segment, index){
             const selectedValue = getSelectedPaymentValue(rowName, index);
@@ -376,22 +381,24 @@ BX.ready(function () {
             html += '<td>' + escapeHtml(segment.type_name) + '</td>';
             html += '<td>' + escapeHtml(segment.start) + '</td>';
             html += '<td>' + escapeHtml(segment.end) + '</td>';
-            html += '<td>' + escapeHtml(segment.hours) + '</td>';
-            html += '<td>';
+            if (!isDuty) {
+                html += '<td>' + escapeHtml(segment.hours) + '</td>';
+                html += '<td>';
 
-            if (segment.payment_types && segment.payment_types.length) {
-                html += '<select name="' + rowName + '[payment_type][' + index + ']">';
-                html += '<option value="">Выберите тип оплаты</option>';
-                segment.payment_types.forEach(function(payment){
-                    const isSelected = selectedValue !== '' && String(payment.ID) === String(selectedValue);
-                    html += '<option value="' + payment.ID + '"' + (isSelected ? ' selected' : '') + '>' + escapeHtml(payment.NAME) + '</option>';
-                });
-                html += '</select>';
-            } else {
-                html += '<span style="color:#c00;">Нет типов оплаты</span>';
+                if (segment.payment_types && segment.payment_types.length) {
+                    html += '<select name="' + rowName + '[payment_type][' + index + ']">';
+                    html += '<option value="">Выберите тип оплаты</option>';
+                    segment.payment_types.forEach(function(payment){
+                        const isSelected = selectedValue !== '' && String(payment.ID) === String(selectedValue);
+                        html += '<option value="' + payment.ID + '"' + (isSelected ? ' selected' : '') + '>' + escapeHtml(payment.NAME) + '</option>';
+                    });
+                    html += '</select>';
+                } else {
+                    html += '<span style="color:#c00;">Нет типов оплаты</span>';
+                }
+
+                html += '</td>';
             }
-
-            html += '</td>';
             html += '</tr>';
         });
 
@@ -625,7 +632,7 @@ BX.ready(function () {
                     payload: JSON.stringify(payload)
                 },
                 onsuccess: function(response){
-                    toggleFileVisibility();
+                    updateDutyFormVisibility();
                     lastPreviewResponse = response;
                     updateLateWarningUiFromPreview(response);
                     updateCreateButtonLabel();
@@ -650,7 +657,7 @@ BX.ready(function () {
                     }
                 },
                 onfailure: function(xhr){
-                    toggleFileVisibility();
+                    updateDutyFormVisibility();
                     updateCreateButtonState(null);
                     const text = xhr && xhr.responseText ? xhr.responseText : 'Ошибка AJAX';
                     if (modeInput.value === 'single') {
@@ -772,6 +779,8 @@ BX.ready(function () {
         const rows = [];
         const mode = modeInput.value;
 
+        const isDuty = !!(getModeDutyCheckbox() && getModeDutyCheckbox().checked);
+
         function pushRow(employee, segment, payment, extraHtml) {
             rows.push({
                 employee: employee,
@@ -822,7 +831,7 @@ BX.ready(function () {
         let html = collectDebugMessagesForModal();
 
         html += '<table class="overtime-table overtime-compact-table">';
-        html += '<thead><tr><th>Сотрудник</th><th>Тип заявки</th><th>Начало</th><th>Окончание</th><th>Часы</th><th>Тип оплаты</th></tr></thead><tbody>';
+        html += '<thead><tr><th>Сотрудник</th><th>Тип заявки</th>' + (isDuty ? '<th>Дата начала</th><th>Дата окончания</th>' : '<th>Начало</th><th>Окончание</th><th>Часы</th><th>Тип оплаты</th>') + '</tr></thead><tbody>';
 
         rows.forEach(function(row){
             html += '<tr>';
@@ -830,12 +839,14 @@ BX.ready(function () {
             html += '<td>' + escapeHtml(row.type) + '</td>';
             html += '<td>' + escapeHtml(row.start) + '</td>';
             html += '<td>' + escapeHtml(row.end) + '</td>';
-            html += '<td>' + escapeHtml(row.hours) + '</td>';
-            html += '<td>' + escapeHtml(row.payment) + '</td>';
+            if (!isDuty) {
+                html += '<td>' + escapeHtml(row.hours) + '</td>';
+                html += '<td>' + escapeHtml(row.payment) + '</td>';
+            }
             html += '</tr>';
 
             if (row.extraHtml) {
-                html += '<tr><td colspan="6">' + row.extraHtml + '</td></tr>';
+                html += '<tr><td colspan="' + (isDuty ? '4' : '6') + '">' + row.extraHtml + '</td></tr>';
             }
         });
 
@@ -1034,15 +1045,16 @@ BX.ready(function () {
                 <div class="overtime-subtitle">Выберите периоды работы</div>
                 <div class="overtime-grid-4">
                     <div class="overtime-field"><label>Дата начала</label><input type="date" name="rows_diff[${idx}][date_start]" class="diff-date-start" min="${minAllowedDate}"></div>
-                    <div class="overtime-field"><label>Время начала</label><select name="rows_diff[${idx}][time_start]" class="diff-time-start">${options}</select></div>
+                    <div class="overtime-field duty-hide-field diff-time-wrap"><label>Время начала</label><select name="rows_diff[${idx}][time_start]" class="diff-time-start">${options}</select></div>
                     <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end" min="${minAllowedDate}"></div>
-                    <div class="overtime-field"><label>Время окончания</label><select name="rows_diff[${idx}][time_end]" class="diff-time-end">${options}</select></div>
+                    <div class="overtime-field duty-hide-field diff-time-wrap"><label>Время окончания</label><select name="rows_diff[${idx}][time_end]" class="diff-time-end">${options}</select></div>
                 </div>
                 <div class="overtime-preview-box row-preview" id="diff_preview_${idx}"></div>
             `;
             container.appendChild(div);
             initSelector(div.querySelector('.overtime-selector-row'));
             bindDynamicPreviewEvents(div);
+            updateDutyFormVisibility();
             div.querySelector('.remove-diff-row').addEventListener('click', function(){
                 div.remove();
                 rebuildDiffIndexes();
@@ -1065,10 +1077,14 @@ BX.ready(function () {
     ['single_is_duty', 'same_is_duty', 'diff_is_duty'].forEach(function(id){
         const el = document.getElementById(id);
         if (el) {
-            el.addEventListener('change', toggleFileVisibility);
+            el.addEventListener('change', function(){
+                updateDutyFormVisibility();
+                requestPreview();
+            });
         }
     });
 
     switchMode(modeInput.value || 'single');
+    updateDutyFormVisibility();
 });
 </script>

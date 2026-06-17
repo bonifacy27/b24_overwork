@@ -890,6 +890,11 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
         $blockCreate = true;
     }
 
+    if ($isDuty) {
+        $timeStart = $timeStart !== '' ? $timeStart : '00:00';
+        $timeEnd = $timeEnd !== '' ? $timeEnd : '23:59';
+    }
+
     $start = overtimeParseDateTimeFromHtml($dateStart, $timeStart);
     $end = overtimeParseDateTimeFromHtml($dateEnd, $timeEnd);
 
@@ -1008,14 +1013,16 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
 
     $preparedSegments = [];
     foreach ($segments as $segment) {
+        $segmentIsDuty = (int)$segment['type_id'] === (int)$config['WORK_TYPE_DUTY_ID'];
         $preparedSegments[] = [
             'type_id' => (int)$segment['type_id'],
             'type_name' => $segment['type_name'],
-            'start' => overtimeFormatHuman($segment['start']),
-            'end' => overtimeFormatHuman($segment['end']),
-            'hours' => $segment['hours'],
+            'start' => $segmentIsDuty ? $segment['start']->format('d.m.Y') : overtimeFormatHuman($segment['start']),
+            'end' => $segmentIsDuty ? $segment['end']->format('d.m.Y') : overtimeFormatHuman($segment['end']),
+            'hours' => $segmentIsDuty ? '' : $segment['hours'],
+            'is_duty' => $segmentIsDuty,
             'payment_types' => overtimeGetPaymentTypesByWorkType((int)$segment['type_id'], $config),
-            'debug_payment_breakdown' => !empty($config['DEBUG'])
+            'debug_payment_breakdown' => (!$segmentIsDuty && !empty($config['DEBUG']))
                 ? overtimeBuildPaymentBreakdown($employeeId, $segment, $config)
                 : [],
         ];
@@ -1121,12 +1128,14 @@ function overtimeBuildRequestName(int $employeeId, array $segment): string
 {
     $employeeName = overtimeGetUserNameById($employeeId);
 
+    $isDuty = ($segment['type_name'] ?? '') === 'Дежурство';
+
     return sprintf(
         '%s: %s (%s - %s)',
         $employeeName,
         $segment['type_name'],
-        $segment['start']->format('d.m.Y H:i'),
-        $segment['end']->format('d.m.Y H:i')
+        $isDuty ? $segment['start']->format('d.m.Y') : $segment['start']->format('d.m.Y H:i'),
+        $isDuty ? $segment['end']->format('d.m.Y') : $segment['end']->format('d.m.Y H:i')
     );
 }
 
@@ -1418,12 +1427,53 @@ function overtimeNeedTextJustificationFromSegments(array $segments): bool
 
 function overtimeNeedFileJustificationFromSegments(array $segments): bool
 {
+    return false;
+}
+
+function overtimeHasDutySegment(array $segments, array $config): bool
+{
     foreach ($segments as $segment) {
-        if ($segment['type_name'] === 'Дежурство') {
+        if ((int)($segment['type_id'] ?? 0) > 0 && (int)($segment['type_id'] ?? 0) === (int)$config['WORK_TYPE_DUTY_ID']) {
+            return true;
+        }
+        if (($segment['type_name'] ?? '') === 'Дежурство') {
             return true;
         }
     }
+
     return false;
+}
+
+function overtimeGetDefaultPaymentTypeForSegments(array $segments, array $config): int
+{
+    foreach ($segments as $segment) {
+        $paymentTypes = overtimeGetPaymentTypesByWorkType((int)($segment['type_id'] ?? 0), $config);
+        if (!empty($paymentTypes[0]['ID'])) {
+            return (int)$paymentTypes[0]['ID'];
+        }
+    }
+
+    return 0;
+}
+
+function overtimeApplyDefaultDutyPaymentTypes(array $segments, array $paymentTypes, array $config): array
+{
+    if (!overtimeHasDutySegment($segments, $config)) {
+        return $paymentTypes;
+    }
+
+    $defaultPaymentTypeId = overtimeGetDefaultPaymentTypeForSegments($segments, $config);
+    if ($defaultPaymentTypeId <= 0) {
+        return $paymentTypes;
+    }
+
+    foreach ($segments as $index => $segment) {
+        if ((int)($segment['type_id'] ?? 0) === (int)$config['WORK_TYPE_DUTY_ID'] && empty($paymentTypes[$index])) {
+            $paymentTypes[$index] = $defaultPaymentTypeId;
+        }
+    }
+
+    return $paymentTypes;
 }
 
 function overtimeValidatePaymentTypes(array $segments, array $paymentTypes, int $employeeId): array
@@ -1472,6 +1522,7 @@ function overtimeCreateEmployeeRequestPack(
         }
     }
 
+    $paymentTypes = overtimeApplyDefaultDutyPaymentTypes($segments, $paymentTypes, $config);
     $errors = array_merge($errors, overtimeValidatePaymentTypes($segments, $paymentTypes, $employeeId));
 
     if (overtimeNeedTextJustificationFromSegments($segments) && trim($justification) === '') {
@@ -1528,8 +1579,9 @@ function overtimeCreateEmployeeRequestPack(
             'MODIFIED_BY' => $createdBy,
         ];
 
-        $paymentBreakdown = overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
-        $supportsCalculatedHours = in_array((int)$segment['type_id'], [
+        $segmentIsDuty = (int)$segment['type_id'] === (int)$config['WORK_TYPE_DUTY_ID'];
+        $paymentBreakdown = $segmentIsDuty ? [] : overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
+        $supportsCalculatedHours = !$segmentIsDuty && in_array((int)$segment['type_id'], [
             (int)$config['WORK_TYPE_OVERTIME_ID'],
             (int)$config['WORK_TYPE_WEEKEND_ID'],
         ], true);
@@ -1562,19 +1614,22 @@ function overtimeCreateEmployeeRequestPack(
             $config['REQ_PROP_END'] => $segment['end']->format('d.m.Y H:i:s'),
             $config['REQ_PROP_WORK_TYPE'] => (int)$segment['type_id'],
             $config['REQ_PROP_PAYMENT_TYPE'] => $paymentTypeId,
-            $config['REQ_PROP_HOURS'] => $segment['hours'],
             $config['REQ_PROP_WORK_START_DATE'] => $segment['start']->format('d.m.Y'),
             $config['REQ_PROP_WORK_END_DATE'] => $segment['end']->format('d.m.Y'),
-            $config['REQ_PROP_WORK_START_TIME'] => $segment['start']->format('H:i'),
-            $config['REQ_PROP_WORK_END_TIME'] => $segment['end']->format('H:i'),
-            $config['REQ_PROP_TOTAL_HOURS'] => (string)$segment['hours'],
-            $config['REQ_PROP_OVERTIME_TOTAL_HOURS'] => $overtimeTotalHours,
-            $config['REQ_PROP_HOURS_15'] => $hours15,
-            $config['REQ_PROP_HOURS_20'] => $hours20,
-            $config['REQ_PROP_NIGHT_HOURS_20'] => $nightHours20,
-            $config['REQ_PROP_TOTAL_OT_HOURS'] => $totalTkHours,
-            $config['REQ_PROP_TOTAL_PREMIUM_HOURS'] => $totalPremiumHours,
         ];
+
+        if (!$segmentIsDuty) {
+            $propertyValues[$config['REQ_PROP_HOURS']] = $segment['hours'];
+            $propertyValues[$config['REQ_PROP_WORK_START_TIME']] = $segment['start']->format('H:i');
+            $propertyValues[$config['REQ_PROP_WORK_END_TIME']] = $segment['end']->format('H:i');
+            $propertyValues[$config['REQ_PROP_TOTAL_HOURS']] = (string)$segment['hours'];
+            $propertyValues[$config['REQ_PROP_OVERTIME_TOTAL_HOURS']] = $overtimeTotalHours;
+            $propertyValues[$config['REQ_PROP_HOURS_15']] = $hours15;
+            $propertyValues[$config['REQ_PROP_HOURS_20']] = $hours20;
+            $propertyValues[$config['REQ_PROP_NIGHT_HOURS_20']] = $nightHours20;
+            $propertyValues[$config['REQ_PROP_TOTAL_OT_HOURS']] = $totalTkHours;
+            $propertyValues[$config['REQ_PROP_TOTAL_PREMIUM_HOURS']] = $totalPremiumHours;
+        }
 
         if ($subtypeId > 0 && !empty($config['REQ_PROP_SUBTYPE'])) {
             $propertyValues[$config['REQ_PROP_SUBTYPE']] = $subtypeId;

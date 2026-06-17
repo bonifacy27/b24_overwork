@@ -386,7 +386,7 @@ function overtimeParseDateTimeFromHtml(string $date, string $time): ?DateTime
         return null;
     }
 
-    if (!preg_match('/^\d{2}:00$/', $time)) {
+    if (!preg_match('/^\d{2}:\d{2}$/', $time)) {
         return null;
     }
 
