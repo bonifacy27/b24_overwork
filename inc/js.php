@@ -123,9 +123,9 @@ BX.ready(function () {
     function updateDutyFormVisibility() {
         const isDuty = !!(getModeDutyCheckbox() && getModeDutyCheckbox().checked);
         const hideByMode = {
-            single: ['single_time_start_wrap', 'single_time_end_wrap', 'single_justification_wrap', 'single_justification_file_wrap'],
-            multi_same: ['same_time_start_wrap', 'same_time_end_wrap', 'common_justification_wrap_same', 'common_justification_file_wrap_same'],
-            multi_diff: ['common_justification_wrap_diff', 'common_justification_file_wrap_diff']
+            single: ['single_time_start_wrap', 'single_time_end_wrap', 'single_justification_wrap'],
+            multi_same: ['same_time_start_wrap', 'same_time_end_wrap', 'common_justification_wrap_same'],
+            multi_diff: ['common_justification_wrap_diff']
         };
 
         Object.keys(hideByMode).forEach(function(mode){

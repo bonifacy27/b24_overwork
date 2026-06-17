@@ -134,10 +134,6 @@ foreach ($formData['rows_diff'] as $index => $row) {
                     <textarea name="single[justification]" id="single_justification" rows="3"><?= overtimeH($formData['single']['justification']) ?></textarea>
                 </div>
 
-                <div class="overtime-field" id="single_justification_file_wrap">
-                    <label>Обоснование (файл)</label>
-                    <input type="file" name="single_justification_file" id="single_justification_file">
-                </div>
 
                 <div class="overtime-alert overtime-alert-error overtime-hidden" id="single_late_warning_box">
                     <span id="single_late_warning_text"></span>
@@ -201,10 +197,6 @@ foreach ($formData['rows_diff'] as $index => $row) {
                     <textarea name="common[justification]" id="common_justification_same" rows="3"><?= overtimeH($formData['common']['justification']) ?></textarea>
                 </div>
 
-                <div class="overtime-field" id="common_justification_file_wrap_same">
-                    <label>Обоснование (файл)</label>
-                    <input type="file" name="common_justification_file" id="common_justification_file_same">
-                </div>
 
                 <div class="overtime-alert overtime-alert-error overtime-hidden" id="common_late_warning_box_same">
                     <span id="common_late_warning_text_same"></span>
@@ -260,10 +252,6 @@ foreach ($formData['rows_diff'] as $index => $row) {
                     <textarea name="common[justification]" id="common_justification_diff" rows="3"><?= overtimeH($formData['common']['justification']) ?></textarea>
                 </div>
 
-                <div class="overtime-field" id="common_justification_file_wrap_diff">
-                    <label>Обоснование (файл)</label>
-                    <input type="file" name="common_justification_file" id="common_justification_file_diff">
-                </div>
 
                 <div class="overtime-alert overtime-alert-error overtime-hidden" id="common_late_warning_box_diff">
                     <span id="common_late_warning_text_diff"></span>

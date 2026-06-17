@@ -1579,8 +1579,9 @@ function overtimeCreateEmployeeRequestPack(
             'MODIFIED_BY' => $createdBy,
         ];
 
-        $paymentBreakdown = overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
-        $supportsCalculatedHours = in_array((int)$segment['type_id'], [
+        $segmentIsDuty = (int)$segment['type_id'] === (int)$config['WORK_TYPE_DUTY_ID'];
+        $paymentBreakdown = $segmentIsDuty ? [] : overtimeBuildPaymentBreakdown($employeeId, $segment, $config);
+        $supportsCalculatedHours = !$segmentIsDuty && in_array((int)$segment['type_id'], [
             (int)$config['WORK_TYPE_OVERTIME_ID'],
             (int)$config['WORK_TYPE_WEEKEND_ID'],
         ], true);
@@ -1613,19 +1614,22 @@ function overtimeCreateEmployeeRequestPack(
             $config['REQ_PROP_END'] => $segment['end']->format('d.m.Y H:i:s'),
             $config['REQ_PROP_WORK_TYPE'] => (int)$segment['type_id'],
             $config['REQ_PROP_PAYMENT_TYPE'] => $paymentTypeId,
-            $config['REQ_PROP_HOURS'] => $segment['hours'],
             $config['REQ_PROP_WORK_START_DATE'] => $segment['start']->format('d.m.Y'),
             $config['REQ_PROP_WORK_END_DATE'] => $segment['end']->format('d.m.Y'),
-            $config['REQ_PROP_WORK_START_TIME'] => $segment['start']->format('H:i'),
-            $config['REQ_PROP_WORK_END_TIME'] => $segment['end']->format('H:i'),
-            $config['REQ_PROP_TOTAL_HOURS'] => (string)$segment['hours'],
-            $config['REQ_PROP_OVERTIME_TOTAL_HOURS'] => $overtimeTotalHours,
-            $config['REQ_PROP_HOURS_15'] => $hours15,
-            $config['REQ_PROP_HOURS_20'] => $hours20,
-            $config['REQ_PROP_NIGHT_HOURS_20'] => $nightHours20,
-            $config['REQ_PROP_TOTAL_OT_HOURS'] => $totalTkHours,
-            $config['REQ_PROP_TOTAL_PREMIUM_HOURS'] => $totalPremiumHours,
         ];
+
+        if (!$segmentIsDuty) {
+            $propertyValues[$config['REQ_PROP_HOURS']] = $segment['hours'];
+            $propertyValues[$config['REQ_PROP_WORK_START_TIME']] = $segment['start']->format('H:i');
+            $propertyValues[$config['REQ_PROP_WORK_END_TIME']] = $segment['end']->format('H:i');
+            $propertyValues[$config['REQ_PROP_TOTAL_HOURS']] = (string)$segment['hours'];
+            $propertyValues[$config['REQ_PROP_OVERTIME_TOTAL_HOURS']] = $overtimeTotalHours;
+            $propertyValues[$config['REQ_PROP_HOURS_15']] = $hours15;
+            $propertyValues[$config['REQ_PROP_HOURS_20']] = $hours20;
+            $propertyValues[$config['REQ_PROP_NIGHT_HOURS_20']] = $nightHours20;
+            $propertyValues[$config['REQ_PROP_TOTAL_OT_HOURS']] = $totalTkHours;
+            $propertyValues[$config['REQ_PROP_TOTAL_PREMIUM_HOURS']] = $totalPremiumHours;
+        }
 
         if ($subtypeId > 0 && !empty($config['REQ_PROP_SUBTYPE'])) {
             $propertyValues[$config['REQ_PROP_SUBTYPE']] = $subtypeId;
