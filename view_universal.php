@@ -1383,9 +1383,31 @@ function overtimeGetTaskDescriptionForForm(array $task, array $params): string
 }
 
 
+
+function overtimeEnsureRequestInformationOptionalActivityLoaded(): bool
+{
+    if (class_exists('CBPRequestInformationOptionalActivity')) {
+        return true;
+    }
+    if (!Loader::includeModule('bizproc') || !class_exists('CBPRuntime')) {
+        return false;
+    }
+
+    try {
+        $file = __DIR__ . '/requestinformationoptionalactivity/requestinformationoptionalactivity.php';
+        if (is_file($file)) {
+            require_once $file;
+        }
+    } catch (\Throwable $e) {
+        return false;
+    }
+
+    return class_exists('CBPRequestInformationOptionalActivity');
+}
+
 function overtimeGetNativeTaskFormHtml(array $task, int $userId): string
 {
-    if ($userId <= 0 || !class_exists('CBPActivity') || !method_exists('CBPActivity', 'ShowTaskForm')) {
+    if ($userId <= 0) {
         return '';
     }
 
@@ -1394,9 +1416,17 @@ function overtimeGetNativeTaskFormHtml(array $task, int $userId): string
         if (isset($GLOBALS['USER']) && is_object($GLOBALS['USER']) && method_exists($GLOBALS['USER'], 'GetFormattedName')) {
             $userName = (string)$GLOBALS['USER']->GetFormattedName(false);
         }
-        $result = CBPActivity::ShowTaskForm($task, $userId, $userName, null);
-        if (is_array($result)) {
-            return trim((string)($result[0] ?? ''));
+
+        if (overtimeIsRequestInformationOptionalTask($task) && overtimeEnsureRequestInformationOptionalActivityLoaded()) {
+            [$form] = CBPRequestInformationOptionalActivity::ShowTaskForm($task, $userId, $userName, null);
+            return trim((string)$form);
+        }
+
+        if (class_exists('CBPActivity') && method_exists('CBPActivity', 'ShowTaskForm')) {
+            $result = CBPActivity::ShowTaskForm($task, $userId, $userName, null);
+            if (is_array($result)) {
+                return trim((string)($result[0] ?? ''));
+            }
         }
     } catch (\Throwable $e) {
         return '';
