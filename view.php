@@ -160,6 +160,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'PROPERTY_' . $config['REQ_PROP_LINKED_REQUESTS'],
         'PROPERTY_' . $config['REQ_PROP_GROUP_LINK'],
         'PROPERTY_' . $config['REQ_PROP_JUSTIFICATION'],
+        'PROPERTY_' . $config['REQ_PROP_ORDER_JUSTIFICATION'],
         'PROPERTY_' . $config['REQ_PROP_STATUS'],
         'PROPERTY_' . $config['REQ_PROP_TOTAL_OT_HOURS'],
         'PROPERTY_' . $config['REQ_PROP_TOTAL_PREMIUM_HOURS'],
@@ -187,6 +188,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
     $paymentTypeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_PAYMENT_TYPE']);
     $paymentTypeName = overtimeResolvePaymentTypeNameByItem($item, $config);
     $justification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_JUSTIFICATION']));
+    $orderJustification = trim((string)overtimeExtractPropertyValue($item, $config['REQ_PROP_ORDER_JUSTIFICATION']));
     $statusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
     $statusName = overtimeResolveEnumOrElementValue($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? '');
 
@@ -228,6 +230,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'payment_type_id' => $paymentTypeId,
         'payment_type_name' => $paymentTypeName,
         'justification' => $justification,
+        'order_justification' => $orderJustification,
         'calculation_html' => overtimeBuildCalculationHtmlByRequestItem($item, $config),
         'linked_request_ids' => array_values($linkedRequestIds),
         'group_ids' => array_values(array_unique(array_filter(array_map('intval', (array)($item['PROPERTY_' . $config['REQ_PROP_GROUP_LINK'] . '_VALUE'] ?? []))))),
@@ -1243,6 +1246,37 @@ function overtimeFlattenBizprocErrors(array $errors): string
     return implode(' ', $messages);
 }
 
+
+function overtimeIsKaWorkStatus(array $viewData): bool
+{
+    $statusId = (int)($viewData['status_id'] ?? 0);
+    if ($statusId === 3511771) {
+        return true;
+    }
+
+    return overtimeNormalizeTaskButtonLabel((string)($viewData['status_name'] ?? '')) === 'в работе ка';
+}
+
+function overtimeIsApproveActionCode(string $action): bool
+{
+    return (bool)preg_match('/\b(approve|agree|accept|ok|yes|y|taskbutton1|соглас)/u', overtimeNormalizeTaskButtonLabel($action));
+}
+
+function overtimeUpdateOrderJustification(int $requestId, array $config, string $value): bool
+{
+    if ($requestId <= 0 || empty($config['IBLOCK_REQUESTS']) || empty($config['REQ_PROP_ORDER_JUSTIFICATION'])) {
+        return false;
+    }
+
+    CIBlockElement::SetPropertyValuesEx(
+        $requestId,
+        (int)$config['IBLOCK_REQUESTS'],
+        [$config['REQ_PROP_ORDER_JUSTIFICATION'] => $value]
+    );
+
+    return true;
+}
+
 function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 'approve', string $comment = ''): array
 {
     $taskId = (int)($task['ID'] ?? 0);
@@ -1490,6 +1524,9 @@ $bpActionError = '';
 $bpCommentLabel = 'Комментарий';
 $bpDescriptionForForm = '';
 $bpTaskTitle = 'Согласование заявки';
+$orderJustificationValue = $viewData ? (string)($viewData['order_justification'] ?? '') : '';
+$orderJustificationEditable = $viewData ? overtimeIsKaWorkStatus($viewData) : false;
+$orderJustificationError = '';
 
 if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
@@ -1511,8 +1548,27 @@ if (
     $allowedActions = array_column($approvalButtons, 'code');
     if ($postAction !== '' && in_array($postAction, $allowedActions, true)) {
         $bpComment = trim((string)$request->getPost('bp_comment'));
+        if ($orderJustificationEditable) {
+            $orderJustificationValue = trim((string)$request->getPost('order_justification'));
+        }
         $completionAction = $postAction;
-        $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment);
+        $selectedButtonKind = '';
+        foreach ($approvalButtons as $button) {
+            if ((string)($button['code'] ?? '') === $completionAction) {
+                $selectedButtonKind = (string)($button['kind'] ?? '');
+                break;
+            }
+        }
+        $isApproveAction = $selectedButtonKind === 'approve' || overtimeIsApproveActionCode($completionAction);
+        if ($orderJustificationEditable && $isApproveAction && $orderJustificationValue === '') {
+            $orderJustificationError = 'Поле "Обоснование для приказа" обязательно для согласования заявки в статусе "В работе КА".';
+            $completionResult = ['OK' => false, 'ERROR' => $orderJustificationError];
+        } else {
+            if ($orderJustificationEditable) {
+                overtimeUpdateOrderJustification((int)$viewData['id'], $overtimeConfig, $orderJustificationValue);
+            }
+            $completionResult = overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment);
+        }
 
         if (!empty($completionResult['OK'])) {
             LocalRedirect(Application::getInstance()->getContext()->getRequest()->getRequestUri());
@@ -1532,13 +1588,14 @@ if ($viewData && $currentUserId > 0) {
         $approvalButtons = overtimeGetTaskActionButtons($approvalTask);
     }
 }
+$orderJustificationValue = $orderJustificationValue !== '' ? $orderJustificationValue : ($viewData ? (string)($viewData['order_justification'] ?? '') : '');
 
 
 require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
 $APPLICATION->SetTitle('Просмотр и согласование заявки');
 $viewMode = trim((string)$request->getQuery('mode')) === 'extended' ? 'extended' : 'simple';
 ?>
-<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-separator{margin:20px 0 12px;border:0;border-top:1px solid #dfe3e8}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}</style>
+<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-separator{margin:20px 0 12px;border:0;border-top:1px solid #dfe3e8}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification{margin:12px 0}.overtime-view-order-justification textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification-readonly{width:30%;min-height:42px;border:1px solid #cfd7df;border-radius:6px;padding:8px;background:#f8fafc;white-space:pre-wrap}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}</style>
 <div class='overtime-view-wrap'><div class='overtime-view-box'>
 <div class='overtime-view-modes'><a class='overtime-view-mode-link <?= $viewMode === "simple" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=simple'>Краткое описание</a><a class='overtime-view-mode-link <?= $viewMode === "extended" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=extended'>Детальное описание</a></div>
 <?php if ($viewData): ?>
@@ -1592,7 +1649,7 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <?php endforeach; ?>
 <?php endif; ?>
 <?php else: ?><div>Заявка с ID <?= (int)$requestId ?> не найдена.</div><?php endif; ?>
-<?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?>
+<?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><div class='overtime-view-order-justification'><div style='margin-bottom:6px;'><b>Обоснование для приказа<?= $orderJustificationEditable ? ' <span style="color:#d1242f;">*</span>' : '' ?></b></div><?php if ($orderJustificationEditable): ?><textarea name='order_justification' id='order-justification-field'><?= overtimeH($orderJustificationValue) ?></textarea><div style='font-size:12px;color:#6c757d;margin-top:4px;'>Обязательно для согласования заявки в статусе «В работе КА». Отклонить можно без заполнения.</div><?php else: ?><div class='overtime-view-order-justification-readonly'><?= $orderJustificationValue !== '' ? nl2br(overtimeH($orderJustificationValue)) : 'Не заполнено' ?></div><?php endif; ?></div><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?>
 <?php if ($viewData && !empty($groupCalculations)): ?>
 <div class='overtime-view-linked'>
 <?php if ($viewMode === 'simple'): ?><hr class='overtime-view-separator'><?php endif; ?>
