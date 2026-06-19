@@ -867,7 +867,7 @@ function overtimeFindCurrentUserApprovalTask(int $requestId, int $userId, int $i
         return null;
     }
 
-    $select = ['ID', 'NAME', 'DOCUMENT_ID', 'WORKFLOW_ID', 'ACTIVITY_NAME', 'USER_ID', 'USERS', 'PARAMETERS'];
+    $select = ['ID', 'NAME', 'DOCUMENT_ID', 'WORKFLOW_ID', 'ACTIVITY_NAME', 'ACTIVITY', 'ACTIVITY_ID', 'USER_ID', 'USERS', 'PARAMETERS'];
 
     $checkTask = static function (array $task) use ($userId, $requestId, $iblockId): bool {
         if (!overtimeBizprocTaskIsForUser($task, $userId)) {
@@ -1201,42 +1201,85 @@ function overtimeGetTaskActionButtons(array $task): array
 }
 
 
+
+function overtimeFindTaskParamValue(array $params, array $keys)
+{
+    $normalizedKeys = array_map(static fn($key) => mb_strtolower((string)$key, 'UTF-8'), $keys);
+    foreach ($params as $key => $value) {
+        if (in_array(mb_strtolower((string)$key, 'UTF-8'), $normalizedKeys, true)) {
+            return $value;
+        }
+    }
+    foreach ($params as $value) {
+        if (is_array($value)) {
+            $found = overtimeFindTaskParamValue($value, $keys);
+            if ($found !== null) {
+                return $found;
+            }
+        }
+    }
+    return null;
+}
+
+function overtimeParamString(array $params, array $keys): string
+{
+    $value = overtimeFindTaskParamValue($params, $keys);
+    return is_scalar($value) ? trim((string)$value) : '';
+}
+
+function overtimeLooksLikeRequestedInformationField(array $field): bool
+{
+    $keys = array_change_key_case($field, CASE_LOWER);
+    return isset($keys['name']) && (isset($keys['type']) || isset($keys['title']));
+}
+
 function overtimeIsRequestInformationOptionalTask(array $task): bool
 {
-    $activityName = overtimeNormalizeTaskButtonLabel((string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? ''));
-    if ($activityName === 'requestinformationoptionalactivity') {
+    $activityName = overtimeNormalizeTaskButtonLabel((string)($task['ACTIVITY_NAME'] ?? $task['ACTIVITY'] ?? $task['ACTIVITY_ID'] ?? ''));
+    if (strpos($activityName, 'requestinformationoptionalactivity') !== false) {
         return true;
     }
 
     $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? []);
-    return array_key_exists('TaskButtonCancelMessage', $params)
-        && (array_key_exists('RequestedInformation', $params) || array_key_exists('requested_information', $params));
+    if (overtimeParamString($params, ['TaskButtonCancelMessage', 'task_button_cancel_message']) !== '') {
+        return true;
+    }
+
+    return !empty(overtimeGetRequestedInformationFields($task));
 }
 
 function overtimeGetRequestedInformationFields(array $task): array
 {
     $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? []);
-    $fields = $params['RequestedInformation'] ?? $params['requested_information'] ?? [];
+    $fields = overtimeFindTaskParamValue($params, [
+        'RequestedInformation', 'requested_information', 'REQUESTED_INFORMATION',
+        'Fields', 'fields', 'Parameters', 'parameters',
+    ]);
+
     if (!is_array($fields)) {
-        return [];
+        $fields = [];
     }
 
     $result = [];
     foreach ($fields as $field) {
-        if (!is_array($field)) {
+        if (!is_array($field) || !overtimeLooksLikeRequestedInformationField($field)) {
             continue;
         }
-        $name = trim((string)($field['Name'] ?? $field['name'] ?? ''));
+        $keys = array_change_key_case($field, CASE_LOWER);
+        $name = trim((string)($keys['name'] ?? ''));
         if ($name === '') {
             continue;
         }
-        $field['Name'] = $name;
-        $field['Title'] = trim((string)($field['Title'] ?? $field['title'] ?? $name));
-        $field['Type'] = trim((string)($field['Type'] ?? $field['type'] ?? 'string')) ?: 'string';
-        $field['Description'] = trim((string)($field['Description'] ?? $field['description'] ?? ''));
-        $field['Required'] = strtoupper((string)($field['Required'] ?? $field['required'] ?? 'N')) === 'Y' ? 'Y' : 'N';
-        $field['Multiple'] = strtoupper((string)($field['Multiple'] ?? $field['multiple'] ?? 'N')) === 'Y' ? 'Y' : 'N';
-        $result[] = $field;
+        $normalized = $field;
+        $normalized['Name'] = $name;
+        $normalized['Title'] = trim((string)($keys['title'] ?? $name));
+        $normalized['Type'] = trim((string)($keys['type'] ?? 'string')) ?: 'string';
+        $normalized['Description'] = trim((string)($keys['description'] ?? ''));
+        $normalized['Required'] = strtoupper((string)($keys['required'] ?? 'N')) === 'Y' ? 'Y' : 'N';
+        $normalized['Multiple'] = strtoupper((string)($keys['multiple'] ?? 'N')) === 'Y' ? 'Y' : 'N';
+        $normalized['Options'] = $field['Options'] ?? $field['options'] ?? $field['OptionsText'] ?? $field['optionstext'] ?? [];
+        $normalized['Default'] = $field['Default'] ?? $field['default'] ?? '';
+        $result[] = $normalized;
     }
 
     return $result;
@@ -1249,11 +1292,11 @@ function overtimeGetTaskActionButtonsUniversal(array $task): array
     }
 
     $params = overtimeExtractTaskParameters($task['PARAMETERS'] ?? []);
-    $approveText = trim((string)($params['TaskButtonMessage'] ?? $params['TaskButton1Message'] ?? ''));
-    $cancelText = trim((string)($params['TaskButtonCancelMessage'] ?? ''));
+    $approveText = overtimeParamString($params, ['TaskButtonMessage', 'task_button_message', 'TaskButton1Message']);
+    $cancelText = overtimeParamString($params, ['TaskButtonCancelMessage', 'task_button_cancel_message']);
 
     return [
-        ['code' => 'approve', 'label' => $approveText !== '' ? $approveText : 'Сохранить', 'kind' => 'approve'],
+        ['code' => 'approve', 'label' => $approveText !== '' ? $approveText : 'Согласовать', 'kind' => 'approve'],
         ['code' => 'cancel', 'label' => $cancelText !== '' ? $cancelText : 'Отклонить', 'kind' => 'reject'],
     ];
 }
@@ -1327,6 +1370,16 @@ function overtimeRenderRequestedInformationField(array $field, $value = null): s
     }
 
     return $out . '</div>';
+}
+
+
+function overtimeGetTaskDescriptionForForm(array $task, array $params): string
+{
+    $description = overtimeParamString($params, [
+        'DescriptionForForm', 'description_for_form', 'TaskDescription', 'task_description',
+        'RequestedDescription', 'requested_description', 'Description', 'description',
+    ]);
+    return trim(str_replace('Текст задания для формы', '', $description));
 }
 
 function overtimeTaskIsRunning(int $taskId): bool
@@ -1641,8 +1694,8 @@ if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
-        $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
-        $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
+        $bpCommentLabel = overtimeParamString($taskParams, ['CommentLabelMessage', 'comment_label_message']) ?: 'Комментарий';
+        $bpDescriptionForForm = overtimeGetTaskDescriptionForForm($approvalTask, $taskParams);
         $bpTaskTitle = trim((string)($approvalTask['NAME'] ?? '')) ?: $bpDescriptionForForm ?: 'Согласование заявки';
         $approvalButtons = overtimeGetTaskActionButtonsUniversal($approvalTask);
         $requestedInformationFields = overtimeGetRequestedInformationFields($approvalTask);
@@ -1677,8 +1730,8 @@ if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
     if ($approvalTask) {
         $taskParams = overtimeExtractTaskParameters($approvalTask['PARAMETERS'] ?? []);
-        $bpCommentLabel = trim((string)($taskParams['CommentLabelMessage'] ?? '')) ?: 'Комментарий';
-        $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
+        $bpCommentLabel = overtimeParamString($taskParams, ['CommentLabelMessage', 'comment_label_message']) ?: 'Комментарий';
+        $bpDescriptionForForm = overtimeGetTaskDescriptionForForm($approvalTask, $taskParams);
         $bpTaskTitle = trim((string)($approvalTask['NAME'] ?? '')) ?: $bpDescriptionForForm ?: 'Согласование заявки';
         $approvalButtons = overtimeGetTaskActionButtonsUniversal($approvalTask);
         $requestedInformationFields = overtimeGetRequestedInformationFields($approvalTask);
