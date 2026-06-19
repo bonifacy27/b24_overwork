@@ -1382,6 +1382,42 @@ function overtimeGetTaskDescriptionForForm(array $task, array $params): string
     return trim(str_replace('Текст задания для формы', '', $description));
 }
 
+
+function overtimeGetNativeTaskFormHtml(array $task, int $userId): string
+{
+    if ($userId <= 0 || !class_exists('CBPActivity') || !method_exists('CBPActivity', 'ShowTaskForm')) {
+        return '';
+    }
+
+    try {
+        $userName = '';
+        if (isset($GLOBALS['USER']) && is_object($GLOBALS['USER']) && method_exists($GLOBALS['USER'], 'GetFormattedName')) {
+            $userName = (string)$GLOBALS['USER']->GetFormattedName(false);
+        }
+        $result = CBPActivity::ShowTaskForm($task, $userId, $userName, null);
+        if (is_array($result)) {
+            return trim((string)($result[0] ?? ''));
+        }
+    } catch (\Throwable $e) {
+        return '';
+    }
+
+    return '';
+}
+
+function overtimeGetTaskPostFields(\Bitrix\Main\HttpRequest $request): array
+{
+    $result = [];
+    foreach ((array)$request->getPostList()->toArray() as $key => $value) {
+        $key = (string)$key;
+        if (in_array($key, ['sessid', 'bp_action', 'bp_comment', 'bp_fields'], true)) {
+            continue;
+        }
+        $result[$key] = $value;
+    }
+    return $result;
+}
+
 function overtimeTaskIsRunning(int $taskId): bool
 {
     if ($taskId <= 0 || !class_exists('CBPTaskService')) {
@@ -1453,14 +1489,25 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
         return ['OK' => false, 'ERROR' => $validationError];
     }
 
-    $baseFields = [
+    $rawTaskFields = [];
+    $responseFields = [];
+    foreach ($fields as $fieldName => $fieldValue) {
+        $fieldName = (string)$fieldName;
+        if ($fieldName === 'task_comment' || strpos($fieldName, 'bprioact_') === 0) {
+            $rawTaskFields[$fieldName] = $fieldValue;
+        } else {
+            $responseFields[$fieldName] = $fieldValue;
+        }
+    }
+
+    $baseFields = $rawTaskFields + [
         'USER_ID' => $userId,
         'REAL_USER_ID' => $userId,
         'COMMENT' => $comment,
         'task_comment' => $comment,
     ];
-    if (!empty($fields)) {
-        $baseFields['fields'] = $fields;
+    if (!empty($responseFields)) {
+        $baseFields['fields'] = $responseFields;
     }
     $requests = [];
     if ($code === 'approve') {
@@ -1502,8 +1549,8 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
                 'REAL_USER_ID' => $userId,
                 'COMMENT' => $comment,
             ];
-            if (!empty($fields)) {
-                $payload['RESPONCE'] = $fields;
+            if (!empty($responseFields)) {
+                $payload['RESPONCE'] = $responseFields;
             }
             if ($code === 'approve') {
                 $payload['APPROVE'] = true;
@@ -1529,8 +1576,11 @@ function overtimeCompleteBizprocTask(array $task, int $userId, string $action = 
     try {
         if (method_exists('CBPTaskService', 'DoTask')) {
             $doTaskFields = ['ACTION' => $rawCode, $rawCode => 'Y', 'COMMENT' => $comment, 'task_comment' => $comment];
-            if (!empty($fields)) {
-                $doTaskFields['fields'] = $fields;
+            foreach ($rawTaskFields as $fieldName => $fieldValue) {
+                $doTaskFields[$fieldName] = $fieldValue;
+            }
+            if (!empty($responseFields)) {
+                $doTaskFields['fields'] = $responseFields;
             }
             CBPTaskService::DoTask($taskId, $userId, $doTaskFields);
             if (!overtimeTaskIsRunning($taskId)) {
@@ -1685,6 +1735,7 @@ $approvalTask = null;
 $approvalButtons = [];
 $requestedInformationFields = [];
 $postedRequestedInformationValues = [];
+$bpNativeTaskFormHtml = '';
 $bpActionError = '';
 $bpCommentLabel = 'Комментарий';
 $bpDescriptionForForm = '';
@@ -1699,6 +1750,7 @@ if ($viewData && $currentUserId > 0) {
         $bpTaskTitle = trim((string)($approvalTask['NAME'] ?? '')) ?: $bpDescriptionForForm ?: 'Согласование заявки';
         $approvalButtons = overtimeGetTaskActionButtonsUniversal($approvalTask);
         $requestedInformationFields = overtimeGetRequestedInformationFields($approvalTask);
+        $bpNativeTaskFormHtml = overtimeIsRequestInformationOptionalTask($approvalTask) ? overtimeGetNativeTaskFormHtml($approvalTask, $currentUserId) : '';
     }
 }
 
@@ -1713,9 +1765,11 @@ if (
         $bpComment = trim((string)$request->getPost('bp_comment'));
         $completionAction = $postAction;
         $postedRequestedInformationValues = overtimeGetPostedBizprocFields($requestedInformationFields, $request);
+        $nativePostFields = overtimeGetTaskPostFields($request);
+        $postedTaskValues = $nativePostFields + $postedRequestedInformationValues;
         $fieldsError = ($completionAction === 'cancel') ? null : overtimeValidateRequestedInformationFields($requestedInformationFields, $postedRequestedInformationValues);
         $completionResult = $fieldsError === null
-            ? overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment, $postedRequestedInformationValues)
+            ? overtimeCompleteBizprocTask($approvalTask, $currentUserId, $completionAction, $bpComment, $postedTaskValues)
             : ['OK' => false, 'ERROR' => $fieldsError];
 
         if (!empty($completionResult['OK'])) {
@@ -1735,6 +1789,7 @@ if ($viewData && $currentUserId > 0) {
         $bpTaskTitle = trim((string)($approvalTask['NAME'] ?? '')) ?: $bpDescriptionForForm ?: 'Согласование заявки';
         $approvalButtons = overtimeGetTaskActionButtonsUniversal($approvalTask);
         $requestedInformationFields = overtimeGetRequestedInformationFields($approvalTask);
+        $bpNativeTaskFormHtml = overtimeIsRequestInformationOptionalTask($approvalTask) ? overtimeGetNativeTaskFormHtml($approvalTask, $currentUserId) : '';
         if (!$request->isPost() || $bpActionError === '') {
             $postedRequestedInformationValues = [];
         }
@@ -1800,7 +1855,7 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <?php endforeach; ?>
 <?php endif; ?>
 <?php else: ?><div>Заявка с ID <?= (int)$requestId ?> не найдена.</div><?php endif; ?>
-<?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><?php foreach ($requestedInformationFields as $requestedField): ?><?= overtimeRenderRequestedInformationField($requestedField, $postedRequestedInformationValues[$requestedField['Name']] ?? null) ?><?php endforeach; ?><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?>
+<?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpNativeTaskFormHtml !== ''): ?><div class='overtime-view-approval-native'><?= $bpNativeTaskFormHtml ?></div><?php else: ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><?php foreach ($requestedInformationFields as $requestedField): ?><?= overtimeRenderRequestedInformationField($requestedField, $postedRequestedInformationValues[$requestedField['Name']] ?? null) ?><?php endforeach; ?><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><?php endif; ?><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?>
 <?php if ($viewData && !empty($groupCalculations)): ?>
 <div class='overtime-view-linked'>
 <?php if ($viewMode === 'simple'): ?><hr class='overtime-view-separator'><?php endif; ?>
