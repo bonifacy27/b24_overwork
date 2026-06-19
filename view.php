@@ -1617,6 +1617,7 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <div><b>Подразделение:</b> <?= overtimeH($department !== '' ? $department : 'Не указано') ?></div>
 <div style="margin-bottom:10px;"><b>ФИО инициатора заявки:</b> <?= overtimeH($viewData['initiator_name']) ?></div>
 <div style="margin-bottom:10px;"><b>Обоснование:</b> <?= nl2br(overtimeH((string)$viewData['justification'])) ?></div>
+<?php if (trim((string)($viewData['order_justification'] ?? '')) !== ''): ?><div style="margin-bottom:10px;"><b>Обоснование для приказа:</b> <?= nl2br(overtimeH((string)$viewData['order_justification'])) ?></div><?php endif; ?>
 <?php $isDutyView = !empty($viewData['is_duty']); ?>
 <?php if ($isDutyView): ?>
 <table class='overtime-simple-table'><tr><th>ID</th><th>Статус</th><th>Тип заявки</th><th>Дата начала</th><th>Дата окончания</th></tr>
@@ -1633,6 +1634,7 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <?php if (empty($viewData['is_duty'])): ?><div class='overtime-view-meta-item'><b>Тип оплаты:</b> <?= overtimeH((string)$viewData['payment_type_name']) ?></div><?php endif; ?>
 <div class='overtime-view-meta-item'><b>Инициатор:</b> <?= overtimeH($viewData['initiator_name']) ?></div>
 <div class='overtime-view-meta-item'><b>Обоснование:</b> <?= nl2br(overtimeH((string)$viewData['justification'])) ?></div>
+<?php if (trim((string)($viewData['order_justification'] ?? '')) !== ''): ?><div class='overtime-view-meta-item'><b>Обоснование для приказа:</b> <?= nl2br(overtimeH((string)$viewData['order_justification'])) ?></div><?php endif; ?>
 </div>
 <div class='overtime-view-calc'><?= overtimeHighlightCalculationRows((string)$viewData['calculation_html']) ?></div>
 <?php foreach ($linkedCalculations as $linked): ?>
