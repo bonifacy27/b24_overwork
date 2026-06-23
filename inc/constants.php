@@ -1,7 +1,7 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.8.1-duty-diagnostics');
+    define('OVERTIME_REQUEST_VERSION', '1.8.2-duty-display-fix');
 }
 
 $overtimeConfig = [

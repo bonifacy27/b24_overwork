@@ -325,7 +325,7 @@ BX.ready(function () {
             el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'none' : '';
         });
         document.querySelectorAll('.overtime-duty-only').forEach(function(el){
-            el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? '' : 'none';
+            el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'block' : 'none';
         });
         if (modeInput.value === 'multi_diff' && isDuty) {
             renderDutyCalendars();
