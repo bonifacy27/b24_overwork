@@ -52,6 +52,8 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-modal-header {display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;}
     .overtime-modal-actions {display:flex; justify-content:flex-end; gap:10px; margin-top:16px;}
     .overtime-compact-table th, .overtime-compact-table td {font-size:13px; padding:6px 8px;}
+    .overtime-duty-only {display:none;}
+    .overtime-duty-date-tools {display:grid; grid-template-columns:1fr 1fr auto auto; gap:8px; align-items:end;}
 </style>
 
 <div class="overtime-wrap">
@@ -318,6 +320,17 @@ foreach ($formData['rows_diff'] as $index => $row) {
                                         <?php endforeach; ?>
                                     </select>
                                 </div>
+                            </div>
+                            <div class="overtime-field overtime-duty-only">
+                                <label>Даты дежурств</label>
+                                <div class="overtime-duty-date-tools">
+                                    <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
+                                    <div><label>Окончание диапазона</label><input type="date" class="duty-date-end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
+                                    <button type="button" class="ui-btn ui-btn-light-border add-duty-date">Добавить дату</button>
+                                    <button type="button" class="ui-btn ui-btn-light-border add-duty-range">Добавить диапазон</button>
+                                </div>
+                                <textarea name="rows_diff[<?= (int)$index ?>][duty_dates]" class="diff-duty-dates" rows="4" placeholder="Каждая строка — дата YYYY-MM-DD или диапазон YYYY-MM-DD - YYYY-MM-DD"><?= overtimeH($row['duty_dates'] ?? '') ?></textarea>
+                                <div class="overtime-user-info">Добавьте несколько дат или диапазонов; для каждой строки будет создана отдельная заявка на дежурство.</div>
                             </div>
 
                             <div class="overtime-preview-box row-preview" id="diff_preview_<?= (int)$index ?>"></div>

@@ -122,6 +122,7 @@ BX.ready(function () {
 
     function updateDutyFormVisibility() {
         const isDuty = !!(getModeDutyCheckbox() && getModeDutyCheckbox().checked);
+        const isDutyMode = modeInput.value === 'multi_diff' && isDuty;
         const hideByMode = {
             single: ['single_time_start_wrap', 'single_time_end_wrap', 'single_justification_wrap'],
             multi_same: ['same_time_start_wrap', 'same_time_end_wrap', 'common_justification_wrap_same'],
@@ -139,6 +140,15 @@ BX.ready(function () {
 
         document.querySelectorAll('.diff-time-wrap').forEach(function(el){
             el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'none' : '';
+        });
+        document.querySelectorAll('.overtime-duty-only').forEach(function(el){
+            el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? '' : 'none';
+        });
+        document.querySelectorAll('#mode-multi-diff .overtime-grid-4').forEach(function(el){
+            el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'none' : '';
+        });
+        modeTabs.forEach(function(tab){
+            tab.style.display = isDutyMode && tab.dataset.mode !== 'multi_diff' ? 'none' : '';
         });
     }
 
@@ -530,7 +540,8 @@ BX.ready(function () {
                 date_start: row.querySelector('.diff-date-start').value,
                 time_start: row.querySelector('.diff-time-start').value,
                 date_end: row.querySelector('.diff-date-end').value,
-                time_end: row.querySelector('.diff-time-end').value
+                time_end: row.querySelector('.diff-time-end').value,
+                duty_dates: row.querySelector('.diff-duty-dates') ? row.querySelector('.diff-duty-dates').value : ''
             });
         });
 
@@ -561,19 +572,22 @@ BX.ready(function () {
     }
 
     function renderRowsPreview(mode, rows) {
+        const rendered = {};
         Object.keys(rows || {}).forEach(function(index){
             const item = rows[index];
-            const targetId = mode === 'multi_same' ? 'same_preview_' + index : 'diff_preview_' + index;
+            const baseIndex = String(index).split('_')[0];
+            const targetId = mode === 'multi_same' ? 'same_preview_' + index : 'diff_preview_' + baseIndex;
             const target = document.getElementById(targetId);
             if (!target) {
                 return;
             }
 
-            const namePrefix = mode === 'multi_same' ? 'rows_same[' + index + ']' : 'rows_diff[' + index + ']';
-            let html = '';
+            const namePrefix = mode === 'multi_same' ? 'rows_same[' + index + ']' : 'rows_diff[' + baseIndex + ']';
+            let html = rendered[targetId] || '';
             html += buildErrors(item.errors || []);
             html += buildSplitWarning(item);
             html += buildSegmentsTable(namePrefix, item.segments || []);
+            rendered[targetId] = html;
             target.innerHTML = html;
         });
     }
@@ -960,6 +974,10 @@ BX.ready(function () {
             row.querySelector('.diff-time-start').name = 'rows_diff[' + idx + '][time_start]';
             row.querySelector('.diff-date-end').name = 'rows_diff[' + idx + '][date_end]';
             row.querySelector('.diff-time-end').name = 'rows_diff[' + idx + '][time_end]';
+            const dutyDates = row.querySelector('.diff-duty-dates');
+            if (dutyDates) {
+                dutyDates.name = 'rows_diff[' + idx + '][duty_dates]';
+            }
             row.querySelector('.row-preview').id = 'diff_preview_' + idx;
 
             initSelector(selector);
@@ -1049,6 +1067,17 @@ BX.ready(function () {
                     <div class="overtime-field"><label>Дата окончания</label><input type="date" name="rows_diff[${idx}][date_end]" class="diff-date-end" min="${minAllowedDate}"></div>
                     <div class="overtime-field duty-hide-field diff-time-wrap"><label>Время окончания</label><select name="rows_diff[${idx}][time_end]" class="diff-time-end">${options}</select></div>
                 </div>
+                <div class="overtime-field overtime-duty-only">
+                    <label>Даты дежурств</label>
+                    <div class="overtime-duty-date-tools">
+                        <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="${minAllowedDate}"></div>
+                        <div><label>Окончание диапазона</label><input type="date" class="duty-date-end" min="${minAllowedDate}"></div>
+                        <button type="button" class="ui-btn ui-btn-light-border add-duty-date">Добавить дату</button>
+                        <button type="button" class="ui-btn ui-btn-light-border add-duty-range">Добавить диапазон</button>
+                    </div>
+                    <textarea name="rows_diff[${idx}][duty_dates]" class="diff-duty-dates" rows="4" placeholder="Каждая строка — дата YYYY-MM-DD или диапазон YYYY-MM-DD - YYYY-MM-DD"></textarea>
+                    <div class="overtime-user-info">Добавьте несколько дат или диапазонов; для каждой строки будет создана отдельная заявка на дежурство.</div>
+                </div>
                 <div class="overtime-preview-box row-preview" id="diff_preview_${idx}"></div>
             `;
             container.appendChild(div);
@@ -1078,10 +1107,43 @@ BX.ready(function () {
         const el = document.getElementById(id);
         if (el) {
             el.addEventListener('change', function(){
+                if (el.checked && id !== 'diff_is_duty') {
+                    const diffDuty = document.getElementById('diff_is_duty');
+                    if (diffDuty) {
+                        diffDuty.checked = true;
+                    }
+                    el.checked = false;
+                    switchMode('multi_diff');
+                }
                 updateDutyFormVisibility();
                 requestPreview();
             });
         }
+    });
+
+    document.addEventListener('click', function(e){
+        const dateBtn = e.target.closest('.add-duty-date');
+        const rangeBtn = e.target.closest('.add-duty-range');
+        if (!dateBtn && !rangeBtn) {
+            return;
+        }
+        const row = e.target.closest('.diff-row');
+        if (!row) {
+            return;
+        }
+        const start = row.querySelector('.duty-date-start');
+        const end = row.querySelector('.duty-date-end');
+        const target = row.querySelector('.diff-duty-dates');
+        if (!start || !target || !start.value) {
+            alert('Укажите дату дежурства.');
+            return;
+        }
+        let line = start.value;
+        if (rangeBtn && end && end.value && end.value !== start.value) {
+            line += ' - ' + end.value;
+        }
+        target.value = (target.value.trim() ? target.value.trim() + "\n" : '') + line;
+        requestPreview();
     });
 
     switchMode(modeInput.value || 'single');

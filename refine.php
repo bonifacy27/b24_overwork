@@ -260,6 +260,32 @@ function overtimeRefineLoadRequest(int $requestId, array $config): ?array
     return $item;
 }
 
+function overtimeRefineGetRequestComments(int $requestId, array $config): array
+{
+    $comments = [];
+    $propertyCode = trim((string)($config['REQ_PROP_COMMENTS'] ?? 'KOMMENTARII'));
+    $res = CIBlockElement::GetProperty((int)$config['IBLOCK_REQUESTS'], $requestId, ['sort' => 'asc'], ['CODE' => $propertyCode]);
+    while ($property = $res->Fetch()) {
+        $value = trim((string)($property['VALUE'] ?? ''));
+        if ($value !== '') {
+            $comments[] = $value;
+        }
+    }
+    return $comments;
+}
+
+function overtimeRefineRenderRequestComments(array $comments): string
+{
+    if (empty($comments)) {
+        return '<div class="overtime-comments-empty">Комментариев пока нет.</div>';
+    }
+    $html = '<div class="overtime-comments-list">';
+    foreach ($comments as $comment) {
+        $html .= '<div class="overtime-comment-item">' . nl2br(overtimeH($comment)) . '</div>';
+    }
+    return $html . '</div>';
+}
+
 $request = Context::getCurrent()->getRequest();
 global $USER;
 $currentUserId = (int)$USER->GetID();
@@ -362,8 +388,9 @@ $currentPaymentId = (int)($item['PROPERTY_'.$overtimeConfig['REQ_PROP_PAYMENT_TY
 $taskButtons = overtimeRefineGetTaskButtons($task);
 $taskParams = overtimeRefineExtractTaskParameters($task['PARAMETERS'] ?? []);
 $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
+$requestComments = overtimeRefineGetRequestComments($requestId, $overtimeConfig);
 ?>
-<style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.ro{background:#f5f7fa;border:1px solid #d0d7de;color:#56606a}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-comment{margin-bottom:10px}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-comment-note{font-size:12px;color:#7c2d12;margin-top:4px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn.overtime-btn-success{background:#2ea043!important;border-color:#2ea043!important;color:#fff!important}.overtime-btn.overtime-btn-danger{background:#d1242f!important;border-color:#d1242f!important;color:#fff!important}.overtime-btn.overtime-btn-warning{background:#f28c28!important;border-color:#f28c28!important;color:#fff!important}</style>
+<style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.ro{background:#f5f7fa;border:1px solid #d0d7de;color:#56606a}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-comment{margin-bottom:10px}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-comment-note{font-size:12px;color:#7c2d12;margin-top:4px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn.overtime-btn-success{background:#2ea043!important;border-color:#2ea043!important;color:#fff!important}.overtime-btn.overtime-btn-danger{background:#d1242f!important;border-color:#d1242f!important;color:#fff!important}.overtime-btn.overtime-btn-warning{background:#f28c28!important;border-color:#f28c28!important;color:#fff!important}.overtime-comments{margin:16px 0;padding:14px;border:1px solid #d7e3f4;border-radius:8px;background:#f7fbff}.overtime-comments-title{font-weight:700;margin-bottom:10px}.overtime-comment-item{padding:10px 12px;margin-bottom:8px;border-left:4px solid #1f6feb;background:#fff;border-radius:6px;line-height:1.45}.overtime-comments-empty{color:#6c757d}</style>
 <div class="overtime-wrap"><div class="overtime-box">
 <?php if ($error !== ''): ?><div class="overtime-alert"><?=overtimeH($error)?></div><?php endif; ?>
 <?php if (!empty($bpDebugInfo)): ?>
@@ -375,6 +402,7 @@ $bpDescriptionForForm = trim(str_replace('Текст задания для фо�
 <form method="post" id="refine-form"><?=bitrix_sessid_post()?>
 <input type="hidden" name="action" value="save_refine"><input type="hidden" name="task_action" id="task_action" value=""><input type="hidden" name="task_kind" id="task_kind" value="">
 <div class="overtime-field"><label>Сотрудник</label><input type="text" value="<?=overtimeH($employee['display'])?>" readonly class="ro"></div>
+<div class="overtime-comments"><div class="overtime-comments-title">Комментарии к заявке</div><?= overtimeRefineRenderRequestComments($requestComments) ?></div>
 <div class="overtime-field"><label>Комментарий по доработке</label><textarea readonly rows="2" class="ro"><?=overtimeH((string)($item['PROPERTY_KOMMENTARIY_DLYA_DORABOTKI_VALUE'] ?? ''))?></textarea></div>
 <div class="overtime-grid-4">
 <div class="overtime-field"><label>Дата начала</label><input type="date" id="date_start" name="date_start" value="<?=overtimeH($dateStartValue)?>"></div>

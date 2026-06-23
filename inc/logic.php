@@ -1098,15 +1098,32 @@ function overtimeBuildModePreview(string $mode, array $payload, array $config): 
         $common = $payload['common'] ?? [];
         $rows = is_array($payload['rows']) ? $payload['rows'] : [];
         $items = [];
+        $isDuty = (($common['is_duty'] ?? 'N') === 'Y');
 
         foreach ($rows as $index => $row) {
+            if ($isDuty && trim((string)($row['duty_dates'] ?? '')) !== '') {
+                $segments = overtimeParseDutyDateRanges((string)$row['duty_dates']);
+                foreach ($segments as $segmentIndex => $segment) {
+                    $items[$index . '_' . $segmentIndex] = overtimeBuildSinglePreviewItem(
+                        (int)($row['employee_id'] ?? 0),
+                        $segment['date_start'],
+                        '',
+                        $segment['date_end'],
+                        '',
+                        true,
+                        $config
+                    );
+                }
+                continue;
+            }
+
             $items[$index] = overtimeBuildSinglePreviewItem(
                 (int)($row['employee_id'] ?? 0),
                 trim((string)($row['date_start'] ?? '')),
                 trim((string)($row['time_start'] ?? '')),
                 trim((string)($row['date_end'] ?? '')),
                 trim((string)($row['time_end'] ?? '')),
-                (($common['is_duty'] ?? 'N') === 'Y'),
+                $isDuty,
                 $config
             );
         }
@@ -1122,6 +1139,32 @@ function overtimeBuildModePreview(string $mode, array $payload, array $config): 
         'success' => false,
         'errors' => ['Неизвестный режим формы.'],
     ];
+}
+
+function overtimeParseDutyDateRanges(string $raw): array
+{
+    $result = [];
+    $lines = preg_split('/[\r\n,;]+/', $raw) ?: [];
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+
+        if (!preg_match('/^(\d{4}-\d{2}-\d{2})(?:\s*(?:—|–|-|\.\.)\s*(\d{4}-\d{2}-\d{2}))?$/u', $line, $matches)) {
+            continue;
+        }
+        $start = $matches[1];
+        $end = $matches[2] ?? $start;
+        if (strtotime($start) > strtotime($end)) {
+            [$start, $end] = [$end, $start];
+        }
+
+        $result[] = ['date_start' => $start, 'date_end' => $end];
+    }
+
+    return $result;
 }
 
 function overtimeBuildRequestName(int $employeeId, array $segment): string
@@ -1766,6 +1809,41 @@ function overtimeCreateByMode(string $mode, array $post, array $files, int $crea
         foreach ($rows as $row) {
             $employeeId = (int)($row['employee_id'] ?? 0);
             if ($employeeId <= 0) {
+                continue;
+            }
+
+            $dutyRanges = (($common['is_duty'] ?? 'N') === 'Y') ? overtimeParseDutyDateRanges((string)($row['duty_dates'] ?? '')) : [];
+            if (!empty($dutyRanges)) {
+                foreach ($dutyRanges as $range) {
+                    $preview = overtimeBuildSinglePreviewItem(
+                        $employeeId,
+                        $range['date_start'],
+                        '',
+                        $range['date_end'],
+                        '',
+                        true,
+                        $config
+                    );
+
+                    $segmentsRaw = Json::decode($preview['segments_json'] ?: '[]');
+                    $packResult = overtimeCreateEmployeeRequestPack(
+                        $employeeId,
+                        $segmentsRaw,
+                        [],
+                        $justification,
+                        $justFile,
+                        $lateAck,
+                        $createdBy,
+                        $config,
+                        $groupId
+                    );
+
+                    if (!$packResult['success']) {
+                        $errors = array_merge($errors, $packResult['errors']);
+                    } else {
+                        $allCreated = array_merge($allCreated, $packResult['created_ids']);
+                    }
+                }
                 continue;
             }
 
