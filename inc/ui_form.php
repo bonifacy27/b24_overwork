@@ -324,7 +324,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                             </div>
                             <div class="overtime-field overtime-duty-only">
                                 <label class="duty-date-picker-label">Выберите периоды работы</label>
-                                <input type="text" class="duty-date-picker overtime-duty-calendar-input" placeholder="Нажмите, чтобы выбрать несколько дат из календаря" readonly>
+                                <input type="date" class="duty-date-picker overtime-duty-calendar-input" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" title="Выберите дату дежурства">
                                 <div class="overtime-user-info">Каждая выбранная дата будет добавлена отдельной строкой в список ниже.</div>
                                 <div class="overtime-duty-date-tools">
                                     <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>

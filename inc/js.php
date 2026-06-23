@@ -70,6 +70,14 @@ BX.ready(function () {
         }
 
         input.value = '';
+        input.type = 'date';
+        input.min = minAllowedDate;
+        input.readOnly = false;
+
+        if (typeof input.showPicker === 'function') {
+            input.showPicker();
+            return;
+        }
 
         if (window.BX && typeof BX.calendar === 'function') {
             BX.calendar({
@@ -85,26 +93,8 @@ BX.ready(function () {
             return;
         }
 
-        input.type = 'date';
-        input.min = minAllowedDate;
-        input.readOnly = false;
-
-        if (!input.dataset.nativeDateInitialized) {
-            input.dataset.nativeDateInitialized = 'Y';
-            input.addEventListener('change', function(){
-                appendDutyDateLine(row, input.value);
-                input.value = '';
-                input.type = 'text';
-                input.readOnly = true;
-            });
-        }
-
-        if (typeof input.showPicker === 'function') {
-            input.showPicker();
-        } else {
-            input.focus();
-            input.click();
-        }
+        input.focus();
+        input.click();
     }
 
     function showElement(el) {
@@ -1153,7 +1143,7 @@ BX.ready(function () {
                 </div>
                 <div class="overtime-field overtime-duty-only">
                     <label class="duty-date-picker-label">Выберите периоды работы</label>
-                    <input type="text" class="duty-date-picker overtime-duty-calendar-input" placeholder="Нажмите, чтобы выбрать несколько дат из календаря" readonly>
+                    <input type="date" class="duty-date-picker overtime-duty-calendar-input" min="${minAllowedDate}" title="Выберите дату дежурства">
                     <div class="overtime-user-info">Каждая выбранная дата будет добавлена отдельной строкой в список ниже.</div>
                     <div class="overtime-duty-date-tools">
                         <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="${minAllowedDate}"></div>
@@ -1242,6 +1232,17 @@ BX.ready(function () {
             line += ' - ' + end.value;
         }
         appendDutyDateLine(row, line);
+    });
+
+    document.addEventListener('change', function(e){
+        const calendarInput = e.target.closest('.duty-date-picker');
+        if (!calendarInput) {
+            return;
+        }
+
+        const row = calendarInput.closest('.diff-row');
+        appendDutyDateLine(row, calendarInput.value);
+        calendarInput.value = '';
     });
 
     switchMode(modeInput.value || 'single');
