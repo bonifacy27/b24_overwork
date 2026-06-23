@@ -733,6 +733,7 @@ function overtimeBuildDefaultFormData(int $currentUserId): array
                 'time_start' => '',
                 'date_end' => '',
                 'time_end' => '',
+                'duty_dates' => '',
                 'payment_type' => [],
             ],
         ],
@@ -790,6 +791,7 @@ function overtimeMergePostedFormData(array $formData, array $post): array
                 'time_start' => trim((string)($row['time_start'] ?? '')),
                 'date_end' => trim((string)($row['date_end'] ?? '')),
                 'time_end' => trim((string)($row['time_end'] ?? '')),
+                'duty_dates' => trim((string)($row['duty_dates'] ?? '')),
                 'payment_type' => is_array($row['payment_type'] ?? null) ? $row['payment_type'] : [],
             ];
         }

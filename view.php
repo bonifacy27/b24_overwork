@@ -141,6 +141,40 @@ function overtimeGetStatusPillStyle(int $statusId): string
     return $color !== '' ? 'background:' . $color . ';' : '';
 }
 
+function overtimeGetRequestComments(int $requestId, array $config): array
+{
+    $comments = [];
+    $propertyCode = trim((string)($config['REQ_PROP_COMMENTS'] ?? 'KOMMENTARII'));
+    if ($requestId <= 0 || $propertyCode === '') {
+        return [];
+    }
+
+    $res = CIBlockElement::GetProperty((int)$config['IBLOCK_REQUESTS'], $requestId, ['sort' => 'asc'], ['CODE' => $propertyCode]);
+    while ($property = $res->Fetch()) {
+        $value = trim((string)($property['VALUE'] ?? ''));
+        if ($value !== '') {
+            $comments[] = $value;
+        }
+    }
+
+    return $comments;
+}
+
+function overtimeRenderRequestComments(array $comments): string
+{
+    if (empty($comments)) {
+        return '<div class="overtime-comments-empty">Комментариев пока нет.</div>';
+    }
+
+    $html = '<div class="overtime-comments-list">';
+    foreach ($comments as $comment) {
+        $html .= '<div class="overtime-comment-item">' . nl2br(overtimeH($comment)) . '</div>';
+    }
+    $html .= '</div>';
+
+    return $html;
+}
+
 function overtimeGetRequestViewData(int $requestId, array $config): ?array
 {
     if ($requestId <= 0) {
@@ -239,6 +273,7 @@ function overtimeGetRequestViewData(int $requestId, array $config): ?array
         'employee_id' => $employeeId,
         'total_ot_hours' => $displayHours['tk_hours'],
         'total_premium_hours' => $displayHours['premium_hours'],
+        'comments' => overtimeGetRequestComments($requestId, $config),
     ];
 }
 
@@ -1595,7 +1630,7 @@ require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
 $APPLICATION->SetTitle('Просмотр и согласование заявки');
 $viewMode = trim((string)$request->getQuery('mode')) === 'extended' ? 'extended' : 'simple';
 ?>
-<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-separator{margin:20px 0 12px;border:0;border-top:1px solid #dfe3e8}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification{margin:12px 0}.overtime-view-order-justification textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification-readonly{width:30%;min-height:42px;border:1px solid #cfd7df;border-radius:6px;padding:8px;background:#f8fafc;white-space:pre-wrap}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}</style>
+<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-separator{margin:20px 0 12px;border:0;border-top:1px solid #dfe3e8}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification{margin:12px 0}.overtime-view-order-justification textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification-readonly{width:30%;min-height:42px;border:1px solid #cfd7df;border-radius:6px;padding:8px;background:#f8fafc;white-space:pre-wrap}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}.overtime-comments{margin:16px 0;padding:14px;border:1px solid #d7e3f4;border-radius:8px;background:#f7fbff}.overtime-comments-title{font-weight:700;margin-bottom:10px}.overtime-comment-item{padding:10px 12px;margin-bottom:8px;border-left:4px solid #1f6feb;background:#fff;border-radius:6px;white-space:normal;line-height:1.45}.overtime-comments-empty{color:#6c757d}</style>
 <div class='overtime-view-wrap'><div class='overtime-view-box'>
 <div class='overtime-view-modes'><a class='overtime-view-mode-link <?= $viewMode === "simple" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=simple'>Краткое описание</a><a class='overtime-view-mode-link <?= $viewMode === "extended" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=extended'>Детальное описание</a></div>
 <?php if ($viewData): ?>
@@ -1650,6 +1685,7 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 </details>
 <?php endforeach; ?>
 <?php endif; ?>
+<?php if ($viewData): ?><div class='overtime-comments'><div class='overtime-comments-title'>Комментарии к заявке</div><?= overtimeRenderRequestComments($viewData['comments'] ?? []) ?></div><?php endif; ?>
 <?php else: ?><div>Заявка с ID <?= (int)$requestId ?> не найдена.</div><?php endif; ?>
 <?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><div class='overtime-view-order-justification'><div style='margin-bottom:6px;'><b>Обоснование для приказа<?= $orderJustificationEditable ? ' <span style="color:#d1242f;">*</span>' : '' ?></b></div><?php if ($orderJustificationEditable): ?><textarea name='order_justification' id='order-justification-field'><?= overtimeH($orderJustificationValue) ?></textarea><div style='font-size:12px;color:#6c757d;margin-top:4px;'>Обязательно для согласования заявки в статусе «В работе КА». Отклонить можно без заполнения.</div><?php else: ?><div class='overtime-view-order-justification-readonly'><?= $orderJustificationValue !== '' ? nl2br(overtimeH($orderJustificationValue)) : 'Не заполнено' ?></div><?php endif; ?></div><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?>
 <?php if ($viewData && !empty($groupCalculations)): ?>

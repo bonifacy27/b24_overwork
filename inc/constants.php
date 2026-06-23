@@ -1,7 +1,7 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.8.0');
+    define('OVERTIME_REQUEST_VERSION', '1.8.4-duty-modal-fixes');
 }
 
 $overtimeConfig = [
@@ -50,6 +50,7 @@ $overtimeConfig = [
     'REQ_PROP_PAYMENT_TYPE'    => 'TIP_OPLATY',
     'REQ_PROP_STATUS'          => 'STATUS',
     'REQ_PROP_HISTORY'         => 'ISTORIYA',
+    'REQ_PROP_COMMENTS'        => 'KOMMENTARII',
     'REQ_PROP_LINKED_REQUESTS' => 'SVYAZANNYE_ZAYAVKI', // PROPERTY_3107
     'REQ_PROP_HOURS'           => 'KOLICHESTVO_CHASOV',
     'REQ_PROP_JUSTIFICATION'   => 'OBOSNOVANIE',

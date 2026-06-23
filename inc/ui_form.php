@@ -1,5 +1,5 @@
 <?php
-CJSCore::Init(['ui.entity-selector']);
+CJSCore::Init(['ui.entity-selector', 'date']);
 $hourOptions = overtimeGetHourOptions();
 $dutyAllowed = !empty($overtimeConfig['ALLOW_DUTY']);
 $creatorAccess = $overtimeConfig['CREATOR_ACCESS_MAP'] ?? ['is_manager' => false];
@@ -34,6 +34,9 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-alert-success {background:#f0fff4; border:1px solid #b7ebc6;}
     .overtime-alert-warning {background:#fff8e6; border:1px solid #f3d48b;}
     .overtime-alert-error {background:#fff1f0; border:1px solid #ffb3b3;}
+    .overtime-diagnostics {display:none; margin:10px 0 14px; padding:10px 12px; border:1px dashed #7bb4ff; border-radius:6px; background:#f5fbff; color:#263238; font-size:12px; line-height:1.5;}
+    .overtime-diagnostics b {display:block; margin-bottom:4px;}
+    .overtime-diagnostics pre {white-space:pre-wrap; margin:0; font-family:monospace;}
     .overtime-table {width:100%; border-collapse:collapse; margin-top:10px;}
     .overtime-table th, .overtime-table td {border:1px solid #dfe3e8; padding:8px; vertical-align:top; text-align:left;}
     .overtime-user-box {border:1px solid #cfd7df; min-height:39px; border-radius:4px; padding:6px 10px; background:#fff; cursor:pointer;}
@@ -52,11 +55,39 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-modal-header {display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;}
     .overtime-modal-actions {display:flex; justify-content:flex-end; gap:10px; margin-top:16px;}
     .overtime-compact-table th, .overtime-compact-table td {font-size:13px; padding:6px 8px;}
+    .overtime-duty-only {display:none;}
+    .overtime-duty-date-tools {display:none;}
+    .overtime-duty-calendar-input {display:none; cursor:pointer; background:#fff;}
+    .overtime-duty-calendar {max-width:430px; margin:8px 0 10px; padding:8px; border:1px solid #d7e3f4; border-radius:8px; background:#fff;}
+    .overtime-duty-calendar-header {display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px;}
+    .overtime-duty-calendar-title {font-weight:600;}
+    .overtime-duty-calendar-weekdays,
+    .overtime-duty-calendar-days {display:grid; grid-template-columns:repeat(7, 1fr); gap:3px;}
+    .overtime-duty-calendar-weekdays span {font-size:12px; color:#6b7785; text-align:center;}
+    .overtime-duty-calendar-day {border:1px solid #cfd7df; border-radius:4px; background:#f8fbff; padding:4px 0; cursor:pointer; text-align:center; font-size:12px;}
+    .overtime-duty-calendar-day:hover {background:#e6f4ff; border-color:#7bb4ff;}
+    .overtime-duty-calendar-day[disabled] {background:#f1f3f5; color:#a0a8b0; cursor:not-allowed; border-color:#e1e5ea;}
+    .diff-duty-dates {display:none;}
+    .overtime-duty-summary {margin-top:14px;}
 </style>
 
 <div class="overtime-wrap">
     <div class="overtime-box">
         <div class="overtime-version">Версия скрипта: <?= overtimeH(OVERTIME_REQUEST_VERSION) ?></div>
+        <div class="overtime-diagnostics" id="overtime-duty-diagnostics">
+            <b>Диагностика дежурства</b>
+            <pre><?= overtimeH(implode("\n", [
+                'PHP render: OK',
+                'version: ' . OVERTIME_REQUEST_VERSION,
+                'server_time: ' . date('Y-m-d H:i:s'),
+                'mode: ' . (string)($formData['mode'] ?? ''),
+                'allow_duty: ' . ($dutyAllowed ? 'Y' : 'N'),
+                'common_is_duty: ' . (string)($formData['common']['is_duty'] ?? ''),
+                'rows_diff_count: ' . count($formData['rows_diff']),
+                'first_row_duty_dates: ' . (string)($formData['rows_diff'][0]['duty_dates'] ?? ''),
+                'JS runtime: waiting',
+            ])) ?></pre>
+        </div>
 
         <?php if (!empty($createResult) && empty($createResult['success'])): ?>
             <?php foreach ($createResult['errors'] as $error): ?>
@@ -319,11 +350,27 @@ foreach ($formData['rows_diff'] as $index => $row) {
                                     </select>
                                 </div>
                             </div>
+                            <div class="overtime-field overtime-duty-only">
+                                <label class="duty-date-picker-label">Выберите периоды работы</label>
+                                <input type="date" class="duty-date-picker overtime-duty-calendar-input" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" title="Выберите дату дежурства">
+                                <div class="overtime-user-info">Каждая выбранная дата будет добавлена отдельной строкой в список ниже.</div>
+                                <div class="duty-calendar-widget overtime-duty-calendar" data-month-offset="0"></div>
+                                <div class="overtime-duty-date-tools">
+                                    <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
+                                    <div><label>Окончание диапазона</label><input type="date" class="duty-date-end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
+                                    <button type="button" class="ui-btn ui-btn-light-border add-duty-date">Добавить дату</button>
+                                    <button type="button" class="ui-btn ui-btn-light-border add-duty-range">Добавить диапазон</button>
+                                </div>
+                                <textarea name="rows_diff[<?= (int)$index ?>][duty_dates]" class="diff-duty-dates" rows="4" placeholder="Каждая строка — дата YYYY-MM-DD или диапазон YYYY-MM-DD - YYYY-MM-DD"><?= overtimeH($row['duty_dates'] ?? '') ?></textarea>
+                                <div class="overtime-user-info">Добавьте несколько дат или диапазонов; для каждой строки будет создана отдельная заявка на дежурство.</div>
+                            </div>
 
                             <div class="overtime-preview-box row-preview" id="diff_preview_<?= (int)$index ?>"></div>
                         </div>
                     <?php endforeach; ?>
                 </div>
+
+                <div id="duty_summary" class="overtime-duty-summary overtime-hidden"></div>
 
                 <button type="button" class="ui-btn ui-btn-light-border" id="add_diff_row">Добавить строку</button>
             </div>
