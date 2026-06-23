@@ -1076,10 +1076,11 @@ BX.ready(function () {
 
         if (mode === 'multi_diff' && lastPreviewResponse && lastPreviewResponse.rows) {
             Object.keys(lastPreviewResponse.rows).forEach(function(idx) {
-                const employeeNode = document.getElementById('rows_diff_' + idx + '_employee_info');
+                const baseIndex = String(idx).split('_')[0];
+                const employeeNode = document.getElementById('rows_diff_' + baseIndex + '_employee_info');
                 const employee = employeeNode ? employeeNode.textContent.trim() : '';
                 (lastPreviewResponse.rows[idx].segments || []).forEach(function(segment, segIdx){
-                    const paymentName = getLabelTextBySelectName('rows_diff[' + idx + '][payment_type][' + segIdx + ']');
+                    const paymentName = getLabelTextBySelectName('rows_diff[' + baseIndex + '][payment_type][' + segIdx + ']');
                     pushRow(employee, segment, paymentName, buildDebugBreakdownHtml(segment));
                 });
             });

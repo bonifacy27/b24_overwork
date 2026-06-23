@@ -1563,6 +1563,10 @@ function overtimeCreateEmployeeRequestPack(
     }
 
     foreach ($segments as $segment) {
+        if ((int)($segment['type_id'] ?? 0) === (int)$config['WORK_TYPE_DUTY_ID']) {
+            continue;
+        }
+
         $pastDateValidation = overtimeValidatePastDateRestriction($employeeId, $segment['start'], $segment['end'], $config);
         if (!$pastDateValidation['allowed']) {
             $errors[] = $pastDateValidation['error'] . ' Сотрудник: ' . overtimeGetUserNameById($employeeId) . '.';
