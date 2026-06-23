@@ -274,6 +274,35 @@ function overtimeRefineGetRequestComments(int $requestId, array $config): array
     return $comments;
 }
 
+function overtimeRefineRenderRequestComment(string $comment): string
+{
+    $date = '';
+    $author = '';
+    $message = $comment;
+
+    if (preg_match('/^(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\s+([^:]+):\s*(.*)$/us', $comment, $matches)) {
+        $date = trim($matches[1]);
+        $author = trim($matches[2]);
+        $message = trim($matches[3]);
+    }
+
+    $html = '<div class="overtime-comment-item">';
+    if ($date !== '' || $author !== '') {
+        $html .= '<div class="overtime-comment-head">';
+        if ($author !== '') {
+            $html .= '<span class="overtime-comment-author">' . overtimeH($author) . '</span>';
+        }
+        if ($date !== '') {
+            $html .= '<span class="overtime-comment-date">' . overtimeH($date) . '</span>';
+        }
+        $html .= '</div>';
+    }
+    $html .= '<div class="overtime-comment-text">' . nl2br(overtimeH($message)) . '</div>';
+    $html .= '</div>';
+
+    return $html;
+}
+
 function overtimeRefineRenderRequestComments(array $comments): string
 {
     if (empty($comments)) {
@@ -281,7 +310,7 @@ function overtimeRefineRenderRequestComments(array $comments): string
     }
     $html = '<div class="overtime-comments-list">';
     foreach ($comments as $comment) {
-        $html .= '<div class="overtime-comment-item">' . nl2br(overtimeH($comment)) . '</div>';
+        $html .= overtimeRefineRenderRequestComment((string)$comment);
     }
     return $html . '</div>';
 }
@@ -390,7 +419,7 @@ $taskParams = overtimeRefineExtractTaskParameters($task['PARAMETERS'] ?? []);
 $bpDescriptionForForm = trim(str_replace('Текст задания для формы', '', (string)($taskParams['DescriptionForForm'] ?? '')));
 $requestComments = overtimeRefineGetRequestComments($requestId, $overtimeConfig);
 ?>
-<style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.ro{background:#f5f7fa;border:1px solid #d0d7de;color:#56606a}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-comment{margin-bottom:10px}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-comment-note{font-size:12px;color:#7c2d12;margin-top:4px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn.overtime-btn-success{background:#2ea043!important;border-color:#2ea043!important;color:#fff!important}.overtime-btn.overtime-btn-danger{background:#d1242f!important;border-color:#d1242f!important;color:#fff!important}.overtime-btn.overtime-btn-warning{background:#f28c28!important;border-color:#f28c28!important;color:#fff!important}.overtime-comments{margin:16px 0;padding:14px;border:1px solid #d7e3f4;border-radius:8px;background:#f7fbff}.overtime-comments-title{font-weight:700;margin-bottom:10px}.overtime-comment-item{padding:10px 12px;margin-bottom:8px;border-left:4px solid #1f6feb;background:#fff;border-radius:6px;line-height:1.45}.overtime-comments-empty{color:#6c757d}</style>
+<style>.overtime-wrap{max-width:1000px;margin:0 auto}.overtime-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px}.overtime-grid-4{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:12px}.overtime-field{margin-bottom:14px}.overtime-field label{display:block;font-weight:600;margin-bottom:6px}.overtime-field input,.overtime-field select,.overtime-field textarea{width:100%;padding:9px 10px;box-sizing:border-box}.ro{background:#f5f7fa;border:1px solid #d0d7de;color:#56606a}.overtime-alert{padding:12px;border-radius:6px;margin-bottom:12px;background:#fff1f0;border:1px solid #ffb3b3}.overtime-preview-box{margin-top:12px;padding:12px;background:#fafbfc;border:1px solid #e8eaed;border-radius:6px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-comment{margin-bottom:10px}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-approval-comment-note{font-size:12px;color:#7c2d12;margin-top:4px}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn.overtime-btn-success{background:#2ea043!important;border-color:#2ea043!important;color:#fff!important}.overtime-btn.overtime-btn-danger{background:#d1242f!important;border-color:#d1242f!important;color:#fff!important}.overtime-btn.overtime-btn-warning{background:#f28c28!important;border-color:#f28c28!important;color:#fff!important}.overtime-comments{margin:16px 0;padding:14px;border:1px solid #d7e3f4;border-radius:8px;background:#f7fbff}.overtime-comments-title{font-weight:700;margin-bottom:10px}.overtime-comments-list{display:flex;flex-direction:column;gap:10px}.overtime-comment-item{max-width:78%;padding:10px 12px;border:1px solid #d7e3f4;background:#fff;border-radius:14px 14px 14px 4px;box-shadow:0 2px 8px rgba(31,111,235,.08);line-height:1.45}.overtime-comment-head{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px}.overtime-comment-author{font-weight:700;color:#1f2937}.overtime-comment-date{font-size:11px;color:#7a8694}.overtime-comment-text{display:inline-block;padding:8px 10px;border-radius:10px;background:#eef6ff;color:#1f2937;font-size:14px}.overtime-comments-empty{color:#6c757d}</style>
 <div class="overtime-wrap"><div class="overtime-box">
 <?php if ($error !== ''): ?><div class="overtime-alert"><?=overtimeH($error)?></div><?php endif; ?>
 <?php if (!empty($bpDebugInfo)): ?>
