@@ -23,6 +23,90 @@ BX.ready(function () {
         return String(text || '').replace(/[&<>"']/g, function(m){ return map[m]; });
     }
 
+    function formatDateForDutyList(value) {
+        if (!value) {
+            return '';
+        }
+
+        if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            return value;
+        }
+
+        const match = String(value).match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+        if (match) {
+            return match[3] + '-' + match[2] + '-' + match[1];
+        }
+
+        return value;
+    }
+
+    function appendDutyDateLine(row, line) {
+        const target = row ? row.querySelector('.diff-duty-dates') : null;
+        line = formatDateForDutyList(line);
+        if (!target || !line) {
+            return;
+        }
+
+        const existingLines = target.value
+            .split(/\r?\n/)
+            .map(function(item){ return item.trim(); })
+            .filter(Boolean);
+
+        if (existingLines.indexOf(line) === -1) {
+            existingLines.push(line);
+            target.value = existingLines.join("\n");
+            requestPreview();
+        }
+    }
+
+    function openDutyCalendar(input) {
+        if (!input) {
+            return;
+        }
+
+        const row = input.closest('.diff-row');
+        if (!row) {
+            return;
+        }
+
+        input.value = '';
+
+        if (window.BX && typeof BX.calendar === 'function') {
+            BX.calendar({
+                node: input,
+                field: input,
+                bTime: false,
+                bHideTime: true,
+                callback_after: function(value) {
+                    appendDutyDateLine(row, value);
+                    input.value = '';
+                }
+            });
+            return;
+        }
+
+        input.type = 'date';
+        input.min = minAllowedDate;
+        input.readOnly = false;
+
+        if (!input.dataset.nativeDateInitialized) {
+            input.dataset.nativeDateInitialized = 'Y';
+            input.addEventListener('change', function(){
+                appendDutyDateLine(row, input.value);
+                input.value = '';
+                input.type = 'text';
+                input.readOnly = true;
+            });
+        }
+
+        if (typeof input.showPicker === 'function') {
+            input.showPicker();
+        } else {
+            input.focus();
+            input.click();
+        }
+    }
+
     function showElement(el) {
         if (!el) {
             return;
@@ -1068,7 +1152,9 @@ BX.ready(function () {
                     <div class="overtime-field duty-hide-field diff-time-wrap"><label>Время окончания</label><select name="rows_diff[${idx}][time_end]" class="diff-time-end">${options}</select></div>
                 </div>
                 <div class="overtime-field overtime-duty-only">
-                    <label>Даты дежурств</label>
+                    <label class="duty-date-picker-label">Выберите периоды работы</label>
+                    <input type="text" class="duty-date-picker overtime-duty-calendar-input" placeholder="Нажмите, чтобы выбрать несколько дат из календаря" readonly>
+                    <div class="overtime-user-info">Каждая выбранная дата будет добавлена отдельной строкой в список ниже.</div>
                     <div class="overtime-duty-date-tools">
                         <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="${minAllowedDate}"></div>
                         <div><label>Окончание диапазона</label><input type="date" class="duty-date-end" min="${minAllowedDate}"></div>
@@ -1122,6 +1208,19 @@ BX.ready(function () {
     });
 
     document.addEventListener('click', function(e){
+        const calendarLabel = e.target.closest('.duty-date-picker-label');
+        if (calendarLabel) {
+            const row = calendarLabel.closest('.diff-row');
+            openDutyCalendar(row ? row.querySelector('.duty-date-picker') : null);
+            return;
+        }
+
+        const calendarInput = e.target.closest('.duty-date-picker');
+        if (calendarInput) {
+            openDutyCalendar(calendarInput);
+            return;
+        }
+
         const dateBtn = e.target.closest('.add-duty-date');
         const rangeBtn = e.target.closest('.add-duty-range');
         if (!dateBtn && !rangeBtn) {
@@ -1142,8 +1241,7 @@ BX.ready(function () {
         if (rangeBtn && end && end.value && end.value !== start.value) {
             line += ' - ' + end.value;
         }
-        target.value = (target.value.trim() ? target.value.trim() + "\n" : '') + line;
-        requestPreview();
+        appendDutyDateLine(row, line);
     });
 
     switchMode(modeInput.value || 'single');

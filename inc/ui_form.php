@@ -1,5 +1,5 @@
 <?php
-CJSCore::Init(['ui.entity-selector']);
+CJSCore::Init(['ui.entity-selector', 'date']);
 $hourOptions = overtimeGetHourOptions();
 $dutyAllowed = !empty($overtimeConfig['ALLOW_DUTY']);
 $creatorAccess = $overtimeConfig['CREATOR_ACCESS_MAP'] ?? ['is_manager' => false];
@@ -54,6 +54,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-compact-table th, .overtime-compact-table td {font-size:13px; padding:6px 8px;}
     .overtime-duty-only {display:none;}
     .overtime-duty-date-tools {display:grid; grid-template-columns:1fr 1fr auto auto; gap:8px; align-items:end;}
+    .overtime-duty-calendar-input {cursor:pointer; background:#fff;}
 </style>
 
 <div class="overtime-wrap">
@@ -322,7 +323,9 @@ foreach ($formData['rows_diff'] as $index => $row) {
                                 </div>
                             </div>
                             <div class="overtime-field overtime-duty-only">
-                                <label>Даты дежурств</label>
+                                <label class="duty-date-picker-label">Выберите периоды работы</label>
+                                <input type="text" class="duty-date-picker overtime-duty-calendar-input" placeholder="Нажмите, чтобы выбрать несколько дат из календаря" readonly>
+                                <div class="overtime-user-info">Каждая выбранная дата будет добавлена отдельной строкой в список ниже.</div>
                                 <div class="overtime-duty-date-tools">
                                     <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
                                     <div><label>Окончание диапазона</label><input type="date" class="duty-date-end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
