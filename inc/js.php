@@ -59,6 +59,71 @@ BX.ready(function () {
         }
     }
 
+    function padDatePart(value) {
+        return String(value).padStart(2, '0');
+    }
+
+    function formatDateObject(date) {
+        return date.getFullYear() + '-' + padDatePart(date.getMonth() + 1) + '-' + padDatePart(date.getDate());
+    }
+
+    function parseIsoDate(value) {
+        const parts = String(value || '').split('-').map(function(part){ return parseInt(part, 10); });
+        if (parts.length !== 3 || parts.some(isNaN)) {
+            return new Date();
+        }
+
+        return new Date(parts[0], parts[1] - 1, parts[2]);
+    }
+
+    function renderDutyCalendar(row) {
+        const widget = row ? row.querySelector('.duty-calendar-widget') : null;
+        if (!widget) {
+            return;
+        }
+
+        const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+        const minDate = parseIsoDate(minAllowedDate);
+        minDate.setHours(0, 0, 0, 0);
+
+        let offset = parseInt(widget.dataset.monthOffset || '0', 10);
+        if (isNaN(offset) || offset < 0) {
+            offset = 0;
+        }
+
+        const visibleMonth = new Date(minDate.getFullYear(), minDate.getMonth() + offset, 1);
+        const firstDayIndex = (visibleMonth.getDay() + 6) % 7;
+        const daysInMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
+        const days = [];
+
+        for (let i = 0; i < firstDayIndex; i++) {
+            days.push('<span></span>');
+        }
+
+        for (let day = 1; day <= daysInMonth; day++) {
+            const date = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day);
+            const value = formatDateObject(date);
+            const disabled = date < minDate ? ' disabled' : '';
+            days.push('<button type="button" class="overtime-duty-calendar-day" data-date="' + value + '"' + disabled + '>' + day + '</button>');
+        }
+
+        widget.dataset.monthOffset = String(offset);
+        widget.innerHTML = ''
+            + '<div class="overtime-duty-calendar-header">'
+            + '<button type="button" class="ui-btn ui-btn-xs ui-btn-light-border duty-calendar-prev"' + (offset === 0 ? ' disabled' : '') + '>‹</button>'
+            + '<span class="overtime-duty-calendar-title">' + monthNames[visibleMonth.getMonth()] + ' ' + visibleMonth.getFullYear() + '</span>'
+            + '<button type="button" class="ui-btn ui-btn-xs ui-btn-light-border duty-calendar-next">›</button>'
+            + '</div>'
+            + '<div class="overtime-duty-calendar-weekdays"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>'
+            + '<div class="overtime-duty-calendar-days">' + days.join('') + '</div>';
+    }
+
+    function renderDutyCalendars() {
+        document.querySelectorAll('.diff-row').forEach(function(row){
+            renderDutyCalendar(row);
+        });
+    }
+
     function openDutyCalendar(input) {
         if (!input) {
             return;
@@ -218,6 +283,9 @@ BX.ready(function () {
         document.querySelectorAll('.overtime-duty-only').forEach(function(el){
             el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? '' : 'none';
         });
+        if (modeInput.value === 'multi_diff' && isDuty) {
+            renderDutyCalendars();
+        }
         document.querySelectorAll('#mode-multi-diff .overtime-grid-4').forEach(function(el){
             el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'none' : '';
         });
@@ -1145,6 +1213,7 @@ BX.ready(function () {
                     <label class="duty-date-picker-label">Выберите периоды работы</label>
                     <input type="date" class="duty-date-picker overtime-duty-calendar-input" min="${minAllowedDate}" title="Выберите дату дежурства">
                     <div class="overtime-user-info">Каждая выбранная дата будет добавлена отдельной строкой в список ниже.</div>
+                    <div class="duty-calendar-widget overtime-duty-calendar" data-month-offset="0"></div>
                     <div class="overtime-duty-date-tools">
                         <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="${minAllowedDate}"></div>
                         <div><label>Окончание диапазона</label><input type="date" class="duty-date-end" min="${minAllowedDate}"></div>
@@ -1213,6 +1282,30 @@ BX.ready(function () {
 
         const dateBtn = e.target.closest('.add-duty-date');
         const rangeBtn = e.target.closest('.add-duty-range');
+        const calendarPrevBtn = e.target.closest('.duty-calendar-prev');
+        const calendarNextBtn = e.target.closest('.duty-calendar-next');
+        const calendarDayBtn = e.target.closest('.overtime-duty-calendar-day');
+        if (calendarPrevBtn || calendarNextBtn || calendarDayBtn) {
+            const row = e.target.closest('.diff-row');
+            const widget = row ? row.querySelector('.duty-calendar-widget') : null;
+            if (!row || !widget) {
+                return;
+            }
+
+            if (calendarDayBtn) {
+                appendDutyDateLine(row, calendarDayBtn.dataset.date || '');
+                return;
+            }
+
+            let offset = parseInt(widget.dataset.monthOffset || '0', 10);
+            if (isNaN(offset)) {
+                offset = 0;
+            }
+            widget.dataset.monthOffset = String(Math.max(0, offset + (calendarNextBtn ? 1 : -1)));
+            renderDutyCalendar(row);
+            return;
+        }
+
         if (!dateBtn && !rangeBtn) {
             return;
         }

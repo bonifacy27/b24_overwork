@@ -55,6 +55,15 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-duty-only {display:none;}
     .overtime-duty-date-tools {display:grid; grid-template-columns:1fr 1fr auto auto; gap:8px; align-items:end;}
     .overtime-duty-calendar-input {cursor:pointer; background:#fff;}
+    .overtime-duty-calendar {margin:10px 0 12px; padding:10px; border:1px solid #d7e3f4; border-radius:8px; background:#fff;}
+    .overtime-duty-calendar-header {display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;}
+    .overtime-duty-calendar-title {font-weight:600;}
+    .overtime-duty-calendar-weekdays,
+    .overtime-duty-calendar-days {display:grid; grid-template-columns:repeat(7, 1fr); gap:4px;}
+    .overtime-duty-calendar-weekdays span {font-size:12px; color:#6b7785; text-align:center;}
+    .overtime-duty-calendar-day {border:1px solid #cfd7df; border-radius:4px; background:#f8fbff; padding:7px 0; cursor:pointer; text-align:center;}
+    .overtime-duty-calendar-day:hover {background:#e6f4ff; border-color:#7bb4ff;}
+    .overtime-duty-calendar-day[disabled] {background:#f1f3f5; color:#a0a8b0; cursor:not-allowed; border-color:#e1e5ea;}
 </style>
 
 <div class="overtime-wrap">
@@ -326,6 +335,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                                 <label class="duty-date-picker-label">Выберите периоды работы</label>
                                 <input type="date" class="duty-date-picker overtime-duty-calendar-input" min="<?= date('Y-m-d', strtotime('+1 day')) ?>" title="Выберите дату дежурства">
                                 <div class="overtime-user-info">Каждая выбранная дата будет добавлена отдельной строкой в список ниже.</div>
+                                <div class="duty-calendar-widget overtime-duty-calendar" data-month-offset="0"></div>
                                 <div class="overtime-duty-date-tools">
                                     <div><label>Дата / начало диапазона</label><input type="date" class="duty-date-start" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
                                     <div><label>Окончание диапазона</label><input type="date" class="duty-date-end" min="<?= date('Y-m-d', strtotime('+1 day')) ?>"></div>
