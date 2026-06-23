@@ -918,10 +918,12 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
         $errors[] = 'Дата/время окончания должны быть больше даты/времени начала.';
     }
 
-    $pastDateValidation = overtimeValidatePastDateRestriction($employeeId, $start, $end, $config);
-    if (!$pastDateValidation['allowed']) {
-        $errors[] = $pastDateValidation['error'];
-        $blockCreate = true;
+    if (!$isDuty) {
+        $pastDateValidation = overtimeValidatePastDateRestriction($employeeId, $start, $end, $config);
+        if (!$pastDateValidation['allowed']) {
+            $errors[] = $pastDateValidation['error'];
+            $blockCreate = true;
+        }
     }
 
     if (!$isDuty && overtimeIntervalOverlapsBusinessHours($start, $end)) {
@@ -1008,7 +1010,9 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
         }
     }
 
-    $lateWarning = overtimeCheckLateSubmissionWarning($segments, $config);
+    $lateWarning = $isDuty
+        ? ['required' => false, 'text' => '']
+        : overtimeCheckLateSubmissionWarning($segments, $config);
     $splitWarning = overtimeBuildSplitWarning($segments, $config);
 
     $preparedSegments = [];
@@ -1577,7 +1581,17 @@ function overtimeCreateEmployeeRequestPack(
         $errors[] = 'Не приложен обязательный файл "Обоснование (файл)" для сотрудника ' . overtimeGetUserNameById($employeeId) . '.';
     }
 
-    $lateWarning = overtimeCheckLateSubmissionWarning($segments, $config);
+    $allSegmentsAreDuty = true;
+    foreach ($segments as $segment) {
+        if ((int)($segment['type_id'] ?? 0) !== (int)$config['WORK_TYPE_DUTY_ID']) {
+            $allSegmentsAreDuty = false;
+            break;
+        }
+    }
+
+    $lateWarning = $allSegmentsAreDuty
+        ? ['required' => false, 'text' => '']
+        : overtimeCheckLateSubmissionWarning($segments, $config);
     $splitWarning = overtimeBuildSplitWarning($segments, $config);
     if ($lateWarning['required'] && !$lateAck) {
         $errors[] = 'Не установлен обязательный флажок ознакомления с условием о подаче заявки менее чем за 2 рабочих дня.';
@@ -1910,6 +1924,41 @@ function overtimeCreateByMode(string $mode, array $post, array $files, int $crea
         foreach ($rows as $row) {
             $employeeId = (int)($row['employee_id'] ?? 0);
             if ($employeeId <= 0) {
+                continue;
+            }
+
+            $dutyRanges = (($common['is_duty'] ?? 'N') === 'Y') ? overtimeParseDutyDateRanges((string)($row['duty_dates'] ?? '')) : [];
+            if (!empty($dutyRanges)) {
+                foreach ($dutyRanges as $range) {
+                    $preview = overtimeBuildSinglePreviewItem(
+                        $employeeId,
+                        $range['date_start'],
+                        '',
+                        $range['date_end'],
+                        '',
+                        true,
+                        $config
+                    );
+
+                    $segmentsRaw = Json::decode($preview['segments_json'] ?: '[]');
+                    $packResult = overtimeCreateEmployeeRequestPack(
+                        $employeeId,
+                        $segmentsRaw,
+                        [],
+                        $justification,
+                        $justFile,
+                        $lateAck,
+                        $createdBy,
+                        $config,
+                        $groupId
+                    );
+
+                    if (!$packResult['success']) {
+                        $errors = array_merge($errors, $packResult['errors']);
+                    } else {
+                        $allCreated = array_merge($allCreated, $packResult['created_ids']);
+                    }
+                }
                 continue;
             }
 

@@ -97,8 +97,56 @@ BX.ready(function () {
         if (existingLines.indexOf(line) === -1) {
             existingLines.push(line);
             target.value = existingLines.join("\n");
+            renderDutySummary();
             requestPreview();
         }
+    }
+
+    function getRowEmployeeName(row) {
+        if (!row) {
+            return '';
+        }
+        const index = row.dataset.index;
+        const info = document.getElementById('rows_diff_' + index + '_employee_info');
+        const title = document.getElementById('rows_diff_' + index + '_employee_title');
+        const selector = row.querySelector('.overtime-selector-row');
+        return (info && info.textContent.trim())
+            || (title && title.value.trim())
+            || (selector && selector.textContent.trim())
+            || '';
+    }
+
+    function renderDutySummary() {
+        const target = document.getElementById('duty_summary');
+        if (!target) {
+            return;
+        }
+
+        const rows = [];
+        document.querySelectorAll('.diff-row').forEach(function(row){
+            const employee = getRowEmployeeName(row);
+            const textarea = row.querySelector('.diff-duty-dates');
+            const dates = textarea ? textarea.value.split(/\r?\n/).map(function(item){ return item.trim(); }).filter(Boolean) : [];
+            dates.forEach(function(date){
+                rows.push({employee: employee, date: date});
+            });
+        });
+
+        if (!rows.length || modeInput.value !== 'multi_diff' || !(getModeDutyCheckbox() && getModeDutyCheckbox().checked)) {
+            target.innerHTML = '';
+            hideElement(target);
+            return;
+        }
+
+        let html = '<div class="overtime-subtitle">Итоговая таблица дежурств</div>';
+        html += '<table class="overtime-table overtime-compact-table">';
+        html += '<thead><tr><th>Сотрудник</th><th>Дата дежурства</th></tr></thead><tbody>';
+        rows.forEach(function(row){
+            html += '<tr><td>' + escapeHtml(row.employee) + '</td><td>' + escapeHtml(formatDutyDateForDisplay(row.date)) + '</td></tr>';
+        });
+        html += '</tbody></table>';
+        target.innerHTML = html;
+        showElement(target);
     }
 
     function padDatePart(value) {
@@ -107,6 +155,11 @@ BX.ready(function () {
 
     function formatDateObject(date) {
         return date.getFullYear() + '-' + padDatePart(date.getMonth() + 1) + '-' + padDatePart(date.getDate());
+    }
+
+    function formatDutyDateForDisplay(value) {
+        const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        return match ? match[3] + '.' + match[2] + '.' + match[1] : value;
     }
 
     function parseIsoDate(value) {
@@ -126,15 +179,13 @@ BX.ready(function () {
         }
 
         const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-        const minDate = parseIsoDate(minAllowedDate);
-        minDate.setHours(0, 0, 0, 0);
-
         let offset = parseInt(widget.dataset.monthOffset || '0', 10);
-        if (isNaN(offset) || offset < 0) {
+        if (isNaN(offset)) {
             offset = 0;
         }
 
-        const visibleMonth = new Date(minDate.getFullYear(), minDate.getMonth() + offset, 1);
+        const today = new Date();
+        const visibleMonth = new Date(today.getFullYear(), today.getMonth() + offset, 1);
         const firstDayIndex = (visibleMonth.getDay() + 6) % 7;
         const daysInMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
         const days = [];
@@ -146,14 +197,13 @@ BX.ready(function () {
         for (let day = 1; day <= daysInMonth; day++) {
             const date = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day);
             const value = formatDateObject(date);
-            const disabled = date < minDate ? ' disabled' : '';
-            days.push('<button type="button" class="overtime-duty-calendar-day" data-date="' + value + '"' + disabled + '>' + day + '</button>');
+            days.push('<button type="button" class="overtime-duty-calendar-day" data-date="' + value + '">' + day + '</button>');
         }
 
         widget.dataset.monthOffset = String(offset);
         widget.innerHTML = ''
             + '<div class="overtime-duty-calendar-header">'
-            + '<button type="button" class="ui-btn ui-btn-xs ui-btn-light-border duty-calendar-prev"' + (offset === 0 ? ' disabled' : '') + '>‹</button>'
+            + '<button type="button" class="ui-btn ui-btn-xs ui-btn-light-border duty-calendar-prev">‹</button>'
             + '<span class="overtime-duty-calendar-title">' + monthNames[visibleMonth.getMonth()] + ' ' + visibleMonth.getFullYear() + '</span>'
             + '<button type="button" class="ui-btn ui-btn-xs ui-btn-light-border duty-calendar-next">›</button>'
             + '</div>'
@@ -333,9 +383,13 @@ BX.ready(function () {
         document.querySelectorAll('#mode-multi-diff .overtime-grid-4').forEach(function(el){
             el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'none' : '';
         });
-        modeTabs.forEach(function(tab){
-            tab.style.display = isDutyMode && tab.dataset.mode !== 'multi_diff' ? 'none' : '';
+        document.querySelectorAll('#mode-multi-diff .row-preview').forEach(function(el){
+            el.style.display = (modeInput.value === 'multi_diff' && isDuty) ? 'none' : '';
         });
+        modeTabs.forEach(function(tab){
+            tab.style.display = isDutyMode ? 'none' : '';
+        });
+        renderDutySummary();
         updateDutyDiagnostics('updateDutyFormVisibility');
     }
 
@@ -357,6 +411,10 @@ BX.ready(function () {
 
     function updateLateWarningUiFromPreview(response) {
         hideAllLateWarningBlocks();
+
+        if (getModeDutyCheckbox() && getModeDutyCheckbox().checked) {
+            return;
+        }
 
         if (!response) {
             return;
@@ -499,12 +557,14 @@ BX.ready(function () {
                     input.value = item.getId();
                     box.innerHTML = escapeHtml(title || 'Выбран сотрудник');
                     setEmployeeInfo(box, title, subtitle);
+                    renderDutySummary();
                     requestPreview();
                 },
                 'Item:onDeselect': function() {
                     input.value = '';
                     box.innerHTML = 'Выберите сотрудника';
                     setEmployeeInfo(box, '', '');
+                    renderDutySummary();
                     requestPreview();
                 }
             }
@@ -1348,7 +1408,7 @@ BX.ready(function () {
             if (isNaN(offset)) {
                 offset = 0;
             }
-            widget.dataset.monthOffset = String(Math.max(0, offset + (calendarNextBtn ? 1 : -1)));
+            widget.dataset.monthOffset = String(offset + (calendarNextBtn ? 1 : -1));
             renderDutyCalendar(row);
             return;
         }

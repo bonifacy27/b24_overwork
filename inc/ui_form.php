@@ -34,7 +34,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-alert-success {background:#f0fff4; border:1px solid #b7ebc6;}
     .overtime-alert-warning {background:#fff8e6; border:1px solid #f3d48b;}
     .overtime-alert-error {background:#fff1f0; border:1px solid #ffb3b3;}
-    .overtime-diagnostics {margin:10px 0 14px; padding:10px 12px; border:1px dashed #7bb4ff; border-radius:6px; background:#f5fbff; color:#263238; font-size:12px; line-height:1.5;}
+    .overtime-diagnostics {display:none; margin:10px 0 14px; padding:10px 12px; border:1px dashed #7bb4ff; border-radius:6px; background:#f5fbff; color:#263238; font-size:12px; line-height:1.5;}
     .overtime-diagnostics b {display:block; margin-bottom:4px;}
     .overtime-diagnostics pre {white-space:pre-wrap; margin:0; font-family:monospace;}
     .overtime-table {width:100%; border-collapse:collapse; margin-top:10px;}
@@ -56,17 +56,19 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-modal-actions {display:flex; justify-content:flex-end; gap:10px; margin-top:16px;}
     .overtime-compact-table th, .overtime-compact-table td {font-size:13px; padding:6px 8px;}
     .overtime-duty-only {display:none;}
-    .overtime-duty-date-tools {display:grid; grid-template-columns:1fr 1fr auto auto; gap:8px; align-items:end;}
-    .overtime-duty-calendar-input {cursor:pointer; background:#fff;}
-    .overtime-duty-calendar {margin:10px 0 12px; padding:10px; border:1px solid #d7e3f4; border-radius:8px; background:#fff;}
-    .overtime-duty-calendar-header {display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px;}
+    .overtime-duty-date-tools {display:none;}
+    .overtime-duty-calendar-input {display:none; cursor:pointer; background:#fff;}
+    .overtime-duty-calendar {max-width:430px; margin:8px 0 10px; padding:8px; border:1px solid #d7e3f4; border-radius:8px; background:#fff;}
+    .overtime-duty-calendar-header {display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px;}
     .overtime-duty-calendar-title {font-weight:600;}
     .overtime-duty-calendar-weekdays,
-    .overtime-duty-calendar-days {display:grid; grid-template-columns:repeat(7, 1fr); gap:4px;}
+    .overtime-duty-calendar-days {display:grid; grid-template-columns:repeat(7, 1fr); gap:3px;}
     .overtime-duty-calendar-weekdays span {font-size:12px; color:#6b7785; text-align:center;}
-    .overtime-duty-calendar-day {border:1px solid #cfd7df; border-radius:4px; background:#f8fbff; padding:7px 0; cursor:pointer; text-align:center;}
+    .overtime-duty-calendar-day {border:1px solid #cfd7df; border-radius:4px; background:#f8fbff; padding:4px 0; cursor:pointer; text-align:center; font-size:12px;}
     .overtime-duty-calendar-day:hover {background:#e6f4ff; border-color:#7bb4ff;}
     .overtime-duty-calendar-day[disabled] {background:#f1f3f5; color:#a0a8b0; cursor:not-allowed; border-color:#e1e5ea;}
+    .diff-duty-dates {display:none;}
+    .overtime-duty-summary {margin-top:14px;}
 </style>
 
 <div class="overtime-wrap">
@@ -367,6 +369,8 @@ foreach ($formData['rows_diff'] as $index => $row) {
                         </div>
                     <?php endforeach; ?>
                 </div>
+
+                <div id="duty_summary" class="overtime-duty-summary overtime-hidden"></div>
 
                 <button type="button" class="ui-btn ui-btn-light-border" id="add_diff_row">Добавить строку</button>
             </div>
