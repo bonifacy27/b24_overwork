@@ -34,6 +34,9 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-alert-success {background:#f0fff4; border:1px solid #b7ebc6;}
     .overtime-alert-warning {background:#fff8e6; border:1px solid #f3d48b;}
     .overtime-alert-error {background:#fff1f0; border:1px solid #ffb3b3;}
+    .overtime-diagnostics {margin:10px 0 14px; padding:10px 12px; border:1px dashed #7bb4ff; border-radius:6px; background:#f5fbff; color:#263238; font-size:12px; line-height:1.5;}
+    .overtime-diagnostics b {display:block; margin-bottom:4px;}
+    .overtime-diagnostics pre {white-space:pre-wrap; margin:0; font-family:monospace;}
     .overtime-table {width:100%; border-collapse:collapse; margin-top:10px;}
     .overtime-table th, .overtime-table td {border:1px solid #dfe3e8; padding:8px; vertical-align:top; text-align:left;}
     .overtime-user-box {border:1px solid #cfd7df; min-height:39px; border-radius:4px; padding:6px 10px; background:#fff; cursor:pointer;}
@@ -69,6 +72,20 @@ foreach ($formData['rows_diff'] as $index => $row) {
 <div class="overtime-wrap">
     <div class="overtime-box">
         <div class="overtime-version">Версия скрипта: <?= overtimeH(OVERTIME_REQUEST_VERSION) ?></div>
+        <div class="overtime-diagnostics" id="overtime-duty-diagnostics">
+            <b>Диагностика дежурства</b>
+            <pre><?= overtimeH(implode("\n", [
+                'PHP render: OK',
+                'version: ' . OVERTIME_REQUEST_VERSION,
+                'server_time: ' . date('Y-m-d H:i:s'),
+                'mode: ' . (string)($formData['mode'] ?? ''),
+                'allow_duty: ' . ($dutyAllowed ? 'Y' : 'N'),
+                'common_is_duty: ' . (string)($formData['common']['is_duty'] ?? ''),
+                'rows_diff_count: ' . count($formData['rows_diff']),
+                'first_row_duty_dates: ' . (string)($formData['rows_diff'][0]['duty_dates'] ?? ''),
+                'JS runtime: waiting',
+            ])) ?></pre>
+        </div>
 
         <?php if (!empty($createResult) && empty($createResult['success'])): ?>
             <?php foreach ($createResult['errors'] as $error): ?>

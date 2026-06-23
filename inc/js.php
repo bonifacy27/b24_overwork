@@ -17,6 +17,48 @@ BX.ready(function () {
     let lastPreviewResponse = null;
     let previewTimer = null;
     const minAllowedDate = '<?= date('Y-m-d', strtotime('+1 day')) ?>';
+    const dutyDiagnosticsVersion = '<?= overtimeH(OVERTIME_REQUEST_VERSION) ?>';
+
+    function updateDutyDiagnostics(reason) {
+        const box = document.getElementById('overtime-duty-diagnostics');
+        if (!box) {
+            return;
+        }
+
+        const pre = box.querySelector('pre') || box;
+        const diffDuty = document.getElementById('diff_is_duty');
+        const dutyOnlyBlocks = Array.prototype.slice.call(document.querySelectorAll('.overtime-duty-only'));
+        const widgets = Array.prototype.slice.call(document.querySelectorAll('.duty-calendar-widget'));
+        const firstDutyBlock = dutyOnlyBlocks[0] || null;
+        const firstWidget = widgets[0] || null;
+        const firstPicker = document.querySelector('.duty-date-picker');
+        const firstTextarea = document.querySelector('.diff-duty-dates');
+
+        const lines = [
+            'PHP render: OK',
+            'JS runtime: OK',
+            'diagnostics_version: ' + dutyDiagnosticsVersion,
+            'reason: ' + (reason || ''),
+            'client_time: ' + (new Date()).toISOString(),
+            'mode: ' + (modeInput ? modeInput.value : 'NO_MODE_INPUT'),
+            'dutyAllowed: ' + (dutyAllowed ? 'Y' : 'N'),
+            'diff_is_duty_exists: ' + (diffDuty ? 'Y' : 'N'),
+            'diff_is_duty_checked: ' + (diffDuty && diffDuty.checked ? 'Y' : 'N'),
+            'diff_rows_count: ' + document.querySelectorAll('.diff-row').length,
+            'duty_only_count: ' + dutyOnlyBlocks.length,
+            'duty_only_first_display: ' + (firstDutyBlock ? window.getComputedStyle(firstDutyBlock).display : 'NO_BLOCK'),
+            'duty_picker_count: ' + document.querySelectorAll('.duty-date-picker').length,
+            'duty_picker_first_type: ' + (firstPicker ? firstPicker.type : 'NO_PICKER'),
+            'duty_picker_first_disabled: ' + (firstPicker && firstPicker.disabled ? 'Y' : 'N'),
+            'calendar_widget_count: ' + widgets.length,
+            'calendar_widget_first_display: ' + (firstWidget ? window.getComputedStyle(firstWidget).display : 'NO_WIDGET'),
+            'calendar_widget_first_html_length: ' + (firstWidget ? firstWidget.innerHTML.length : 0),
+            'textarea_count: ' + document.querySelectorAll('.diff-duty-dates').length,
+            'textarea_first_value: ' + (firstTextarea ? firstTextarea.value : 'NO_TEXTAREA')
+        ];
+
+        pre.textContent = lines.join("\n");
+    }
 
     function escapeHtml(text) {
         const map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'};
@@ -79,6 +121,7 @@ BX.ready(function () {
     function renderDutyCalendar(row) {
         const widget = row ? row.querySelector('.duty-calendar-widget') : null;
         if (!widget) {
+            updateDutyDiagnostics('renderDutyCalendar: no widget');
             return;
         }
 
@@ -116,6 +159,7 @@ BX.ready(function () {
             + '</div>'
             + '<div class="overtime-duty-calendar-weekdays"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>'
             + '<div class="overtime-duty-calendar-days">' + days.join('') + '</div>';
+        updateDutyDiagnostics('renderDutyCalendar: rendered');
     }
 
     function renderDutyCalendars() {
@@ -292,6 +336,7 @@ BX.ready(function () {
         modeTabs.forEach(function(tab){
             tab.style.display = isDutyMode && tab.dataset.mode !== 'multi_diff' ? 'none' : '';
         });
+        updateDutyDiagnostics('updateDutyFormVisibility');
     }
 
     function hideAllLateWarningBlocks() {
@@ -1229,6 +1274,7 @@ BX.ready(function () {
             initSelector(div.querySelector('.overtime-selector-row'));
             bindDynamicPreviewEvents(div);
             updateDutyFormVisibility();
+            updateDutyDiagnostics('add_diff_row');
             div.querySelector('.remove-diff-row').addEventListener('click', function(){
                 div.remove();
                 rebuildDiffIndexes();
@@ -1244,6 +1290,7 @@ BX.ready(function () {
             btn.closest('.diff-row').remove();
             rebuildDiffIndexes();
             updateCreateButtonLabel();
+            updateDutyDiagnostics('remove_diff_row');
             requestPreview();
         });
     });
@@ -1336,9 +1383,11 @@ BX.ready(function () {
         const row = calendarInput.closest('.diff-row');
         appendDutyDateLine(row, calendarInput.value);
         calendarInput.value = '';
+        updateDutyDiagnostics('duty-date-picker change');
     });
 
     switchMode(modeInput.value || 'single');
     updateDutyFormVisibility();
+    updateDutyDiagnostics('initial');
 });
 </script>
