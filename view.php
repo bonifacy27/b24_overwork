@@ -160,15 +160,42 @@ function overtimeGetRequestComments(int $requestId, array $config): array
     return $comments;
 }
 
+function overtimeRenderRequestComment(string $comment, bool $isLast = false): string
+{
+    $date = '';
+    $author = '';
+    $message = $comment;
+
+    if (preg_match('/^(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\s+([^:]+):\s*(.*)$/us', $comment, $matches)) {
+        $date = trim($matches[1]);
+        $author = trim($matches[2]);
+        $message = trim($matches[3]);
+    }
+
+    $itemClass = 'overtime-comment-item' . ($isLast ? ' overtime-comment-item-last' : '');
+    $html = '<div class="' . $itemClass . '">';
+    if ($date !== '') {
+        $html .= '<span class="overtime-comment-date">' . overtimeH($date) . '</span>';
+    }
+    if ($author !== '') {
+        $html .= '<span class="overtime-comment-author">' . overtimeH($author) . '</span>';
+    }
+    $html .= '<span class="overtime-comment-text">' . nl2br(overtimeH($message)) . '</span>';
+    $html .= '</div>';
+
+    return $html;
+}
+
 function overtimeRenderRequestComments(array $comments): string
 {
     if (empty($comments)) {
         return '<div class="overtime-comments-empty">Комментариев пока нет.</div>';
     }
 
+    $lastIndex = count($comments) - 1;
     $html = '<div class="overtime-comments-list">';
-    foreach ($comments as $comment) {
-        $html .= '<div class="overtime-comment-item">' . nl2br(overtimeH($comment)) . '</div>';
+    foreach ($comments as $index => $comment) {
+        $html .= overtimeRenderRequestComment((string)$comment, $index === $lastIndex);
     }
     $html .= '</div>';
 
@@ -1630,7 +1657,7 @@ require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
 $APPLICATION->SetTitle('Просмотр и согласование заявки');
 $viewMode = trim((string)$request->getQuery('mode')) === 'extended' ? 'extended' : 'simple';
 ?>
-<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-separator{margin:20px 0 12px;border:0;border-top:1px solid #dfe3e8}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification{margin:12px 0}.overtime-view-order-justification textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification-readonly{width:30%;min-height:42px;border:1px solid #cfd7df;border-radius:6px;padding:8px;background:#f8fafc;white-space:pre-wrap}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}.overtime-comments{margin:16px 0;padding:14px;border:1px solid #d7e3f4;border-radius:8px;background:#f7fbff}.overtime-comments-title{font-weight:700;margin-bottom:10px}.overtime-comment-item{padding:10px 12px;margin-bottom:8px;border-left:4px solid #1f6feb;background:#fff;border-radius:6px;white-space:normal;line-height:1.45}.overtime-comments-empty{color:#6c757d}</style>
+<style>.overtime-view-wrap{max-width:1280px;margin:0 auto}.overtime-view-box{background:#fff;border:1px solid #dfe3e8;border-radius:8px;padding:20px;margin-bottom:20px}.overtime-view-modes{display:flex;gap:10px;margin-bottom:16px}.overtime-view-mode-link{display:inline-block;padding:8px 12px;border:1px solid #cfd7df;border-radius:6px;text-decoration:none;color:#1f2937;background:#fff}.overtime-view-mode-link.active{background:#1f6feb;border-color:#1f6feb;color:#fff}.overtime-simple-table{width:100%;border-collapse:collapse}.overtime-simple-table th,.overtime-simple-table td{border:1px solid #e4e8ee;padding:8px 10px}.overtime-simple-table th{background:#f8fafc}.overtime-view-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-bottom:14px}.overtime-view-meta-item{padding:10px;border:1px solid #e4e8ee;border-radius:6px;background:#f8fafc}.overtime-view-calc{border:1px solid #e4e8ee;border-radius:6px;padding:12px;background:#fff;overflow:auto;margin-bottom:12px}.overtime-view-linked{margin-top:12px}.overtime-view-separator{margin:20px 0 12px;border:0;border-top:1px solid #dfe3e8}.overtime-view-linked details{margin-bottom:10px;border:1px solid #e4e8ee;border-radius:6px;padding:8px;background:#fbfcfe}.status-pill{display:inline-block;padding:4px 10px;border-radius:999px;color:#fff;font-size:12px;font-weight:600}.status-success{background:#28a745}.status-danger{background:#dc3545}.status-warning{background:#f0ad4e}.status-info{background:#17a2b8}.status-default{background:#6c757d}.overtime-view-marker{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:10px;background:#d1242f;color:#fff;font-size:11px;font-weight:700;letter-spacing:.2px}.overtime-view-approval{border:1px solid #b5e7f5;border-radius:10px;padding:16px;background:#E8F9FE;margin-top:20px;box-shadow:0 2px 12px rgba(99,154,176,.12)}.overtime-view-approval-title{font-size:16px;margin-bottom:10px;font-weight:600}.overtime-view-approval-description{padding:12px;border:1px solid #b5e7f5;border-radius:6px;background:#E8F9FE;white-space:normal;line-height:1.45}.overtime-view-approval-comment textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification{margin:12px 0}.overtime-view-order-justification textarea{width:30%;min-height:74px;resize:vertical;border:1px solid #cfd7df;border-radius:6px;padding:8px;font-size:14px}.overtime-view-order-justification-readonly{width:30%;min-height:42px;border:1px solid #cfd7df;border-radius:6px;padding:8px;background:#f8fafc;white-space:pre-wrap}.overtime-view-approval-actions{display:flex;gap:10px;flex-wrap:wrap}.overtime-btn{display:inline-block;padding:10px 14px;border:1px solid #cfd7df;border-radius:6px;background:#fff;text-decoration:none;color:#1f2937;cursor:pointer}.overtime-btn.overtime-btn-success{background:#2ea043 !important;border-color:#2ea043 !important;color:#fff !important}.overtime-btn.overtime-btn-danger{background:#d1242f !important;border-color:#d1242f !important;color:#fff !important}.overtime-btn.overtime-btn-warning{background:#f28c28 !important;border-color:#f28c28 !important;color:#fff !important}.overtime-comments{margin:16px 0;padding:14px;border:1px solid #d7e3f4;border-radius:8px;background:#f7fbff}.overtime-comments-title{font-weight:700;margin-bottom:10px}.overtime-comments-list{display:flex;flex-direction:column;gap:6px}.overtime-comment-item{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:6px 10px;border:1px solid #d7e3f4;background:#fff;border-radius:8px;line-height:1.3}.overtime-comment-item-last{background:#fff8e6;border-color:#f0c36d}.overtime-comment-date{font-size:11px;color:#7a8694;white-space:nowrap}.overtime-comment-author{font-weight:700;color:#1f2937;white-space:nowrap}.overtime-comment-text{color:#1f2937;font-size:14px}.overtime-comments-empty{color:#6c757d}</style>
 <div class='overtime-view-wrap'><div class='overtime-view-box'>
 <div class='overtime-view-modes'><a class='overtime-view-mode-link <?= $viewMode === "simple" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=simple'>Краткое описание</a><a class='overtime-view-mode-link <?= $viewMode === "extended" ? "active" : "" ?>' href='?id=<?= (int)$requestId ?>&mode=extended'>Детальное описание</a></div>
 <?php if ($viewData): ?>
