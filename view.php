@@ -1616,6 +1616,12 @@ function overtimeBuildRequestDatePeriodText(array $row): string
 }
 
 $viewData = overtimeGetRequestViewData($requestId, $overtimeConfig);
+if (
+    $viewData
+    && (int)($viewData['status_id'] ?? 0) === (int)($overtimeConfig['STATUS_REFINEMENT_ID'] ?? 0)
+) {
+    LocalRedirect('refine.php?id=' . (int)$viewData['id']);
+}
 $allLinkedRequestIds = $viewData ? overtimeCollectAllLinkedRequestIds((int)$viewData['id'], $overtimeConfig) : [];
 $linkedCalculations = $viewData ? overtimeSortRequestsByWorkType(overtimeGetLinkedRequestCalculations($allLinkedRequestIds, $overtimeConfig)) : [];
 $groupCalculations = $viewData ? overtimeGetGroupRequestCalculations((array)($viewData['group_ids'] ?? []), (int)$viewData['id'], $overtimeConfig) : [];

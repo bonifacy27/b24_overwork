@@ -41,6 +41,7 @@ $IBLOCK_ID        = 391;
 $IBLOCK_GROUPS_ID = 397;
 $CREATE_URL       = "cr.php";
 $LIST_PAGE_URL    = "/forms/hr_administration/overtime/list.php";
+$PAYMENT_TYPE_TIME_OFF_ID = 3537688;
 
 $PROP_MAP = [
     3080 => ['code' => 'TIP_RABOTY',                   'title' => 'Тип работы'],
@@ -352,6 +353,30 @@ function getHoursByPaymentTypeCustom($hoursRaw, $paymentType, $mode)
     }
 
     return 0.0;
+}
+
+function isTimeOffPaymentTypeCustom($paymentTypeId, $paymentTypeName)
+{
+    global $PAYMENT_TYPE_TIME_OFF_ID;
+
+    if ((int)$paymentTypeId > 0 && (int)$paymentTypeId === (int)$PAYMENT_TYPE_TIME_OFF_ID) {
+        return true;
+    }
+
+    return mb_strtolower(trim((string)$paymentTypeName), 'UTF-8') === 'предоставление отгула';
+}
+
+function canCancelRequestCustom(array $row): bool
+{
+    $statusName = mb_strtolower(trim((string)($row['STATUS_NAME'] ?? '')), 'UTF-8');
+    if ($statusName !== 'выполнена') {
+        return false;
+    }
+
+    return !isTimeOffPaymentTypeCustom(
+        (int)($row['TIP_OPLATY_ID'] ?? 0),
+        (string)($row['TIP_OPLATY'] ?? '')
+    );
 }
 
 function extractRequestIdFromDocumentIdCustom($documentId, $iblockId)
@@ -1020,6 +1045,7 @@ while ($ob = $rsItems->GetNextElement()) {
         'START_TS'        => $startTs,
         'HOURS'           => is_array($v3086) ? implode(', ', $v3086) : (string)$v3086,
         'TIP_OPLATY'      => $paymentType,
+        'TIP_OPLATY_ID'   => is_array($v3087) ? 0 : (int)$v3087,
         'HOURS_TK'        => getHoursByPaymentTypeCustom(is_array($v3086) ? implode(', ', $v3086) : (string)$v3086, $paymentType, 'tk'),
         'HOURS_BONUS'     => getHoursByPaymentTypeCustom(is_array($v3086) ? implode(', ', $v3086) : (string)$v3086, $paymentType, 'bonus'),
         'STATUS_ID'       => $statusId,
@@ -1898,7 +1924,7 @@ profilerStopCustom('total_backend');
                                 <td class="nowrap">
                                     <div class="actions-cell">
                                         <a href="<?= h($a['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
-                                        <?php if (mb_strtolower(trim((string)$a['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                        <?php if (canCancelRequestCustom($a)): ?>
                                             <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$a['ID']) ?>">Отменить заявку</a>
                                         <?php endif; ?>
                                         <?php if ((int)$a['TASK_ID'] > 0): ?>
@@ -1980,7 +2006,7 @@ profilerStopCustom('total_backend');
                                 <td class="nowrap pair-divider-cell">
                                     <div class="actions-cell">
                                         <a href="<?= h($b['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
-                                        <?php if (mb_strtolower(trim((string)$b['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                        <?php if (canCancelRequestCustom($b)): ?>
                                             <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$b['ID']) ?>">Отменить заявку</a>
                                         <?php endif; ?>
                                         <?php if ((int)$b['TASK_ID'] > 0): ?>
@@ -2071,7 +2097,7 @@ profilerStopCustom('total_backend');
                                     <td class="nowrap <?= $groupIndex > 0 ? 'pair-divider-cell' : '' ?>">
                                         <div class="actions-cell">
                                             <a href="<?= h($groupItem['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
-                                            <?php if (mb_strtolower(trim((string)$groupItem['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                            <?php if (canCancelRequestCustom($groupItem)): ?>
                                                 <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$groupItem['ID']) ?>">Отменить заявку</a>
                                             <?php endif; ?>
                                             <?php if ((int)$groupItem['TASK_ID'] > 0): ?>
@@ -2155,7 +2181,7 @@ profilerStopCustom('total_backend');
                                 <td class="nowrap">
                                     <div class="actions-cell">
                                         <a href="<?= h($row['VIEW_URL']) ?>" target="_blank" rel="noopener">Открыть</a>
-                                        <?php if (mb_strtolower(trim((string)$row['STATUS_NAME']), 'UTF-8') === 'выполнена'): ?>
+                                        <?php if (canCancelRequestCustom($row)): ?>
                                             <a class="btn btn-outline-danger btn-sm" href="<?= h('cancel.php?id=' . (int)$row['ID']) ?>">Отменить заявку</a>
                                         <?php endif; ?>
                                         <?php if ((int)$row['TASK_ID'] > 0): ?>

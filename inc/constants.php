@@ -24,6 +24,7 @@ $overtimeConfig = [
     'STATUS_REJECTED_ID'    => 3575323,
     'STATUS_CANCELLED_ID'   => 3511775,
     'STATUS_TRANSFERRED_ID' => 3580392,
+    'STATUS_REFINEMENT_ID'  => 3582614,
 
     // Список пользователей, которым доступен флаг "Дежурство"
     'DUTY_ACCESS_PROP_EMPLOYEE' => 'SOTRUDNIK',
