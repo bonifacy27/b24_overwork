@@ -250,7 +250,7 @@ function overtimeRefineLoadRequest(int $requestId, array $config): ?array
         'PROPERTY_'.$config['REQ_PROP_WORK_START_DATE'],'PROPERTY_'.$config['REQ_PROP_WORK_END_DATE'],
         'PROPERTY_'.$config['REQ_PROP_WORK_START_TIME'],'PROPERTY_'.$config['REQ_PROP_WORK_END_TIME'],
         'PROPERTY_'.$config['REQ_PROP_JUSTIFICATION'],'PROPERTY_'.$config['REQ_PROP_PAYMENT_TYPE'],
-        'PROPERTY_KOMMENTARIY_DLYA_DORABOTKI','PROPERTY_'.$config['REQ_PROP_LINKED_REQUESTS']
+        'PROPERTY_'.$config['REQ_PROP_LINKED_REQUESTS']
     ];
     $res = CIBlockElement::GetList([], ['IBLOCK_ID' => (int)$config['IBLOCK_REQUESTS'], 'ID' => $requestId], false, false, $select);
     $item = $res->Fetch();
@@ -448,7 +448,6 @@ $requestComments = overtimeRefineGetRequestComments($requestId, $overtimeConfig)
 <input type="hidden" name="action" value="save_refine"><input type="hidden" name="task_action" id="task_action" value=""><input type="hidden" name="task_kind" id="task_kind" value="">
 <div class="overtime-field"><label>Сотрудник</label><input type="text" value="<?=overtimeH($employee['display'])?>" readonly class="ro"></div>
 <div class="overtime-comments"><div class="overtime-comments-title">Комментарии к заявке</div><?= overtimeRefineRenderRequestComments($requestComments) ?></div>
-<div class="overtime-field"><label>Комментарий по доработке</label><textarea readonly rows="2" class="ro"><?=overtimeH((string)($item['PROPERTY_KOMMENTARIY_DLYA_DORABOTKI_VALUE'] ?? ''))?></textarea></div>
 <div class="overtime-grid-4">
 <div class="overtime-field"><label>Дата начала</label><input type="date" id="date_start" name="date_start" value="<?=overtimeH($dateStartValue)?>"></div>
 <div class="overtime-field"><label>Время начала</label><select name="time_start" id="time_start"><?php foreach($hours as $h): ?><option value="<?=overtimeH($h)?>" <?=$h===(string)$item['PROPERTY_'.$overtimeConfig['REQ_PROP_WORK_START_TIME'].'_VALUE']?'selected':''?>><?=overtimeH($h)?></option><?php endforeach;?></select></div>
