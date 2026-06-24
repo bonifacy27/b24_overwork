@@ -840,6 +840,21 @@ function buildGroupFilterUrlCustom($groupFilterId)
     } else {
         unset($params['group_filter']);
     }
+    unset($params['page']);
+
+    return '?' . http_build_query($params);
+}
+
+function buildPageUrlCustom($page)
+{
+    $params = $_GET;
+    unset($params['export']);
+    $page = (int)$page;
+    if ($page > 1) {
+        $params['page'] = $page;
+    } else {
+        unset($params['page']);
+    }
 
     return '?' . http_build_query($params);
 }
@@ -853,6 +868,8 @@ $groupFilter  = (int)($_GET['group_filter'] ?? 0);
 $statusInput  = $_GET['status'] ?? [];
 $inWorkOnly   = (string)($_GET['in_work'] ?? '') === 'Y';
 $subtypeInput = trim((string)($_GET['subtype_group'] ?? ''));
+$pageSize     = 40;
+$currentPage  = max(1, (int)($_GET['page'] ?? 1));
 
 if (!is_array($statusInput)) {
     $statusInput = [$statusInput];
@@ -910,7 +927,7 @@ $rsItems = CIBlockElement::GetList(
     $order,
     $filter,
     false,
-    ['nPageSize' => 200],
+    false,
     $arSelect
 );
 profilerStopCustom('requests_list_query');
@@ -1247,6 +1264,15 @@ foreach ($rowsSorted as $row) {
     }
 }
 profilerStopCustom('display_rows_grouping');
+
+$totalDisplayRows = count($displayRows);
+$totalPages = max(1, (int)ceil($totalDisplayRows / $pageSize));
+if ($currentPage > $totalPages) {
+    $currentPage = $totalPages;
+}
+$paginationOffset = ($currentPage - 1) * $pageSize;
+$displayRows = array_slice($displayRows, $paginationOffset, $pageSize);
+
 profilerStopCustom('total_backend');
 
 ?>
@@ -1564,6 +1590,27 @@ profilerStopCustom('total_backend');
         flex: 0 0 auto;
     }
 
+    .pagination-box {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin: 12px 0;
+    }
+
+    .pagination-links {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .pagination-link {
+        min-width: 34px;
+        text-align: center;
+    }
+
     .actions-cell {
         display: flex;
         align-items: center;
@@ -1805,6 +1852,7 @@ profilerStopCustom('total_backend');
                 'subtype_group'=> $canUseSubtypeFilter ? $subtypeInput : '',
                 'group_filter'=> $groupFilter > 0 ? $groupFilter : '',
                 'diag'        => $isDiagEnabled ? 'Y' : '',
+                'page'        => '',
             ];
 
             if (!empty($statusInput)) {
@@ -1821,6 +1869,38 @@ profilerStopCustom('total_backend');
             return '<a href="' . h($url) . '" class="sort-link">' . h($title) . ($caret ? '<span class="sort-caret">' . $caret . '</span>' : '') . '</a>';
         };
         ?>
+
+        <?php
+        $firstDisplayNumber = $totalDisplayRows > 0 ? $paginationOffset + 1 : 0;
+        $lastDisplayNumber = min($paginationOffset + count($displayRows), $totalDisplayRows);
+        ?>
+        <div class="pagination-box">
+            <div class="text-muted">
+                Показаны записи <?= (int)$firstDisplayNumber ?>–<?= (int)$lastDisplayNumber ?> из <?= (int)$totalDisplayRows ?>.
+                Страница <?= (int)$currentPage ?> из <?= (int)$totalPages ?>.
+            </div>
+            <?php if ($totalPages > 1): ?>
+                <div class="pagination-links" aria-label="Пагинация списка заявок">
+                    <a class="btn btn-outline-secondary btn-sm pagination-link <?= $currentPage <= 1 ? 'disabled' : '' ?>" href="<?= h(buildPageUrlCustom(max(1, $currentPage - 1))) ?>">‹</a>
+                    <?php
+                    $pageStart = max(1, $currentPage - 3);
+                    $pageEnd = min($totalPages, $currentPage + 3);
+                    ?>
+                    <?php if ($pageStart > 1): ?>
+                        <a class="btn btn-outline-secondary btn-sm pagination-link" href="<?= h(buildPageUrlCustom(1)) ?>">1</a>
+                        <?php if ($pageStart > 2): ?><span class="text-muted">…</span><?php endif; ?>
+                    <?php endif; ?>
+                    <?php for ($pageNo = $pageStart; $pageNo <= $pageEnd; $pageNo++): ?>
+                        <a class="btn btn-sm pagination-link <?= $pageNo === $currentPage ? 'btn-primary' : 'btn-outline-secondary' ?>" href="<?= h(buildPageUrlCustom($pageNo)) ?>"><?= (int)$pageNo ?></a>
+                    <?php endfor; ?>
+                    <?php if ($pageEnd < $totalPages): ?>
+                        <?php if ($pageEnd < $totalPages - 1): ?><span class="text-muted">…</span><?php endif; ?>
+                        <a class="btn btn-outline-secondary btn-sm pagination-link" href="<?= h(buildPageUrlCustom($totalPages)) ?>"><?= (int)$totalPages ?></a>
+                    <?php endif; ?>
+                    <a class="btn btn-outline-secondary btn-sm pagination-link <?= $currentPage >= $totalPages ? 'disabled' : '' ?>" href="<?= h(buildPageUrlCustom(min($totalPages, $currentPage + 1))) ?>">›</a>
+                </div>
+            <?php endif; ?>
+        </div>
 
         <div class="table-responsive">
             <table class="table table-sm table-bordered table-hover main-table">
@@ -2195,6 +2275,19 @@ profilerStopCustom('total_backend');
                 </tbody>
             </table>
         </div>
+
+        <?php if ($totalPages > 1): ?>
+            <div class="pagination-box">
+                <div class="text-muted">Страница <?= (int)$currentPage ?> из <?= (int)$totalPages ?></div>
+                <div class="pagination-links" aria-label="Пагинация списка заявок">
+                    <a class="btn btn-outline-secondary btn-sm pagination-link <?= $currentPage <= 1 ? 'disabled' : '' ?>" href="<?= h(buildPageUrlCustom(max(1, $currentPage - 1))) ?>">‹</a>
+                    <?php for ($pageNo = $pageStart; $pageNo <= $pageEnd; $pageNo++): ?>
+                        <a class="btn btn-sm pagination-link <?= $pageNo === $currentPage ? 'btn-primary' : 'btn-outline-secondary' ?>" href="<?= h(buildPageUrlCustom($pageNo)) ?>"><?= (int)$pageNo ?></a>
+                    <?php endfor; ?>
+                    <a class="btn btn-outline-secondary btn-sm pagination-link <?= $currentPage >= $totalPages ? 'disabled' : '' ?>" href="<?= h(buildPageUrlCustom(min($totalPages, $currentPage + 1))) ?>">›</a>
+                </div>
+            </div>
+        <?php endif; ?>
     <?php endif; ?>
 </div>
 
