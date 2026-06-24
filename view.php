@@ -1607,6 +1607,7 @@ $bpTaskTitle = 'Согласование заявки';
 $orderJustificationValue = $viewData ? (string)($viewData['order_justification'] ?? '') : '';
 $orderJustificationEditable = $viewData ? overtimeIsKaWorkStatus($viewData) : false;
 $orderJustificationError = '';
+$showOrderJustificationInApproval = $orderJustificationEditable || trim($orderJustificationValue) !== '';
 
 if ($viewData && $currentUserId > 0) {
     $approvalTask = overtimeFindCurrentUserApprovalTask($viewData['id'], $currentUserId, (int)$overtimeConfig['IBLOCK_REQUESTS']);
@@ -1669,6 +1670,7 @@ if ($viewData && $currentUserId > 0) {
     }
 }
 $orderJustificationValue = $orderJustificationValue !== '' ? $orderJustificationValue : ($viewData ? (string)($viewData['order_justification'] ?? '') : '');
+$showOrderJustificationInApproval = $orderJustificationEditable || trim($orderJustificationValue) !== '';
 
 
 require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
@@ -1732,7 +1734,29 @@ $department = trim((string)($employeeData['WORK_DEPARTMENT'] ?? ''));
 <?php endif; ?>
 <?php if ($viewData): ?><div class='overtime-comments'><div class='overtime-comments-title'>Комментарии к заявке</div><?= overtimeRenderRequestComments($viewData['comments'] ?? []) ?></div><?php endif; ?>
 <?php else: ?><div>Заявка с ID <?= (int)$requestId ?> не найдена.</div><?php endif; ?>
-<?php if ($approvalTask): ?><div class='overtime-view-approval'><div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div><?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?><form method='post' style='margin:0;'><?= bitrix_sessid_post() ?><?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?><div class='overtime-view-order-justification'><div style='margin-bottom:6px;'><b>Обоснование для приказа<?= $orderJustificationEditable ? ' <span style="color:#d1242f;">*</span>' : '' ?></b></div><?php if ($orderJustificationEditable): ?><textarea name='order_justification' id='order-justification-field'><?= overtimeH($orderJustificationValue) ?></textarea><div style='font-size:12px;color:#6c757d;margin-top:4px;'>Обязательно для согласования заявки в статусе «В работе КА». Отклонить можно без заполнения.</div><?php else: ?><div class='overtime-view-order-justification-readonly'><?= $orderJustificationValue !== '' ? nl2br(overtimeH($orderJustificationValue)) : 'Не заполнено' ?></div><?php endif; ?></div><div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div><div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div></form></div><?php endif; ?>
+<?php if ($approvalTask): ?>
+<div class='overtime-view-approval'>
+<div class='overtime-view-approval-title'><?= overtimeH($bpTaskTitle) ?></div>
+<?php if ($bpActionError !== ''): ?><div class='ui-alert ui-alert-danger' style='margin-bottom:10px;'><span class='ui-alert-message'><?= overtimeH($bpActionError) ?></span></div><?php endif; ?>
+<form method='post' style='margin:0;'>
+<?= bitrix_sessid_post() ?>
+<?php if ($bpDescriptionForForm !== ''): ?><div class='overtime-view-approval-comment'><div class='overtime-view-approval-description'><?= overtimeRenderTextWithLinks($bpDescriptionForForm) ?></div></div><?php endif; ?>
+<?php if ($showOrderJustificationInApproval): ?>
+<div class='overtime-view-order-justification'>
+<div style='margin-bottom:6px;'><b>Обоснование для приказа<?= $orderJustificationEditable ? ' <span style="color:#d1242f;">*</span>' : '' ?></b></div>
+<?php if ($orderJustificationEditable): ?>
+<textarea name='order_justification' id='order-justification-field'><?= overtimeH($orderJustificationValue) ?></textarea>
+<div style='font-size:12px;color:#6c757d;margin-top:4px;'>Обязательно для согласования заявки в статусе «В работе КА». Отклонить можно без заполнения.</div>
+<?php else: ?>
+<div class='overtime-view-order-justification-readonly'><?= nl2br(overtimeH($orderJustificationValue)) ?></div>
+<?php endif; ?>
+</div>
+<?php endif; ?>
+<div class='overtime-view-approval-comment'><div style='margin-bottom:6px;'><?= overtimeH($bpCommentLabel) ?></div><textarea name='bp_comment' id='bp-comment-field'></textarea></div>
+<div class='overtime-view-approval-actions'><input type='hidden' name='bp_action' value=''><?php foreach ($approvalButtons as $button): ?><?php $buttonClass = 'overtime-btn'; if (($button['kind'] ?? '') === 'approve') {$buttonClass .= ' overtime-btn-success';} elseif (($button['kind'] ?? '') === 'refine') {$buttonClass .= ' overtime-btn-warning';} elseif (($button['kind'] ?? '') === 'reject') {$buttonClass .= ' overtime-btn-danger';} ?><button type='submit' class='<?= overtimeH($buttonClass) ?>' onclick='this.form.bp_action.value="<?= overtimeH((string)$button['code']) ?>";return true;'><?= overtimeH((string)$button['label']) ?></button><?php endforeach; ?></div>
+</form>
+</div>
+<?php endif; ?>
 <?php if ($viewData && !empty($groupCalculations)): ?>
 <div class='overtime-view-linked'>
 <?php if ($viewMode === 'simple'): ?><hr class='overtime-view-separator'><?php endif; ?>
