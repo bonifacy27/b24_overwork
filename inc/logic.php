@@ -1431,10 +1431,6 @@ function overtimeUpdateLinkedRequests(array $createdIds, array $config, array $p
         return;
     }
 
-    if (overtimeHasTimeOffPaymentType($paymentTypeIdsByRequestId, $config)) {
-        return;
-    }
-
     foreach ($createdIds as $id) {
         $linkedIds = array_values(array_diff($createdIds, [$id]));
         CIBlockElement::SetPropertyValuesEx(
