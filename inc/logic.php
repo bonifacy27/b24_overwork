@@ -1431,10 +1431,6 @@ function overtimeUpdateLinkedRequests(array $createdIds, array $config, array $p
         return;
     }
 
-    if (overtimeHasTimeOffPaymentType($paymentTypeIdsByRequestId, $config)) {
-        return;
-    }
-
     foreach ($createdIds as $id) {
         $linkedIds = array_values(array_diff($createdIds, [$id]));
         CIBlockElement::SetPropertyValuesEx(
@@ -1647,10 +1643,11 @@ function overtimeCreateEmployeeRequestPack(
             (int)$config['WORK_TYPE_OVERTIME_ID'],
             (int)$config['WORK_TYPE_WEEKEND_ID'],
         ], true);
-        $totalTkHours = $supportsCalculatedHours
+        $timeOffPaymentType = overtimeIsTimeOffPaymentType($paymentTypeId, $config);
+        $totalTkHours = ($supportsCalculatedHours && !$timeOffPaymentType)
             ? (float)($paymentBreakdown['tk_hours'] ?? 0)
             : 0;
-        $totalPremiumHours = $supportsCalculatedHours
+        $totalPremiumHours = ($supportsCalculatedHours && !$timeOffPaymentType)
             ? (float)($paymentBreakdown['premium_hours'] ?? 0)
             : 0;
         $overtimeTotalHours = $supportsCalculatedHours

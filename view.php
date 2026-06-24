@@ -628,6 +628,14 @@ function overtimeBuildWorkPeriodTextByRequestItem(array $item, array $config): s
 
 function overtimeResolveDisplayHoursByItem(array $item, array $config): array
 {
+    $paymentTypeId = (int)overtimeExtractPropertyValue($item, $config['REQ_PROP_PAYMENT_TYPE']);
+    if (function_exists('overtimeIsTimeOffPaymentType') && overtimeIsTimeOffPaymentType($paymentTypeId, $config)) {
+        return [
+            'tk_hours' => '0',
+            'premium_hours' => '0',
+        ];
+    }
+
     $paymentBreakdown = overtimeBuildPaymentBreakdownByRequestItem($item, $config);
     if (!empty($paymentBreakdown)) {
         return [
