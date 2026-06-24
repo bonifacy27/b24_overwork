@@ -102,6 +102,26 @@ BX.ready(function () {
         }
     }
 
+    function removeDutyDateLine(row, line) {
+        const target = row ? row.querySelector('.diff-duty-dates') : null;
+        line = formatDateForDutyList(line);
+        if (!target || !line) {
+            return;
+        }
+
+        const existingLines = target.value
+            .split(/\r?\n/)
+            .map(function(item){ return item.trim(); })
+            .filter(Boolean);
+        const filteredLines = existingLines.filter(function(item){ return item !== line; });
+
+        if (filteredLines.length !== existingLines.length) {
+            target.value = filteredLines.join("\n");
+            renderDutySummary();
+            requestPreview();
+        }
+    }
+
     function getRowEmployeeName(row) {
         if (!row) {
             return '';
@@ -128,7 +148,7 @@ BX.ready(function () {
             const textarea = row.querySelector('.diff-duty-dates');
             const dates = textarea ? textarea.value.split(/\r?\n/).map(function(item){ return item.trim(); }).filter(Boolean) : [];
             dates.forEach(function(date){
-                rows.push({employee: employee, date: date});
+                rows.push({employee: employee, date: date, rowIndex: row.dataset.index});
             });
         });
 
@@ -140,9 +160,15 @@ BX.ready(function () {
 
         let html = '<div class="overtime-subtitle">Итоговая таблица дежурств</div>';
         html += '<table class="overtime-table overtime-compact-table">';
-        html += '<thead><tr><th>Сотрудник</th><th>Дата дежурства</th></tr></thead><tbody>';
+        html += '<thead><tr><th>Сотрудник</th><th>Дата дежурства</th><th>Действие</th></tr></thead><tbody>';
         rows.forEach(function(row){
-            html += '<tr><td>' + escapeHtml(row.employee) + '</td><td>' + escapeHtml(formatDutyDateForDisplay(row.date)) + '</td></tr>';
+            html += '<tr>'
+                + '<td>' + escapeHtml(row.employee) + '</td>'
+                + '<td>' + escapeHtml(formatDutyDateForDisplay(row.date)) + '</td>'
+                + '<td><button type="button" class="ui-btn ui-btn-xs ui-btn-light-border remove-duty-summary-date"'
+                + ' data-row-index="' + escapeHtml(row.rowIndex) + '"'
+                + ' data-date="' + escapeHtml(row.date) + '">Удалить</button></td>'
+                + '</tr>';
         });
         html += '</tbody></table>';
         target.innerHTML = html;
@@ -1340,6 +1366,7 @@ BX.ready(function () {
                 div.remove();
                 rebuildDiffIndexes();
                 updateCreateButtonLabel();
+                renderDutySummary();
                 requestPreview();
             });
             requestPreview();
@@ -1352,6 +1379,7 @@ BX.ready(function () {
             rebuildDiffIndexes();
             updateCreateButtonLabel();
             updateDutyDiagnostics('remove_diff_row');
+            renderDutySummary();
             requestPreview();
         });
     });
@@ -1390,9 +1418,17 @@ BX.ready(function () {
 
         const dateBtn = e.target.closest('.add-duty-date');
         const rangeBtn = e.target.closest('.add-duty-range');
+        const removeDutySummaryDateBtn = e.target.closest('.remove-duty-summary-date');
         const calendarPrevBtn = e.target.closest('.duty-calendar-prev');
         const calendarNextBtn = e.target.closest('.duty-calendar-next');
         const calendarDayBtn = e.target.closest('.overtime-duty-calendar-day');
+        if (removeDutySummaryDateBtn) {
+            const rowIndex = removeDutySummaryDateBtn.dataset.rowIndex;
+            const row = document.querySelector('.diff-row[data-index="' + rowIndex + '"]');
+            removeDutyDateLine(row, removeDutySummaryDateBtn.dataset.date || '');
+            return;
+        }
+
         if (calendarPrevBtn || calendarNextBtn || calendarDayBtn) {
             const row = e.target.closest('.diff-row');
             const widget = row ? row.querySelector('.duty-calendar-widget') : null;
