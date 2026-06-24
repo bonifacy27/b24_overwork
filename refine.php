@@ -260,6 +260,24 @@ function overtimeRefineLoadRequest(int $requestId, array $config): ?array
     return $item;
 }
 
+function overtimeRefineRequestCommentHasMessage(string $comment): bool
+{
+    $comment = trim($comment);
+    if ($comment === '') {
+        return false;
+    }
+
+    if (preg_match('/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?$/u', $comment)) {
+        return false;
+    }
+
+    if (preg_match('/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?\s+[^:]+:\s*(.*)$/us', $comment, $matches)) {
+        return trim((string)$matches[1]) !== '';
+    }
+
+    return true;
+}
+
 function overtimeRefineGetRequestComments(int $requestId, array $config): array
 {
     $comments = [];
@@ -267,7 +285,7 @@ function overtimeRefineGetRequestComments(int $requestId, array $config): array
     $res = CIBlockElement::GetProperty((int)$config['IBLOCK_REQUESTS'], $requestId, ['sort' => 'asc'], ['CODE' => $propertyCode]);
     while ($property = $res->Fetch()) {
         $value = trim((string)($property['VALUE'] ?? ''));
-        if ($value !== '') {
+        if (overtimeRefineRequestCommentHasMessage($value)) {
             $comments[] = $value;
         }
     }
