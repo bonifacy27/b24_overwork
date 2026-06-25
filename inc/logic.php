@@ -4,6 +4,77 @@ use Bitrix\Main\Loader;
 use Bitrix\Main\Type\DateTime;
 use Bitrix\Main\Web\Json;
 
+function overtimeGetAnnualHoursLimit(array $config): float
+{
+    return (float)($config['OVERTIME_ANNUAL_HOURS_LIMIT'] ?? 120.0);
+}
+
+function overtimeGetConsecutiveDaysLimitHours(array $config): float
+{
+    return (float)($config['OVERTIME_CONSECUTIVE_DAYS_LIMIT_HOURS'] ?? 4.0);
+}
+
+function overtimeGetConsecutiveDaysLimitDays(array $config): int
+{
+    return max(2, (int)($config['OVERTIME_CONSECUTIVE_DAYS_LIMIT_DAYS'] ?? 2));
+}
+
+function overtimeGetRestrictedWorkdayStart(array $config): string
+{
+    return (string)($config['OVERTIME_RESTRICTED_WORKDAY_START'] ?? '09:00');
+}
+
+function overtimeGetRestrictedWorkdayEnd(array $config): string
+{
+    return (string)($config['OVERTIME_RESTRICTED_WORKDAY_END'] ?? '19:00');
+}
+
+function overtimeGetRestrictedWorkdayPeriodText(array $config): string
+{
+    return 'с ' . overtimeGetRestrictedWorkdayStart($config) . ' до ' . overtimeGetRestrictedWorkdayEnd($config);
+}
+
+function overtimeFindConsecutiveDaysLimitExceed(array $hoursByDay, float $limitHours, int $limitDays): ?array
+{
+    if (empty($hoursByDay)) {
+        return null;
+    }
+
+    ksort($hoursByDay);
+    $dates = array_keys($hoursByDay);
+    $minTs = strtotime(reset($dates));
+    $maxTs = strtotime(end($dates));
+
+    if ($minTs === false || $maxTs === false) {
+        return null;
+    }
+
+    for ($windowStartTs = $minTs; $windowStartTs <= $maxTs; $windowStartTs = strtotime('+1 day', $windowStartTs)) {
+        if ($windowStartTs === false) {
+            break;
+        }
+
+        $windowDates = [];
+        $sum = 0.0;
+        for ($offset = 0; $offset < $limitDays; $offset++) {
+            $date = date('Y-m-d', strtotime('+' . $offset . ' day', $windowStartTs));
+            $windowDates[] = $date;
+            $sum += (float)($hoursByDay[$date] ?? 0);
+        }
+
+        $sum = round($sum, 2);
+        if ($sum > $limitHours) {
+            return [
+                'dates' => $windowDates,
+                'hours' => $sum,
+                'exceed' => round($sum - $limitHours, 2),
+            ];
+        }
+    }
+
+    return null;
+}
+
 function overtimeBuildSegments(DateTime $start, DateTime $end, bool $isDuty, array $config): array
 {
     if ($isDuty) {
@@ -100,21 +171,24 @@ function overtimeAnalyzeChecks(int $employeeId, array $segments, array $config):
     $year = (int)$overtimeSegments[0]['start']->format('Y');
     $registryHours = overtimeGetOvertimeHoursInRegistry($employeeId, $year, $config);
     $withCurrent = round($registryHours + $currentOvertimeHours, 2);
+    $annualLimit = overtimeGetAnnualHoursLimit($config);
+    $consecutiveLimitHours = overtimeGetConsecutiveDaysLimitHours($config);
+    $consecutiveLimitDays = overtimeGetConsecutiveDaysLimitDays($config);
 
-    if ($registryHours > 120) {
+    if ($registryHours > $annualLimit) {
         $messages[] = [
             'type' => 'warning',
-            'text' => 'Количество сверхурочных часов в текущем году уже более 120 часов: ' . $registryHours . 'ч.',
+            'text' => 'Количество сверхурочных часов в текущем году уже более ' . $annualLimit . ' часов: ' . $registryHours . 'ч.',
         ];
-    } elseif ($withCurrent > 120) {
+    } elseif ($withCurrent > $annualLimit) {
         $messages[] = [
             'type' => 'warning',
-            'text' => 'Количество сверхурочных часов в текущем году с учетом текущей заявки будет более 120 часов: ' . $withCurrent . 'ч.',
+            'text' => 'Количество сверхурочных часов в текущем году с учетом текущей заявки будет более ' . $annualLimit . ' часов: ' . $withCurrent . 'ч.',
         ];
     } else {
         $messages[] = [
             'type' => 'success',
-            'text' => 'Количество сверхурочных часов в текущем году не превышает 120 часов (' . $withCurrent . 'ч.)',
+            'text' => 'Количество сверхурочных часов в текущем году не превышает ' . $annualLimit . ' часов (' . $withCurrent . 'ч.)',
         ];
     }
 
@@ -125,8 +199,9 @@ function overtimeAnalyzeChecks(int $employeeId, array $segments, array $config):
         $minDate = reset($dates);
         $maxDate = end($dates);
 
-        $periodStart = new DateTime(date('d.m.Y H:i:s', strtotime($minDate . ' -1 day 00:00:00')), 'd.m.Y H:i:s');
-        $periodEnd = new DateTime(date('d.m.Y H:i:s', strtotime($maxDate . ' +1 day 23:59:59')), 'd.m.Y H:i:s');
+        $neighborDays = $consecutiveLimitDays - 1;
+        $periodStart = new DateTime(date('d.m.Y H:i:s', strtotime($minDate . ' -' . $neighborDays . ' day 00:00:00')), 'd.m.Y H:i:s');
+        $periodEnd = new DateTime(date('d.m.Y H:i:s', strtotime($maxDate . ' +' . $neighborDays . ' day 23:59:59')), 'd.m.Y H:i:s');
 
         $existingByDay = overtimeGetExistingOvertimeHoursByDay($employeeId, $periodStart, $periodEnd, $config);
         $combined = $existingByDay;
@@ -139,38 +214,22 @@ function overtimeAnalyzeChecks(int $employeeId, array $segments, array $config):
         }
 
         ksort($combined);
-        $combinedDates = array_keys($combined);
         $twoDayExceed = [];
-
-        for ($i = 0, $cnt = count($combinedDates) - 1; $i < $cnt; $i++) {
-            $date1 = $combinedDates[$i];
-            $date2 = $combinedDates[$i + 1];
-
-            if ((strtotime($date2) - strtotime($date1)) !== 86400) {
-                continue;
-            }
-
-            $pairHours = round($combined[$date1] + $combined[$date2], 2);
-            if ($pairHours > 4) {
-                $twoDayExceed[] = [
-                    'date1' => $date1,
-                    'date2' => $date2,
-                    'hours' => $pairHours,
-                    'exceed' => round($pairHours - 4, 2),
-                ];
-            }
+        $limitExceed = overtimeFindConsecutiveDaysLimitExceed($combined, $consecutiveLimitHours, $consecutiveLimitDays);
+        if ($limitExceed !== null) {
+            $twoDayExceed[] = $limitExceed;
         }
 
         if (empty($twoDayExceed)) {
             $messages[] = [
                 'type' => 'success',
-                'text' => 'Ограничение 4 часа за 2 дня подряд не превышено',
+                'text' => 'Ограничение ' . $consecutiveLimitHours . ' часа за ' . $consecutiveLimitDays . ' дня подряд не превышено',
             ];
         } else {
             foreach ($twoDayExceed as $exceed) {
                 $messages[] = [
                     'type' => 'warning',
-                    'text' => 'Превышено ограничение 4 часа за 2 дня подряд (' . $exceed['date1'] . ' и ' . $exceed['date2'] . '): всего ' . $exceed['hours'] . ' ч., превышение ' . $exceed['exceed'] . ' ч.',
+                    'text' => 'Превышено ограничение ' . $consecutiveLimitHours . ' часа за ' . $consecutiveLimitDays . ' дня подряд (' . implode(' / ', $exceed['dates']) . '): всего ' . $exceed['hours'] . ' ч., превышение ' . $exceed['exceed'] . ' ч.',
                 ];
             }
         }
@@ -228,8 +287,9 @@ function overtimeGetRegistryHoursBeforeCurrentSegment(int $employeeId, DateTime 
 
 function overtimeGetExistingOvertimeHoursByDayForSegment(int $employeeId, DateTime $segmentStart, DateTime $segmentEnd, array $config): array
 {
-    $minDate = date('Y-m-d', strtotime($segmentStart->format('Y-m-d H:i:s') . ' -1 day'));
-    $maxDate = date('Y-m-d', strtotime($segmentEnd->format('Y-m-d H:i:s') . ' +1 day'));
+    $neighborDays = overtimeGetConsecutiveDaysLimitDays($config) - 1;
+    $minDate = date('Y-m-d', strtotime($segmentStart->format('Y-m-d H:i:s') . ' -' . $neighborDays . ' day'));
+    $maxDate = date('Y-m-d', strtotime($segmentEnd->format('Y-m-d H:i:s') . ' +' . $neighborDays . ' day'));
 
     $periodStart = new DateTime(date('d.m.Y H:i:s', strtotime($minDate . ' 00:00:00')), 'd.m.Y H:i:s');
     $periodEnd = new DateTime(date('d.m.Y H:i:s', strtotime($maxDate . ' 23:59:59')), 'd.m.Y H:i:s');
@@ -242,7 +302,6 @@ function overtimeSplitSegmentToHourSlots(DateTime $start, DateTime $end): array
     $slots = [];
     $cursorTs = strtotime($start->format('Y-m-d H:i:s'));
     $endTs = strtotime($end->format('Y-m-d H:i:s'));
-
     while ($cursorTs < $endTs) {
         $slotEndTs = min($cursorTs + 3600, $endTs);
 
@@ -262,10 +321,21 @@ function overtimeSplitSegmentToHourSlots(DateTime $start, DateTime $end): array
     return $slots;
 }
 
-function overtimeIsNightSlot(array $slot): bool
+function overtimeIsNightSlot(array $slot, array $config): bool
 {
     $hour = (int)$slot['start']->format('H');
-    return ($hour >= 22 || $hour < 6);
+    $nightStart = (int)($config['OVERTIME_NIGHT_START_HOUR'] ?? 22);
+    $nightEnd = (int)($config['OVERTIME_NIGHT_END_HOUR'] ?? 6);
+
+    if ($nightStart === $nightEnd) {
+        return false;
+    }
+
+    if ($nightStart < $nightEnd) {
+        return $hour >= $nightStart && $hour < $nightEnd;
+    }
+
+    return $hour >= $nightStart || $hour < $nightEnd;
 }
 
 function overtimeFormatDebugInterval(DateTime $start, DateTime $end): string
@@ -288,7 +358,8 @@ function overtimeExplainRejectedSlot(
     array $acceptedSlots,
     array $existingByDay,
     float $registryHoursBefore,
-    float $segmentTotalHours = 0.0
+    float $segmentTotalHours,
+    array $config
 ): array {
     $acceptedHours = 0.0;
     $acceptedByDay = [];
@@ -303,10 +374,14 @@ function overtimeExplainRejectedSlot(
 
     $finalYearValue = round($registryHoursBefore + $segmentTotalHours, 2);
 
-    if (($registryHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > 120) {
+    $annualLimit = overtimeGetAnnualHoursLimit($config);
+    $consecutiveLimitHours = overtimeGetConsecutiveDaysLimitHours($config);
+    $consecutiveLimitDays = overtimeGetConsecutiveDaysLimitDays($config);
+
+    if (($registryHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > $annualLimit) {
         return [
             'reason_code' => 'YEAR_LIMIT',
-            'reason_text' => 'не включены в оплату по ТК РФ, так как при добавлении всей заявки годовое количество сверхурочных часов превысило бы 120 (' . $finalYearValue . ')',
+            'reason_text' => 'не включены в оплату по ТК РФ, так как при добавлении всей заявки годовое количество сверхурочных часов превысило бы ' . $annualLimit . ' (' . $finalYearValue . ')',
         ];
     }
 
@@ -316,26 +391,17 @@ function overtimeExplainRejectedSlot(
     }
     $acceptedByDay[$candidateDate] += (float)$candidateSlot['hours'];
 
-    $datesToCheck = [
-        date('Y-m-d', strtotime($candidateDate . ' -1 day')),
-        $candidateDate,
-        date('Y-m-d', strtotime($candidateDate . ' +1 day')),
-    ];
+    $combinedByDay = $existingByDay;
+    foreach ($acceptedByDay as $date => $hours) {
+        $combinedByDay[$date] = (float)($combinedByDay[$date] ?? 0) + (float)$hours;
+    }
 
-    foreach ($datesToCheck as $baseDate) {
-        $nextDate = date('Y-m-d', strtotime($baseDate . ' +1 day'));
-
-        $sum = (float)($existingByDay[$baseDate] ?? 0)
-            + (float)($acceptedByDay[$baseDate] ?? 0)
-            + (float)($existingByDay[$nextDate] ?? 0)
-            + (float)($acceptedByDay[$nextDate] ?? 0);
-
-        if ($sum > 4.0) {
-            return [
-                'reason_code' => 'TWO_DAY_LIMIT',
-                'reason_text' => 'не включены в оплату по ТК РФ, так как при последовательном расчете был бы превышен лимит 4 часа за 2 дня подряд (пара дат ' . $baseDate . ' / ' . $nextDate . ', всего ' . round($sum, 2) . ' ч.)',
-            ];
-        }
+    $limitExceed = overtimeFindConsecutiveDaysLimitExceed($combinedByDay, $consecutiveLimitHours, $consecutiveLimitDays);
+    if ($limitExceed !== null) {
+        return [
+            'reason_code' => 'TWO_DAY_LIMIT',
+            'reason_text' => 'не включены в оплату по ТК РФ, так как при последовательном расчете был бы превышен лимит ' . $consecutiveLimitHours . ' часа за ' . $consecutiveLimitDays . ' дня подряд (даты ' . implode(' / ', $limitExceed['dates']) . ', всего ' . $limitExceed['hours'] . ' ч.)',
+        ];
     }
 
     return [
@@ -344,7 +410,7 @@ function overtimeExplainRejectedSlot(
     ];
 }
 
-function overtimeCanAllocateSlotToTk(array $candidateSlot, array $acceptedSlots, array $existingByDay, float $registryHoursBefore): bool
+function overtimeCanAllocateSlotToTk(array $candidateSlot, array $acceptedSlots, array $existingByDay, float $registryHoursBefore, array $config): bool
 {
     $acceptedHours = 0.0;
     $acceptedByDay = [];
@@ -357,7 +423,7 @@ function overtimeCanAllocateSlotToTk(array $candidateSlot, array $acceptedSlots,
         $acceptedByDay[$slot['date']] += (float)$slot['hours'];
     }
 
-    if (($registryHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > 120) {
+    if (($registryHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > overtimeGetAnnualHoursLimit($config)) {
         return false;
     }
 
@@ -367,26 +433,16 @@ function overtimeCanAllocateSlotToTk(array $candidateSlot, array $acceptedSlots,
     }
     $acceptedByDay[$candidateDate] += (float)$candidateSlot['hours'];
 
-    $datesToCheck = [
-        date('Y-m-d', strtotime($candidateDate . ' -1 day')),
-        $candidateDate,
-        date('Y-m-d', strtotime($candidateDate . ' +1 day')),
-    ];
-
-    foreach ($datesToCheck as $baseDate) {
-        $nextDate = date('Y-m-d', strtotime($baseDate . ' +1 day'));
-
-        $sum1 = (float)($existingByDay[$baseDate] ?? 0)
-            + (float)($acceptedByDay[$baseDate] ?? 0)
-            + (float)($existingByDay[$nextDate] ?? 0)
-            + (float)($acceptedByDay[$nextDate] ?? 0);
-
-        if ($sum1 > 4.0) {
-            return false;
-        }
+    $combinedByDay = $existingByDay;
+    foreach ($acceptedByDay as $date => $hours) {
+        $combinedByDay[$date] = (float)($combinedByDay[$date] ?? 0) + (float)$hours;
     }
 
-    return true;
+    return overtimeFindConsecutiveDaysLimitExceed(
+        $combinedByDay,
+        overtimeGetConsecutiveDaysLimitHours($config),
+        overtimeGetConsecutiveDaysLimitDays($config)
+    ) === null;
 }
 
 function overtimeMergeSlotsToIntervals(array $slots): array
@@ -481,6 +537,10 @@ function overtimeCheckLateSubmissionWarning(array $segments, array $config): arr
 
 function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $config): array
 {
+    $annualLimit = overtimeGetAnnualHoursLimit($config);
+    $consecutiveLimitHours = overtimeGetConsecutiveDaysLimitHours($config);
+    $consecutiveLimitDays = overtimeGetConsecutiveDaysLimitDays($config);
+
     if ((int)$segment['type_id'] === (int)$config['WORK_TYPE_WEEKEND_ID']) {
         $segmentHours = round((float)$segment['hours'], 2);
         $interval = overtimeFormatDebugInterval($segment['start'], $segment['end']);
@@ -526,12 +586,12 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
     $premiumSlots = [];
 
     foreach ($slots as $slot) {
-        if (overtimeCanAllocateSlotToTk($slot, $acceptedSlots, $existingByDay, $registryHoursBefore)) {
+        if (overtimeCanAllocateSlotToTk($slot, $acceptedSlots, $existingByDay, $registryHoursBefore, $config)) {
             $slot['reason_code'] = '';
             $slot['reason_text'] = '';
             $acceptedSlots[] = $slot;
         } else {
-            $reason = overtimeExplainRejectedSlot($slot, $acceptedSlots, $existingByDay, $registryHoursBefore, $segmentTotalHours);
+            $reason = overtimeExplainRejectedSlot($slot, $acceptedSlots, $existingByDay, $registryHoursBefore, $segmentTotalHours, $config);
             $slot['reason_code'] = $reason['reason_code'];
             $slot['reason_text'] = $reason['reason_text'];
             $premiumSlots[] = $slot;
@@ -555,7 +615,7 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
 
     $nightSlots = [];
     foreach ($acceptedSlots as $slot) {
-        if (overtimeIsNightSlot($slot)) {
+        if (overtimeIsNightSlot($slot, $config)) {
             $slot['reason_code'] = 'NIGHT_TK';
             $slot['reason_text'] = '';
             $nightSlots[] = $slot;
@@ -608,7 +668,7 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
 
         $basis = $interval['reason_text'];
         if (($interval['reason_code'] ?? '') === 'YEAR_LIMIT') {
-            $basis = 'часы ' . $intervalText . ' не включены в оплату по ТК РФ, так как при добавлении всей заявки годовое количество сверхурочных часов превысило бы 120 (' . $finalYearValue . ')';
+            $basis = 'часы ' . $intervalText . ' не включены в оплату по ТК РФ, так как при добавлении всей заявки годовое количество сверхурочных часов превысило бы ' . $annualLimit . ' (' . $finalYearValue . ')';
         } elseif (($interval['reason_code'] ?? '') === 'TWO_DAY_LIMIT') {
             $basis = 'часы ' . $intervalText . ' ' . $interval['reason_text'];
         } else {
@@ -643,7 +703,7 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
             'interval' => !empty($acceptedIntervals)
                 ? overtimeFormatDebugInterval($acceptedIntervals[0]['start'], end($acceptedIntervals)['end'])
                 : '',
-            'basis' => 'сумма часов, которые последовательно укладываются в годовой лимит 120 часов и в ограничение 4 часа за 2 дня подряд',
+            'basis' => 'сумма часов, которые последовательно укладываются в годовой лимит ' . $annualLimit . ' часов и в ограничение ' . $consecutiveLimitHours . ' часа за ' . $consecutiveLimitDays . ' дня подряд',
         ],
         [
             'title' => 'ИТОГО часы для оплаты единовременной премией',
@@ -816,7 +876,7 @@ function overtimeValidateCreatorEmployeeAccess(int $employeeId, array $config): 
 }
 
 
-function overtimeIntervalOverlapsBusinessHours(DateTime $start, DateTime $end, string $businessStart = '09:00', string $businessEnd = '18:00'): bool
+function overtimeIntervalOverlapsBusinessHours(DateTime $start, DateTime $end, array $config): bool
 {
     $startTs = strtotime($start->format('Y-m-d H:i:s'));
     $endTs = strtotime($end->format('Y-m-d H:i:s'));
@@ -825,8 +885,8 @@ function overtimeIntervalOverlapsBusinessHours(DateTime $start, DateTime $end, s
         return false;
     }
 
-    [$bsh, $bsm] = array_map('intval', explode(':', $businessStart));
-    [$beh, $bem] = array_map('intval', explode(':', $businessEnd));
+    [$bsh, $bsm] = array_map('intval', explode(':', overtimeGetRestrictedWorkdayStart($config)));
+    [$beh, $bem] = array_map('intval', explode(':', overtimeGetRestrictedWorkdayEnd($config)));
 
     $cursorTs = strtotime(date('Y-m-d 00:00:00', $startTs));
     $lastDayTs = strtotime(date('Y-m-d 00:00:00', $endTs));
@@ -926,8 +986,8 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
         }
     }
 
-    if (!$isDuty && overtimeIntervalOverlapsBusinessHours($start, $end)) {
-        $errors[] = 'Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).';
+    if (!$isDuty && overtimeIntervalOverlapsBusinessHours($start, $end, $config)) {
+        $errors[] = 'Для сверхурочной заявки период должен быть вне рабочих часов (' . overtimeGetRestrictedWorkdayPeriodText($config) . ').';
     }
 
     if (!empty($errors)) {
