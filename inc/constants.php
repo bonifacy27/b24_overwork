@@ -34,6 +34,15 @@ $overtimeConfig = [
     // Организационная структура
     'STRUCTURE_IBLOCK_ID' => 5,
 
+    // Настройки расчетов и ограничений сверхурочной работы
+    'OVERTIME_RESTRICTED_WORKDAY_START' => '09:00',
+    'OVERTIME_RESTRICTED_WORKDAY_END' => '19:00',
+    'OVERTIME_ANNUAL_HOURS_LIMIT' => 120.0,
+    'OVERTIME_CONSECUTIVE_DAYS_LIMIT_HOURS' => 4.0,
+    'OVERTIME_CONSECUTIVE_DAYS_LIMIT_DAYS' => 2,
+    'OVERTIME_NIGHT_START_HOUR' => 22,
+    'OVERTIME_NIGHT_END_HOUR' => 6,
+
     // Реестр часов сверхурочки
     'REG_PROP_EMPLOYEE' => 'SOTRUDNIK',
     'REG_PROP_YEAR'     => 'GOD',

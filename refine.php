@@ -392,8 +392,8 @@ if ($request->isPost() && $request->getPost('action') === 'save_refine' && check
             $timeEnd = (string)$request->getPost('time_end');
             $startDateTime = overtimeParseDateTimeFromHtml($dateStart, $timeStart);
             $endDateTime = overtimeParseDateTimeFromHtml($dateEnd, $timeEnd);
-            if (!$startDateTime || !$endDateTime || overtimeIntervalOverlapsBusinessHours($startDateTime, $endDateTime)) {
-                $error = 'Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).';
+            if (!$startDateTime || !$endDateTime || overtimeIntervalOverlapsBusinessHours($startDateTime, $endDateTime, $overtimeConfig)) {
+                $error = 'Для сверхурочной заявки период должен быть вне рабочих часов (' . overtimeGetRestrictedWorkdayPeriodText($overtimeConfig) . ').';
             }
         }
 
@@ -479,6 +479,10 @@ $requestComments = overtimeRefineGetRequestComments($requestId, $overtimeConfig)
 <script>
 BX.ready(function(){
  const isWeekendType = <?= $isWeekendType ? 'true' : 'false' ?>;
+ const restrictedWorkdayStart = <?= Json::encode(overtimeGetRestrictedWorkdayStart($overtimeConfig)) ?>;
+ const restrictedWorkdayEnd = <?= Json::encode(overtimeGetRestrictedWorkdayEnd($overtimeConfig)) ?>;
+ const restrictedWorkdayPeriodText = <?= Json::encode(overtimeGetRestrictedWorkdayPeriodText($overtimeConfig)) ?>;
+ function applyTime(date, value){const parts=String(value).split(':').map(function(part){return parseInt(part,10)||0;});date.setHours(parts[0]||0,parts[1]||0,0,0);return date;}
  function isWeekend(d){const day=(new Date(d+'T00:00:00')).getDay();return day===0||day===6;}
  function validateDates(){
    const ds=document.getElementById('date_start').value,de=document.getElementById('date_end').value;
@@ -498,10 +502,10 @@ BX.ready(function(){
        if(isWorkday){
          const segStart = start > dayStart ? start : dayStart;
          const segEnd = end < dayEnd ? end : dayEnd;
-         const businessStart = new Date(dayStart); businessStart.setHours(9,0,0,0);
-         const businessEnd = new Date(dayStart); businessEnd.setHours(18,0,0,0);
+         const businessStart = applyTime(new Date(dayStart), restrictedWorkdayStart);
+         const businessEnd = applyTime(new Date(dayStart), restrictedWorkdayEnd);
          if(segStart < segEnd && segStart < businessEnd && segEnd > businessStart){
-           alert('Для сверхурочной заявки период должен быть вне рабочих часов (с 09:00 до 18:00).');
+           alert('Для сверхурочной заявки период должен быть вне рабочих часов (' + restrictedWorkdayPeriodText + ').');
            return false;
          }
        }
