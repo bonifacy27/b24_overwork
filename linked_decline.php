@@ -28,8 +28,7 @@
  * Изменения v1.1.1:
  * - служебный marker больше не выводится в ISTORIYA;
  * - marker хранится в отдельном множественном/строчном свойстве AUTO_DECLINE_MARKERS;
- * - текст истории приведен к формату:
- *   05.06.2026 10:47:03 Связанная заявка #3603166 отклонена автоматически. Отклонил: ФИО.
+ * - текст истории приведен к формату без указания исполнителя.
  * - добавлены appendHistoryLine() и addMarkerOnce();
  * - защита от повторного зеркального запуска сохраняется через marker пары заявок.
  *
@@ -84,25 +83,8 @@ if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc') || !
     return;
 }
 
-$currentUserId = 0;
-if (class_exists('Bitrix\\Main\\Engine\\CurrentUser')) {
-    $currentUserId = (int)\Bitrix\Main\Engine\CurrentUser::get()->getId();
-}
-if ($currentUserId <= 0 && isset($GLOBALS['USER']) && is_object($GLOBALS['USER'])) {
-    $currentUserId = (int)$GLOBALS['USER']->GetID();
-}
-if ($currentUserId <= 0) {
-    $currentUserId = 1;
-}
-
-$currentUserName = 'Пользователь #' . $currentUserId;
-$userRs = CUser::GetByID($currentUserId);
-if ($userData = $userRs->Fetch()) {
-    $fio = trim((string)$userData['LAST_NAME'] . ' ' . (string)$userData['NAME'] . ' ' . (string)$userData['SECOND_NAME']);
-    if ($fio !== '') {
-        $currentUserName = $fio;
-    }
-}
+$currentRequestLink = 'view.php?id=' . $currentElementId;
+$historyUserId = 0;
 
 $debugLog = function (string $message) use ($debugEnabled): void {
     if ($debugEnabled) {
@@ -878,7 +860,7 @@ foreach ($linkedElementIds as $linkedElementId) {
 
                 $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
 
-                $comment = 'Автоотклонено по связанной заявке #' . $currentElementId;
+                $comment = 'Автоотклонено по связанной заявке #' . $currentElementId . ' (' . $currentRequestLink . ')';
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
                 $executorCandidates = [];
                 if ($taskAssignedUserId > 0) {
@@ -914,14 +896,14 @@ foreach ($linkedElementIds as $linkedElementId) {
                     $addMarkerOnce($currentElementId, $pairMarker);
                     $addMarkerOnce($linkedElementId, $pairMarker);
 
-                    $msgLinked = "Заявка отклонена автоматически по связанной заявке #{$currentElementId}. Отклонил: {$currentUserName}.";
-                    CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $currentUserId);
+                    $msgLinked = "Заявка отклонена автоматически по связанной заявке #{$currentElementId} ({$currentRequestLink}).";
+                    CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $historyUserId);
                     $appendHistoryLine($linkedElementId, $msgLinked);
                     $this->WriteToTrackingService("linked_decline: {$msgLinked}");
 
                     $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
-                    $msgMain = "Связанная заявка #{$linkedElementId} отклонена автоматически. Отклонил: {$currentUserName}.";
-                    CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $currentUserId);
+                    $msgMain = "Связанная заявка #{$linkedElementId} отклонена автоматически.";
+                    CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $historyUserId);
                     $appendHistoryLine($currentElementId, $msgMain);
                     $this->WriteToTrackingService("linked_decline: {$msgMain}");
 

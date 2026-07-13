@@ -41,26 +41,8 @@ if (class_exists('Bitrix\\Main\\Application')) {
     $sqlHelper = $connection->getSqlHelper();
 }
 
-$currentUserId = 0;
-if (class_exists('Bitrix\\Main\\Engine\\CurrentUser')) {
-    $currentUserId = (int)\Bitrix\Main\Engine\CurrentUser::get()->getId();
-}
-if ($currentUserId <= 0 && isset($GLOBALS['USER']) && is_object($GLOBALS['USER'])) {
-    $currentUserId = (int)$GLOBALS['USER']->GetID();
-}
-if ($currentUserId <= 0) {
-    $currentUserId = 1;
-}
-$executorUserId = 1; // Выполняем задания БП от имени администратора.
-
-$currentUserName = 'Пользователь #' . $currentUserId;
-$userRs = CUser::GetByID($currentUserId);
-if ($userData = $userRs->Fetch()) {
-    $fio = trim((string)$userData['LAST_NAME'] . ' ' . (string)$userData['NAME'] . ' ' . (string)$userData['SECOND_NAME']);
-    if ($fio !== '') {
-        $currentUserName = $fio;
-    }
-}
+$currentRequestLink = 'view.php?id=' . $currentElementId;
+$historyUserId = 0;
 
 $linkedElementIds = [];
 $rsProps = CIBlockElement::GetProperty($iblockId, $currentElementId, [], ['CODE' => $propertyCodeLinked]);
@@ -505,7 +487,7 @@ foreach ($linkedElementIds as $linkedElementId) {
             }
             $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
 
-            $comment = 'Автосогласовано по согласованию связанной заявки #' . $currentElementId;
+            $comment = 'Автосогласовано по согласованию связанной заявки #' . $currentElementId . ' (' . $currentRequestLink . ')';
             $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
             $executorCandidates = [];
             if ($taskAssignedUserId > 0) {
@@ -534,14 +516,14 @@ foreach ($linkedElementIds as $linkedElementId) {
                     continue;
                 }
 
-                $msgLinked = "Заявка согласована автоматически по связанной заявке #{$currentElementId}. Инициатор согласования: {$currentUserName}.";
-                CBPDocument::AddDocumentToHistory($linkedDocumentId, $pairMarker . ' ' . $msgLinked, $currentUserId);
+                $msgLinked = "Заявка согласована автоматически по связанной заявке #{$currentElementId} ({$currentRequestLink}).";
+                CBPDocument::AddDocumentToHistory($linkedDocumentId, $pairMarker . ' ' . $msgLinked, $historyUserId);
                 $appendHistoryOnce($linkedElementId, $msgLinked, $pairMarker);
                 $this->WriteToTrackingService("linked_approve: {$msgLinked}");
 
                 $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
-                $msgMain = "Связанная заявка #{$linkedElementId} согласована автоматически, как связанная. Инициатор согласования: {$currentUserName}.";
-                CBPDocument::AddDocumentToHistory($mainDocumentId, $pairMarker . ' ' . $msgMain, $currentUserId);
+                $msgMain = "Связанная заявка #{$linkedElementId} согласована автоматически, как связанная.";
+                CBPDocument::AddDocumentToHistory($mainDocumentId, $pairMarker . ' ' . $msgMain, $historyUserId);
                 $appendHistoryOnce($currentElementId, $msgMain, $pairMarker);
                 $this->WriteToTrackingService("linked_approve: {$msgMain}");
             } else {

@@ -54,25 +54,8 @@ if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc')) {
     return;
 }
 
-$currentUserId = 0;
-if (class_exists('Bitrix\\Main\\Engine\\CurrentUser')) {
-    $currentUserId = (int)\Bitrix\Main\Engine\CurrentUser::get()->getId();
-}
-if ($currentUserId <= 0 && isset($GLOBALS['USER']) && is_object($GLOBALS['USER'])) {
-    $currentUserId = (int)$GLOBALS['USER']->GetID();
-}
-if ($currentUserId <= 0) {
-    $currentUserId = 1;
-}
-
-$currentUserName = 'Пользователь #' . $currentUserId;
-$userRs = CUser::GetByID($currentUserId);
-if ($userData = $userRs->Fetch()) {
-    $fio = trim((string)$userData['LAST_NAME'] . ' ' . (string)$userData['NAME'] . ' ' . (string)$userData['SECOND_NAME']);
-    if ($fio !== '') {
-        $currentUserName = $fio;
-    }
-}
+$currentRequestLink = 'view.php?id=' . $currentElementId;
+$historyUserId = 0;
 
 $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
 
@@ -718,7 +701,7 @@ foreach ($groupIds as $groupId) {
                     continue;
                 }
 
-                $comment = 'Автосогласовано по групповой заявке ' . $groupTitleForMessage . '. Инициатор: заявка #' . $currentElementId;
+                $comment = 'Автосогласовано по групповой заявке ' . $groupTitleForMessage . '. Инициатор: заявка #' . $currentElementId . ' (' . $currentRequestLink . ')';
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
 
                 $executorCandidates = [];
@@ -751,12 +734,12 @@ foreach ($groupIds as $groupId) {
 
             if ($approvedAny) {
                 $requestDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
-                $historyMessage = "Заявка согласована автоматически по групповой заявке {$groupTitleForMessage}. Согласовал: {$currentUserName}.";
+                $historyMessage = "Заявка согласована автоматически по групповой заявке {$groupTitleForMessage}. Инициатор: заявка #{$currentElementId} ({$currentRequestLink}).";
 
                 // История и marker пишутся один раз на заявку по группе.
                 $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
                 if ($historyWasAdded) {
-                    CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
+                    CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $historyUserId);
                     $this->WriteToTrackingService("group_auto_approve: {$historyMessage}");
                 } else {
                     $debugLog("История по заявке #{$requestId} уже была добавлена ранее, marker={$marker}");
