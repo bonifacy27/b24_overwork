@@ -1054,6 +1054,11 @@ foreach ($groupIds as $groupId) {
                 continue;
             }
 
+            if (!empty($getRunningTasksForElement($dayOffRequestId))) {
+                $debugLog("Заявка #{$dayOffRequestId} с отгулом имеет активное задание БП; статус вручную не меняем, будет выполнено отклонение через задание");
+                continue;
+            }
+
             [$dayOffWorkflowStarted, $dayOffWorkflowInfo] = $startDayOffWorkflowIfNeeded($dayOffRequestId, $currentElementId, $groupId);
             if ($dayOffWorkflowStarted) {
                 $this->WriteToTrackingService(
@@ -1159,13 +1164,17 @@ foreach ($groupIds as $groupId) {
             }
 
             if ($declinedAny) {
+                $requestDocumentId = ['lists', 'Bitrix\Lists\BizprocDocumentLists', $requestId];
                 $historyMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
 
-                // История, marker и статус "Отклонена" пишутся один раз на заявку по группе.
-                if ($finalizeDeclinedRequest($requestId, $marker, $historyMessage)) {
+                // Для заявок с активным заданием БП статус вручную не меняем: его должен выставить сам маршрут БП.
+                // Здесь только фиксируем историю и marker, чтобы не было повторной обработки группы.
+                $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
+                if ($historyWasAdded) {
+                    CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
                     $this->WriteToTrackingService("group_auto_decline: {$historyMessage}");
                 } else {
-                    $debugLog("Финализация по заявке #{$requestId} уже была выполнена ранее, marker={$marker}");
+                    $debugLog("История по заявке #{$requestId} уже была добавлена ранее, marker={$marker}");
                 }
             } elseif ($lastError === '') {
                 $debugLog("Заявка #{$requestId} не была отклонена: активные задания не завершены или уже закрыты");
