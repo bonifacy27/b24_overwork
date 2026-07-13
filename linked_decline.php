@@ -881,6 +881,11 @@ foreach ($linkedElementIds as $linkedElementId) {
                 $comment = 'Автоотклонено по связанной заявке #' . $currentElementId;
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
                 $executorCandidates = [];
+                // Важно: связанную заявку сначала завершаем от имени пользователя,
+                // который нажал кнопку в основной заявке, а не от первого исполнителя найденного задания.
+                if ($currentUserId > 0) {
+                    $executorCandidates[] = $currentUserId;
+                }
                 if ($taskAssignedUserId > 0) {
                     $executorCandidates[] = $taskAssignedUserId;
                 }
