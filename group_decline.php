@@ -1,11 +1,11 @@
 <?php
 /**
- * group_auto_decline_v1_0_0.php
+ * group_auto_decline_v1_2_0.php
  *
  * Скрипт для активити БП "PHP код" (Bitrix24).
  *
- * Версия: 1.0.0
- * Дата: 05.06.2026
+ * Версия: 1.2.0
+ * Дата: 24.06.2026
  *
  * Назначение:
  * Автоматически отклоняет все заявки одной групповой заявки.
@@ -23,6 +23,19 @@
  * Важно:
  * - Технический маркер НЕ пишется в пользовательскую историю ISTORIYA.
  * - Маркер хранится в AUTO_DECLINE_MARKERS.
+ *
+ * Изменения v1.1.0:
+ * - добавлена проверка заявок группы по типу оплаты TIP_OPLATY;
+ * - если TIP_OPLATY = 3537688 ("Предоставление отгула"), запускается БП шаблона 1292;
+ * - запуск БП 1292 защищен от дублей через DB-lock на группу и marker в AUTO_DECLINE_MARKERS;
+ * - marker запуска БП хранится только в AUTO_DECLINE_MARKERS и не пишется в ISTORIYA.
+ *
+ * Изменения v1.2.0:
+ * - устранена коллизия повторного запуска БП 1292 при групповом автоотклонении;
+ * - заявки с TIP_OPLATY = 3537688 сначала переводятся в статус "Отклонена";
+ * - только после фиксации статуса и служебного marker-а запускается БП 1292;
+ * - обработка заявок с отгулом выполняется первым проходом по всей группе до завершения заданий БП;
+ * - технический marker по-прежнему хранится только в AUTO_DECLINE_MARKERS и не пишется в ISTORIYA.
  */
 
 $iblockId = 391;
@@ -32,8 +45,22 @@ $propertyCodeStatus = 'STATUS';
 $propertyCodeHistory = 'ISTORIYA';
 $propertyCodeMarkers = 'AUTO_DECLINE_MARKERS';
 
+// v1.1.0: тип оплаты заявки.
+// PROPERTY_3087 / TIP_OPLATY — привязка к элементу справочника типов оплаты.
+// 3537688 — "Предоставление отгула".
+$propertyCodePaymentType = 'TIP_OPLATY';
+$paymentTypeDayOffElementId = 3537688;
+
+// v1.1.0: БП, который нужно запускать по заявке с типом оплаты "Предоставление отгула".
+$dayOffWorkflowTemplateId = 1292;
+$dayOffWorkflowParameters = [];
+
 $statusDeclineElementId = 3578386; // ID элемента статуса "В работе C&B".
 $statusDeclineName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
+
+// v1.2.0: статус, в который переводим заявки с типом оплаты "Предоставление отгула" перед запуском БП 1292.
+$statusRejectedElementId = 3575323; // ID элемента статуса "Отклонена".
+$statusRejectedName = 'Отклонена';
 
 $executorUserId = 1; // Резервный пользователь для выполнения задания БП.
 $debugEnabled = true; // После проверки на бою можно поставить false.
@@ -257,6 +284,152 @@ $appendHistoryOnce = static function (int $elementId, string $marker, string $me
 
 $makeGroupMarker = static function (int $groupId, int $elementId): string {
     return 'AUTO_DECLINE_GROUP_REQUEST:' . $groupId . ':' . $elementId;
+};
+
+/**
+ * v1.1.0: marker запуска БП 1292 по заявке с типом оплаты "Предоставление отгула".
+ * Marker не зависит от группы: БП должен быть запущен по конкретной заявке только один раз.
+ */
+$makeDayOffWorkflowMarker = static function (int $elementId) use ($dayOffWorkflowTemplateId, $paymentTypeDayOffElementId): string {
+    return 'AUTO_DAYOFF_REJECTED_AND_WORKFLOW_STARTED:' . $dayOffWorkflowTemplateId . ':TIP_OPLATY:' . $paymentTypeDayOffElementId . ':REQUEST:' . $elementId;
+};
+
+/**
+ * v1.1.0: получить ID элементов из свойства TIP_OPLATY.
+ * Поддерживает одиночное и множественное свойство-привязку.
+ */
+$getPaymentTypeIds = static function (int $elementId) use ($iblockId, $propertyCodePaymentType): array {
+    $ids = [];
+
+    if ($elementId <= 0) {
+        return [];
+    }
+
+    $res = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodePaymentType]);
+    while ($prop = $res->Fetch()) {
+        $value = (int)($prop['VALUE'] ?? 0);
+        if ($value > 0) {
+            $ids[$value] = true;
+        }
+    }
+
+    return array_keys($ids);
+};
+
+/**
+ * v1.2.0: установить статус заявки.
+ * STATUS / PROPERTY_3081 — привязка к элементу справочника статусов.
+ */
+$setRequestStatus = static function (int $elementId, int $statusElementId) use ($iblockId, $propertyCodeStatus, $debugLog): bool {
+    if ($elementId <= 0 || $statusElementId <= 0) {
+        return false;
+    }
+
+    try {
+        CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [
+            $propertyCodeStatus => $statusElementId,
+        ]);
+        $debugLog("v1.2.0: заявка #{$elementId} переведена в статус ID={$statusElementId}");
+        return true;
+    } catch (\Throwable $e) {
+        $debugLog("v1.2.0: ошибка установки статуса заявки #{$elementId}: " . $e->getMessage());
+        return false;
+    }
+};
+
+/**
+ * v1.1.0: если у заявки TIP_OPLATY = 3537688, запускает БП 1292.
+ * Защита от дублей: DB-lock на группу + marker в AUTO_DECLINE_MARKERS.
+ * Технический marker и workflowId в пользовательскую историю ISTORIYA не пишутся.
+ */
+$startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElementId, int $groupId) use (
+    $paymentTypeDayOffElementId,
+    $dayOffWorkflowTemplateId,
+    $dayOffWorkflowParameters,
+    $statusRejectedElementId,
+    $statusRejectedName,
+    $getPaymentTypeIds,
+    $getElementStatus,
+    $setRequestStatus,
+    $makeDayOffWorkflowMarker,
+    $hasMarker,
+    $appendMarker,
+    $debugLog
+): array {
+    if ($requestId <= 0) {
+        return [false, 'Некорректный ID заявки'];
+    }
+
+    $paymentTypeIds = $getPaymentTypeIds($requestId);
+    $debugLog(
+        "v1.2.0: TIP_OPLATY requestId={$requestId}: "
+        . print_r($paymentTypeIds, true)
+    );
+
+    if (!in_array($paymentTypeDayOffElementId, $paymentTypeIds, true)) {
+        return [false, 'Тип оплаты не "Предоставление отгула"'];
+    }
+
+    $workflowMarker = $makeDayOffWorkflowMarker($requestId);
+    if ($hasMarker($requestId, $workflowMarker)) {
+        return [false, "Заявка с отгулом уже обработана ранее, marker={$workflowMarker}"];
+    }
+
+    // v1.2.0: сначала переводим заявку с отгулом в статус "Отклонена".
+    [$currentStatusId, $currentStatusName] = $getElementStatus($requestId);
+    if ($currentStatusId !== $statusRejectedElementId) {
+        if (!$setRequestStatus($requestId, $statusRejectedElementId)) {
+            return [false, "Не удалось перевести заявку в статус '{$statusRejectedName}'"];
+        }
+    } else {
+        $debugLog("v1.2.0: заявка #{$requestId} уже в статусе '{$statusRejectedName}'");
+    }
+
+    // v1.2.0: marker ставим ДО запуска БП 1292.
+    // Это защищает от повторных экземпляров группового скрипта, которые стартуют после автоотклонения других заявок группы.
+    // Marker технический: в ISTORIYA он не пишется.
+    $appendMarker($requestId, $workflowMarker);
+
+    if (!class_exists('CBPDocument')) {
+        return [false, 'Класс CBPDocument недоступен'];
+    }
+
+    if (class_exists('Bitrix\\Main\\Loader')) {
+        if (!\Bitrix\Main\Loader::includeModule('bizproc')) {
+            return [false, 'Не удалось подключить модуль bizproc'];
+        }
+        \Bitrix\Main\Loader::includeModule('lists');
+    }
+
+    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
+    $workflowErrors = [];
+
+    try {
+        $workflowId = CBPDocument::StartWorkflow(
+            $dayOffWorkflowTemplateId,
+            $documentId,
+            $dayOffWorkflowParameters,
+            $workflowErrors
+        );
+
+        if (!empty($workflowErrors)) {
+            return [false, 'Ошибки запуска БП: ' . print_r($workflowErrors, true)];
+        }
+
+        if ((string)$workflowId === '') {
+            return [false, 'CBPDocument::StartWorkflow вернул пустой workflowId'];
+        }
+
+        $debugLog(
+            "v1.2.0: заявка #{$requestId} с отгулом переведена в статус '{$statusRejectedName}', "
+            . "БП {$dayOffWorkflowTemplateId} запущен, workflowId={$workflowId}, "
+            . "группа={$groupId}, инициатор={$currentElementId}"
+        );
+
+        return [true, (string)$workflowId];
+    } catch (\Throwable $e) {
+        return [false, $e->getMessage()];
+    }
 };
 
 $getConnection = static function () {
@@ -820,6 +993,26 @@ foreach ($groupIds as $groupId) {
             "group_auto_decline: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
         );
 
+        // v1.2.0: первый проход по группе — обрабатываем ВСЕ заявки с типом оплаты "Предоставление отгула".
+        // Важно сделать это до завершения заданий БП, потому что завершение заданий запускает такие же PHP-активити
+        // в других заявках группы. Повторные экземпляры увидят marker и не запустят БП 1292 повторно.
+        foreach ($requestIds as $dayOffRequestId) {
+            $dayOffRequestId = (int)$dayOffRequestId;
+            if ($dayOffRequestId <= 0) {
+                continue;
+            }
+
+            [$dayOffWorkflowStarted, $dayOffWorkflowInfo] = $startDayOffWorkflowIfNeeded($dayOffRequestId, $currentElementId, $groupId);
+            if ($dayOffWorkflowStarted) {
+                $this->WriteToTrackingService(
+                    "group_auto_decline: Заявка #{$dayOffRequestId} с типом оплаты «Предоставление отгула» переведена в статус «Отклонена», запущен БП #{$dayOffWorkflowTemplateId}"
+                );
+            } else {
+                $debugLog("v1.2.0: БП {$dayOffWorkflowTemplateId} по заявке #{$dayOffRequestId} не запускался: {$dayOffWorkflowInfo}");
+            }
+        }
+
+        // Второй проход — штатное автоотклонение активных заданий БП по заявкам группы.
         foreach ($requestIds as $requestId) {
             $requestId = (int)$requestId;
             if ($requestId <= 0) {
