@@ -29,7 +29,6 @@ $iblockId = 391;
 
 $propertyCodeGroup = 'GROUP_LINK';
 $propertyCodeStatus = 'STATUS';
-$propertyCodeHistory = 'ISTORIYA';
 $propertyCodeMarkers = 'AUTO_APPROVE_MARKERS';
 
 $statusApproveElementId = 3578386; // ID элемента статуса "В работе C&B".
@@ -173,31 +172,6 @@ $getGroupRequestIds = static function (int $groupId) use ($iblockId, $propertyCo
     return array_keys($requestIds);
 };
 
-$formatHistoryLine = static function (string $message): string {
-    return date('d.m.Y H:i:s') . ' ' . $message;
-};
-
-$appendHistory = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory, $formatHistoryLine): void {
-    if ($elementId <= 0 || $message === '') {
-        return;
-    }
-
-    $line = $formatHistoryLine($message);
-
-    $existing = '';
-    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
-    if ($prop = $propRes->Fetch()) {
-        $value = $prop['VALUE'] ?? '';
-        if (is_array($value) && isset($value['TEXT'])) {
-            $value = $value['TEXT'];
-        }
-        $existing = trim((string)$value);
-    }
-
-    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
-};
-
 $getMarkers = static function (int $elementId) use ($getPropertyValues, $propertyCodeMarkers): array {
     return $getPropertyValues($elementId, $propertyCodeMarkers);
 };
@@ -223,7 +197,7 @@ $appendMarker = static function (int $elementId, string $marker) use ($iblockId,
     CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeMarkers => $markers]);
 };
 
-$appendHistoryOnce = static function (int $elementId, string $marker, string $message) use ($hasMarker, $appendMarker, $appendHistory): bool {
+$appendHistoryOnce = static function (int $elementId, string $marker, string $message) use ($hasMarker, $appendMarker): bool {
     if ($elementId <= 0 || $marker === '' || $message === '') {
         return false;
     }
@@ -232,7 +206,6 @@ $appendHistoryOnce = static function (int $elementId, string $marker, string $me
         return false;
     }
 
-    $appendHistory($elementId, $message);
     $appendMarker($elementId, $marker);
 
     return true;

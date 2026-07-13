@@ -12,7 +12,6 @@
 $iblockId = 391;
 $propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
 $propertyCodeStatus = 'STATUS'; // При необходимости замените на фактический код свойства статуса.
-$propertyCodeHistory = 'ISTORIYA'; // Поле истории заявки.
 $statusApproveElementId = 3578386; // ID элемента статуса "В работе C&B" в справочнике статусов.
 $statusApproveName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
 $debugEnabled = true; // Временная подробная отладка в трекинге БП.
@@ -83,64 +82,11 @@ $isTaskStillRunning = static function (int $taskId): bool {
     return (int)($task['STATUS'] ?? 0) === (int)CBPTaskStatus::Running;
 };
 
-$getHistoryValue = static function (int $elementId) use ($iblockId, $propertyCodeHistory): string {
-    if ($elementId <= 0) {
-        return '';
-    }
-
-    $existing = '';
-    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
-    if ($prop = $propRes->Fetch()) {
-        $existing = trim((string)($prop['VALUE'] ?? ''));
-    }
-
-    return $existing;
-};
-
-$appendHistory = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory, $getHistoryValue): void {
-    if ($elementId <= 0 || $message === '') {
-        return;
-    }
-
-    $timestamp = date('d.m.Y H:i:s');
-    $line = '[' . $timestamp . '] ' . $message;
-    $existing = $getHistoryValue($elementId);
-
-    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
-};
-
 $makeAutoApprovePairMarker = static function (int $leftElementId, int $rightElementId): string {
     $ids = [$leftElementId, $rightElementId];
     sort($ids, SORT_NUMERIC);
 
     return '[AUTO_APPROVE_LINKED_REQUEST:' . $ids[0] . ':' . $ids[1] . ']';
-};
-
-$hasAutoApprovePairMarker = static function (int $elementId, string $marker) use ($getHistoryValue): bool {
-    if ($elementId <= 0 || $marker === '') {
-        return false;
-    }
-
-    return strpos($getHistoryValue($elementId), $marker) !== false;
-};
-
-$appendHistoryOnce = static function (int $elementId, string $message, string $marker) use ($iblockId, $propertyCodeHistory, $getHistoryValue): bool {
-    if ($elementId <= 0 || $message === '' || $marker === '') {
-        return false;
-    }
-
-    $existing = $getHistoryValue($elementId);
-    if (strpos($existing, $marker) !== false) {
-        return false;
-    }
-
-    $timestamp = date('d.m.Y H:i:s');
-    $line = '[' . $timestamp . '] ' . $marker . ' ' . $message;
-    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
-
-    return true;
 };
 
 $acquirePairLock = static function (string $marker) use ($connection, $sqlHelper, $debugLog): ?string {
@@ -421,10 +367,6 @@ foreach ($linkedElementIds as $linkedElementId) {
     }
 
     try {
-        if ($hasAutoApprovePairMarker($currentElementId, $pairMarker) || $hasAutoApprovePairMarker($linkedElementId, $pairMarker)) {
-            $debugLog("Пара {$currentElementId}/{$linkedElementId} уже обработана ранее, marker={$pairMarker}");
-            continue;
-        }
 
     $statusValue = '';
     $statusElementId = 0;
@@ -511,20 +453,14 @@ foreach ($linkedElementIds as $linkedElementId) {
             if ($ok) {
                 $approvedAny = true;
 
-                if ($hasAutoApprovePairMarker($currentElementId, $pairMarker) || $hasAutoApprovePairMarker($linkedElementId, $pairMarker)) {
-                    $debugLog("После Approve история по паре уже содержит marker={$pairMarker}, повторную запись не делаем");
-                    continue;
-                }
 
                 $msgLinked = "Заявка согласована автоматически по связанной заявке #{$currentElementId} ({$currentRequestLink}).";
                 CBPDocument::AddDocumentToHistory($linkedDocumentId, $pairMarker . ' ' . $msgLinked, $historyUserId);
-                $appendHistoryOnce($linkedElementId, $msgLinked, $pairMarker);
                 $this->WriteToTrackingService("linked_approve: {$msgLinked}");
 
                 $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
                 $msgMain = "Связанная заявка #{$linkedElementId} согласована автоматически, как связанная.";
                 CBPDocument::AddDocumentToHistory($mainDocumentId, $pairMarker . ' ' . $msgMain, $historyUserId);
-                $appendHistoryOnce($currentElementId, $msgMain, $pairMarker);
                 $this->WriteToTrackingService("linked_approve: {$msgMain}");
             } else {
                 $this->WriteToTrackingService(

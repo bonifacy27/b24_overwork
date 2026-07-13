@@ -29,7 +29,7 @@
  * - служебный marker больше не выводится в ISTORIYA;
  * - marker хранится в отдельном множественном/строчном свойстве AUTO_DECLINE_MARKERS;
  * - текст истории приведен к формату без указания исполнителя.
- * - добавлены appendHistoryLine() и addMarkerOnce();
+ * - добавлен addMarkerOnce();
  * - защита от повторного зеркального запуска сохраняется через marker пары заявок.
  *
  * Изменения v1.2.0:
@@ -41,14 +41,12 @@
  * Изменения v1.2.1:
  * - запуск БП 1292 дополнительно приведен к принципу group_auto_decline:
  *   DB-lock на пару заявок + marker в AUTO_DECLINE_MARKERS;
- * - marker запуска БП 1292 и workflowId не пишутся в пользовательскую историю ISTORIYA;
- * - в ISTORIYA остаются только человекочитаемые записи автоотклонения.
+ * - marker запуска БП 1292, workflowId и человекочитаемые записи не пишутся в пользовательскую историю ISTORIYA.
  */
 
 $iblockId = 391;
 $propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
 $propertyCodeStatus = 'STATUS';
-$propertyCodeHistory = 'ISTORIYA';
 $propertyCodeAutoDeclineMarkers = 'AUTO_DECLINE_MARKERS';
 
 // v1.2.0: тип оплаты связанной заявки.
@@ -320,27 +318,6 @@ $startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $curre
     }
 };
 
-
-/**
- * Запись в пользовательскую историю без служебных marker-ов.
- * Формат: 05.06.2026 10:47:03 Текст сообщения
- */
-$appendHistoryLine = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory): void {
-    if ($elementId <= 0 || trim($message) === '') {
-        return;
-    }
-
-    $line = date('d.m.Y H:i:s') . ' ' . trim($message);
-
-    $existing = '';
-    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
-    if ($prop = $propRes->Fetch()) {
-        $existing = trim((string)($prop['VALUE'] ?? ''));
-    }
-
-    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
-};
 
 $isTaskStillRunning = static function (int $taskId): bool {
     if ($taskId <= 0 || !class_exists('CBPTaskService')) {
@@ -898,13 +875,11 @@ foreach ($linkedElementIds as $linkedElementId) {
 
                     $msgLinked = "Заявка отклонена автоматически по связанной заявке #{$currentElementId} ({$currentRequestLink}).";
                     CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $historyUserId);
-                    $appendHistoryLine($linkedElementId, $msgLinked);
                     $this->WriteToTrackingService("linked_decline: {$msgLinked}");
 
                     $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
                     $msgMain = "Связанная заявка #{$linkedElementId} отклонена автоматически.";
                     CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $historyUserId);
-                    $appendHistoryLine($currentElementId, $msgMain);
                     $this->WriteToTrackingService("linked_decline: {$msgMain}");
 
                     break;
