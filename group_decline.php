@@ -432,6 +432,44 @@ $startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElem
     }
 };
 
+$finalizeDeclinedRequest = function (int $requestId, string $marker, string $historyMessage) use (
+    $statusRejectedElementId,
+    $statusRejectedName,
+    $getElementStatus,
+    $setRequestStatus,
+    $hasMarker,
+    $appendHistoryOnce,
+    $currentUserId,
+    $debugLog
+): bool {
+    if ($requestId <= 0 || $marker === '' || $historyMessage === '') {
+        return false;
+    }
+
+    if ($hasMarker($requestId, $marker)) {
+        $debugLog("Заявка #{$requestId} уже имеет marker {$marker}, финализация отклонения не повторяется");
+        return false;
+    }
+
+    [$currentStatusId, $currentStatusName] = $getElementStatus($requestId);
+    if ($currentStatusId !== $statusRejectedElementId) {
+        if (!$setRequestStatus($requestId, $statusRejectedElementId)) {
+            $debugLog("Не удалось перевести заявку #{$requestId} в статус '{$statusRejectedName}' перед записью истории");
+            return false;
+        }
+    } else {
+        $debugLog("Заявка #{$requestId} уже находится в статусе '{$statusRejectedName}'");
+    }
+
+    $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
+    if ($historyWasAdded && class_exists('CBPDocument')) {
+        $requestDocumentId = ['lists', 'Bitrix\Lists\BizprocDocumentLists', $requestId];
+        CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
+    }
+
+    return $historyWasAdded;
+};
+
 $getConnection = static function () {
     if (class_exists('Bitrix\\Main\\Application')) {
         return \Bitrix\Main\Application::getConnection();
@@ -1024,6 +1062,14 @@ foreach ($groupIds as $groupId) {
             } else {
                 $debugLog("v1.2.0: БП {$dayOffWorkflowTemplateId} по заявке #{$dayOffRequestId} не запускался: {$dayOffWorkflowInfo}");
             }
+
+            if (in_array($paymentTypeDayOffElementId, $getPaymentTypeIds($dayOffRequestId), true)) {
+                $dayOffGroupMarker = $makeGroupMarker($groupId, $dayOffRequestId);
+                $dayOffHistoryMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
+                if ($finalizeDeclinedRequest($dayOffRequestId, $dayOffGroupMarker, $dayOffHistoryMessage)) {
+                    $this->WriteToTrackingService("group_auto_decline: {$dayOffHistoryMessage}");
+                }
+            }
         }
 
         // Второй проход — штатное автоотклонение активных заданий БП по заявкам группы.
@@ -1039,13 +1085,7 @@ foreach ($groupIds as $groupId) {
             }
 
             [$statusElementId, $statusValue] = $getElementStatus($requestId);
-            if (!$isExpectedStatus($requestId)) {
-                $debugLog(
-                    "Заявка #{$requestId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
-                    . "(ожидался '{$statusDeclineName}', ID '{$statusDeclineElementId}')"
-                );
-                continue;
-            }
+            $debugLog("Заявка #{$requestId}: текущий статус '{$statusValue}', ID статуса '{$statusElementId}'. Проверяем активные задания БП/финализацию отклонения.");
 
             $marker = $makeGroupMarker($groupId, $requestId);
             if ($hasMarker($requestId, $marker)) {
@@ -1056,7 +1096,12 @@ foreach ($groupIds as $groupId) {
             // Повторно собираем активные задачи уже внутри lock, чтобы не согласовать то, что успел завершить другой процесс.
             $taskItems = $getRunningTasksForElement($requestId);
             if (empty($taskItems)) {
-                $debugLog("У заявки #{$requestId} нет активных заданий БП для автоотклонения");
+                $historyMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
+                if ($finalizeDeclinedRequest($requestId, $marker, $historyMessage)) {
+                    $this->WriteToTrackingService("group_auto_decline: {$historyMessage}");
+                } else {
+                    $debugLog("У заявки #{$requestId} нет активных заданий БП для автоотклонения, финализация не выполнена или уже была выполнена");
+                }
                 continue;
             }
 
@@ -1114,16 +1159,13 @@ foreach ($groupIds as $groupId) {
             }
 
             if ($declinedAny) {
-                $requestDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
                 $historyMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
 
-                // История и marker пишутся один раз на заявку по группе.
-                $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
-                if ($historyWasAdded) {
-                    CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
+                // История, marker и статус "Отклонена" пишутся один раз на заявку по группе.
+                if ($finalizeDeclinedRequest($requestId, $marker, $historyMessage)) {
                     $this->WriteToTrackingService("group_auto_decline: {$historyMessage}");
                 } else {
-                    $debugLog("История по заявке #{$requestId} уже была добавлена ранее, marker={$marker}");
+                    $debugLog("Финализация по заявке #{$requestId} уже была выполнена ранее, marker={$marker}");
                 }
             } elseif ($lastError === '') {
                 $debugLog("Заявка #{$requestId} не была отклонена: активные задания не завершены или уже закрыты");
