@@ -1,36 +1,22 @@
 <?php
 /**
- * linked_approve v1.1.1
- *
- * Код для активити БП "PHP код" (Bitrix24).
+ * linked_approve: код для активити БП "PHP код" (Bitrix24).
  *
  * Логика:
  * 1) Находит связанные заявки по свойству SVYAZANNYE_ZAYAVKI.
- * 2) Проверяет, что связанная заявка в статусе "В работе C&B".
- * 3) Если есть текущее Running-задание БП по связанной заявке — выполняет его кнопкой "Согласовано".
- * 4) Пишет человекочитаемую историю в обе заявки.
- * 5) Для защиты от задвоения использует отдельное поле AUTO_APPROVE_MARKERS.
- *
- * Изменения v1.1.1:
- * - служебный marker больше не выводится в ISTORIYA;
- * - marker хранится в отдельном множественном/строчном свойстве AUTO_APPROVE_MARKERS;
- * - текст истории приведен к формату:
- *   05.06.2026 10:47:03 Связанная заявка #3603166 согласована автоматически. Согласовал: ФИО.
- * - добавлены appendHistoryLine() и addMarkerOnce();
- * - защита от повторного зеркального запуска сохраняется через marker пары заявок.
+ * 2) Проверяет, что связанная заявка в статусе "На согласовании C&B".
+ * 3) Если есть текущее (Running/Waiting) задание БП по связанной заявке — выполняет его кнопкой "Согласовано".
+ * 4) Пишет трекинг в связанную и текущую заявку.
  */
 
 $iblockId = 391;
 $propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
-$propertyCodeStatus = 'STATUS';
-$propertyCodeHistory = 'ISTORIYA';
-$propertyCodeAutoApproveMarkers = 'AUTO_APPROVE_MARKERS';
-
+$propertyCodeStatus = 'STATUS'; // При необходимости замените на фактический код свойства статуса.
+$propertyCodeHistory = 'ISTORIYA'; // Поле истории заявки.
 $statusApproveElementId = 3578386; // ID элемента статуса "В работе C&B" в справочнике статусов.
 $statusApproveName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
-
-$debugEnabled = true; // При необходимости после проверки можно поставить false.
-$executorUserId = 1; // Выполняем задания БП от имени администратора, если исполнитель задания не сработал.
+$debugEnabled = true; // Временная подробная отладка в трекинге БП.
+$version = '1.1.0'; // Исправление задвоения истории через идемпотентный ключ пары заявок и DB-lock.
 
 $rootActivity = $this->GetRootActivity();
 $documentIdRaw = $rootActivity->GetDocumentId();
@@ -48,6 +34,13 @@ if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc')) {
     return;
 }
 
+$connection = null;
+$sqlHelper = null;
+if (class_exists('Bitrix\\Main\\Application')) {
+    $connection = \Bitrix\Main\Application::getConnection();
+    $sqlHelper = $connection->getSqlHelper();
+}
+
 $currentUserId = 0;
 if (class_exists('Bitrix\\Main\\Engine\\CurrentUser')) {
     $currentUserId = (int)\Bitrix\Main\Engine\CurrentUser::get()->getId();
@@ -58,6 +51,7 @@ if ($currentUserId <= 0 && isset($GLOBALS['USER']) && is_object($GLOBALS['USER']
 if ($currentUserId <= 0) {
     $currentUserId = 1;
 }
+$executorUserId = 1; // Выполняем задания БП от имени администратора.
 
 $currentUserName = 'Пользователь #' . $currentUserId;
 $userRs = CUser::GetByID($currentUserId);
@@ -67,12 +61,6 @@ if ($userData = $userRs->Fetch()) {
         $currentUserName = $fio;
     }
 }
-
-$debugLog = function (string $message) use ($debugEnabled): void {
-    if ($debugEnabled) {
-        $this->WriteToTrackingService('linked_approve [debug]: ' . $message);
-    }
-};
 
 $linkedElementIds = [];
 $rsProps = CIBlockElement::GetProperty($iblockId, $currentElementId, [], ['CODE' => $propertyCodeLinked]);
@@ -89,129 +77,10 @@ if (empty($linkedElementIds)) {
 }
 
 $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
-
-/**
- * Единый marker пары заявок. Порядок ID не важен.
- */
-$buildPairMarker = static function (int $elementIdA, int $elementIdB): string {
-    $ids = [$elementIdA, $elementIdB];
-    sort($ids, SORT_NUMERIC);
-    return 'AUTO_APPROVE_LINKED_REQUEST:' . $ids[0] . ':' . $ids[1];
-};
-
-/**
- * MySQL named lock для защиты от одновременного запуска двух PHP-действий по паре заявок.
- */
-$acquirePairLock = static function (string $marker) use ($debugLog): bool {
-    if (!class_exists('Bitrix\\Main\\Application')) {
-        return true;
+$debugLog = function (string $message) use ($debugEnabled): void {
+    if ($debugEnabled) {
+        $this->WriteToTrackingService('linked_approve [debug]: ' . $message);
     }
-
-    try {
-        $connection = \Bitrix\Main\Application::getConnection();
-        $sqlHelper = $connection->getSqlHelper();
-        $lockName = 'linked_approve_' . md5($marker);
-        $lockNameSql = $sqlHelper->forSql($lockName);
-        $lockResult = (int)$connection->queryScalar("SELECT GET_LOCK('{$lockNameSql}', 10)");
-        $debugLog("GET_LOCK {$lockName}: result={$lockResult}");
-
-        return $lockResult === 1;
-    } catch (\Throwable $e) {
-        $debugLog('GET_LOCK недоступен: ' . $e->getMessage());
-        // Не блокируем бизнес-логику, если конкретная БД/окружение не поддержало GET_LOCK.
-        return true;
-    }
-};
-
-$releasePairLock = static function (string $marker) use ($debugLog): void {
-    if (!class_exists('Bitrix\\Main\\Application')) {
-        return;
-    }
-
-    try {
-        $connection = \Bitrix\Main\Application::getConnection();
-        $sqlHelper = $connection->getSqlHelper();
-        $lockName = 'linked_approve_' . md5($marker);
-        $lockNameSql = $sqlHelper->forSql($lockName);
-        $releaseResult = (int)$connection->queryScalar("SELECT RELEASE_LOCK('{$lockNameSql}')");
-        $debugLog("RELEASE_LOCK {$lockName}: result={$releaseResult}");
-    } catch (\Throwable $e) {
-        $debugLog('RELEASE_LOCK ошибка: ' . $e->getMessage());
-    }
-};
-
-/**
- * Получить все значения свойства marker-ов.
- * Поддерживает и множественное, и одиночное строковое свойство.
- */
-$getMarkers = static function (int $elementId) use ($iblockId, $propertyCodeAutoApproveMarkers): array {
-    $markers = [];
-
-    if ($elementId <= 0) {
-        return [];
-    }
-
-    $res = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeAutoApproveMarkers]);
-    while ($prop = $res->Fetch()) {
-        $value = trim((string)($prop['VALUE'] ?? ''));
-        if ($value !== '') {
-            $markers[$value] = true;
-        }
-    }
-
-    return array_keys($markers);
-};
-
-$hasMarker = static function (int $elementId, string $marker) use ($getMarkers): bool {
-    if ($elementId <= 0 || $marker === '') {
-        return false;
-    }
-
-    return in_array($marker, $getMarkers($elementId), true);
-};
-
-/**
- * Добавить marker в AUTO_APPROVE_MARKERS один раз.
- * Важно: если поле множественное, SetPropertyValuesEx принимает массив значений.
- * Если поле одиночное, будет сохранен массив как набор значений не всегда корректно — для надежности лучше сделать поле множественным.
- */
-$addMarkerOnce = static function (int $elementId, string $marker) use ($iblockId, $propertyCodeAutoApproveMarkers, $getMarkers): void {
-    if ($elementId <= 0 || $marker === '') {
-        return;
-    }
-
-    $markers = $getMarkers($elementId);
-    if (in_array($marker, $markers, true)) {
-        return;
-    }
-
-    $markers[] = $marker;
-    $markers = array_values(array_unique(array_filter(array_map('trim', $markers))));
-
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [
-        $propertyCodeAutoApproveMarkers => $markers,
-    ]);
-};
-
-/**
- * Запись в пользовательскую историю без служебных marker-ов.
- * Формат: 05.06.2026 10:47:03 Текст сообщения
- */
-$appendHistoryLine = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory): void {
-    if ($elementId <= 0 || trim($message) === '') {
-        return;
-    }
-
-    $line = date('d.m.Y H:i:s') . ' ' . trim($message);
-
-    $existing = '';
-    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
-    if ($prop = $propRes->Fetch()) {
-        $existing = trim((string)($prop['VALUE'] ?? ''));
-    }
-
-    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
 };
 
 $isTaskStillRunning = static function (int $taskId): bool {
@@ -230,6 +99,100 @@ $isTaskStillRunning = static function (int $taskId): bool {
     }
 
     return (int)($task['STATUS'] ?? 0) === (int)CBPTaskStatus::Running;
+};
+
+$getHistoryValue = static function (int $elementId) use ($iblockId, $propertyCodeHistory): string {
+    if ($elementId <= 0) {
+        return '';
+    }
+
+    $existing = '';
+    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
+    if ($prop = $propRes->Fetch()) {
+        $existing = trim((string)($prop['VALUE'] ?? ''));
+    }
+
+    return $existing;
+};
+
+$appendHistory = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory, $getHistoryValue): void {
+    if ($elementId <= 0 || $message === '') {
+        return;
+    }
+
+    $timestamp = date('d.m.Y H:i:s');
+    $line = '[' . $timestamp . '] ' . $message;
+    $existing = $getHistoryValue($elementId);
+
+    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
+    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
+};
+
+$makeAutoApprovePairMarker = static function (int $leftElementId, int $rightElementId): string {
+    $ids = [$leftElementId, $rightElementId];
+    sort($ids, SORT_NUMERIC);
+
+    return '[AUTO_APPROVE_LINKED_REQUEST:' . $ids[0] . ':' . $ids[1] . ']';
+};
+
+$hasAutoApprovePairMarker = static function (int $elementId, string $marker) use ($getHistoryValue): bool {
+    if ($elementId <= 0 || $marker === '') {
+        return false;
+    }
+
+    return strpos($getHistoryValue($elementId), $marker) !== false;
+};
+
+$appendHistoryOnce = static function (int $elementId, string $message, string $marker) use ($iblockId, $propertyCodeHistory, $getHistoryValue): bool {
+    if ($elementId <= 0 || $message === '' || $marker === '') {
+        return false;
+    }
+
+    $existing = $getHistoryValue($elementId);
+    if (strpos($existing, $marker) !== false) {
+        return false;
+    }
+
+    $timestamp = date('d.m.Y H:i:s');
+    $line = '[' . $timestamp . '] ' . $marker . ' ' . $message;
+    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
+    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
+
+    return true;
+};
+
+$acquirePairLock = static function (string $marker) use ($connection, $sqlHelper, $debugLog): ?string {
+    if (!$connection || !$sqlHelper || $marker === '') {
+        return null;
+    }
+
+    $lockName = 'linked_approve_' . md5($marker);
+    $lockNameSql = $sqlHelper->forSql($lockName);
+
+    try {
+        $lockResult = (int)$connection->queryScalar("SELECT GET_LOCK('{$lockNameSql}', 10)");
+        if ($lockResult === 1) {
+            return $lockName;
+        }
+        $debugLog("Не удалось получить DB-lock {$lockName}, GET_LOCK result={$lockResult}");
+    } catch (\Throwable $e) {
+        $debugLog('Ошибка получения DB-lock: ' . $e->getMessage());
+    }
+
+    return null;
+};
+
+$releasePairLock = static function (?string $lockName) use ($connection, $sqlHelper, $debugLog): void {
+    if (!$connection || !$sqlHelper || !$lockName) {
+        return;
+    }
+
+    try {
+        $lockNameSql = $sqlHelper->forSql($lockName);
+        $connection->queryExecute("DO RELEASE_LOCK('{$lockNameSql}')");
+    } catch (\Throwable $e) {
+        $debugLog('Ошибка освобождения DB-lock: ' . $e->getMessage());
+    }
 };
 
 $resolveApproveActionCode = static function (int $taskId): string {
@@ -259,6 +222,8 @@ $resolveApproveActionCode = static function (int $taskId): string {
     return 'Approve';
 };
 
+
+
 $runAsUser = static function (int $userId, callable $callback) use ($debugLog) {
     global $USER;
     $canAuth = is_object($USER) && method_exists($USER, 'Authorize') && method_exists($USER, 'GetID');
@@ -284,13 +249,7 @@ $collectTaskDiagnostics = static function (int $taskId, int $userId, string $sta
         return;
     }
 
-    $taskResDbg = CBPTaskService::GetList(
-        ['ID' => 'DESC'],
-        ['ID' => $taskId],
-        false,
-        false,
-        ['ID', 'STATUS', 'USER_ID', 'USER_STATUS', 'WORKFLOW_ID', 'ACTIVITY', 'ACTIVITY_NAME']
-    );
+    $taskResDbg = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'STATUS', 'USER_ID', 'USER_STATUS', 'WORKFLOW_ID', 'ACTIVITY', 'ACTIVITY_NAME']);
     if (is_object($taskResDbg)) {
         $taskDbg = $taskResDbg->Fetch();
         $debugLog("diag[{$stage}] task snapshot: " . print_r($taskDbg, true));
@@ -328,13 +287,7 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
 
     $actionCode = $resolveApproveActionCode($taskId);
     if ((string)($task['ACTIVITY_NAME'] ?? '') === '' && class_exists('CBPTaskService')) {
-        $taskReloadRes = CBPTaskService::GetList(
-            ['ID' => 'DESC'],
-            ['ID' => $taskId],
-            false,
-            false,
-            ['ID', 'WORKFLOW_ID', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']
-        );
+        $taskReloadRes = CBPTaskService::GetList(['ID' => 'DESC'], ['ID' => $taskId], false, false, ['ID', 'WORKFLOW_ID', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']);
         if (is_object($taskReloadRes)) {
             $taskReload = $taskReloadRes->Fetch();
             if (is_array($taskReload)) {
@@ -343,7 +296,6 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
             }
         }
     }
-
     $debugLog("Начало doApproveTask: taskId={$taskId}, userId={$userId}, actionCode={$actionCode}");
     $collectTaskDiagnostics($taskId, $userId, 'start');
     $debugLog('Task raw: ' . print_r($task, true));
@@ -365,16 +317,7 @@ $doApproveTask = static function (array $task, int $userId, string $comment = ''
 
         if (method_exists('CBPDocument', 'PostTaskForm')) {
             $requests = [
-                [
-                    'approve' => 'Y',
-                    'APPROVE' => 'Y',
-                    'ACTION' => 'approve',
-                    'status' => 'Y',
-                    'comment' => $comment,
-                    'task_comment' => $comment,
-                    'USER_ID' => $userId,
-                    'REAL_USER_ID' => $userId,
-                ],
+                ['approve' => 'Y', 'APPROVE' => 'Y', 'ACTION' => 'approve', 'status' => 'Y', 'comment' => $comment, 'task_comment' => $comment, 'USER_ID' => $userId, 'REAL_USER_ID' => $userId],
             ];
             foreach ($codesToTry as $codeTry) {
                 $requests[] = [
@@ -488,158 +431,136 @@ foreach ($linkedElementIds as $linkedElementId) {
         continue;
     }
 
-    $pairMarker = $buildPairMarker($currentElementId, $linkedElementId);
-
-    if (!$acquirePairLock($pairMarker)) {
-        $this->WriteToTrackingService("linked_approve: пара {$currentElementId}/{$linkedElementId} уже обрабатывается другим процессом");
+    $pairMarker = $makeAutoApprovePairMarker($currentElementId, $linkedElementId);
+    $pairLockName = $acquirePairLock($pairMarker);
+    if ($connection && $pairLockName === null) {
+        $this->WriteToTrackingService("linked_approve: пара заявок {$currentElementId}/{$linkedElementId} уже обрабатывается другим экземпляром, пропускаем");
         continue;
     }
 
     try {
-        // Повторная проверка под lock: если любая из заявок уже содержит marker пары, повторно ничего не делаем.
-        if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
-            $this->WriteToTrackingService("linked_approve: пара {$currentElementId}/{$linkedElementId} уже была обработана ранее, marker={$pairMarker}");
+        if ($hasAutoApprovePairMarker($currentElementId, $pairMarker) || $hasAutoApprovePairMarker($linkedElementId, $pairMarker)) {
+            $debugLog("Пара {$currentElementId}/{$linkedElementId} уже обработана ранее, marker={$pairMarker}");
             continue;
         }
 
-        $statusValue = '';
-        $statusElementId = 0;
-        $statusPropRes = CIBlockElement::GetProperty($iblockId, $linkedElementId, [], ['CODE' => $propertyCodeStatus]);
-        if ($statusProp = $statusPropRes->Fetch()) {
-            $statusValue = trim((string)($statusProp['VALUE_ENUM'] ?: $statusProp['VALUE']));
-            $statusElementId = (int)($statusProp['VALUE'] ?? 0);
-        }
+    $statusValue = '';
+    $statusElementId = 0;
+    $statusPropRes = CIBlockElement::GetProperty($iblockId, $linkedElementId, [], ['CODE' => $propertyCodeStatus]);
+    if ($statusProp = $statusPropRes->Fetch()) {
+        $statusValue = trim((string)($statusProp['VALUE_ENUM'] ?: $statusProp['VALUE']));
+        $statusElementId = (int)($statusProp['VALUE'] ?? 0);
+    }
 
-        $isExpectedStatus = false;
-        if ($statusApproveElementId > 0 && $statusElementId > 0 && $statusElementId === $statusApproveElementId) {
-            $isExpectedStatus = true;
-        }
-        if (!$isExpectedStatus && $statusValue !== '' && $statusValue === $statusApproveName) {
-            $isExpectedStatus = true;
-        }
+    $isExpectedStatus = false;
+    if ($statusApproveElementId > 0 && $statusElementId > 0 && $statusElementId === $statusApproveElementId) {
+        $isExpectedStatus = true;
+    }
+    if (!$isExpectedStatus && $statusValue !== '' && $statusValue === $statusApproveName) {
+        $isExpectedStatus = true;
+    }
 
-        if (!$isExpectedStatus) {
-            $this->WriteToTrackingService(
-                "linked_approve: Заявка {$linkedElementId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
-                . "(ожидался '{$statusApproveName}', ID '{$statusApproveElementId}')"
-            );
+    if (!$isExpectedStatus) {
+        $this->WriteToTrackingService(
+            "linked_approve: Заявка {$linkedElementId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
+            . "(ожидался '{$statusApproveName}', ID '{$statusApproveElementId}')"
+        );
+        continue;
+    }
+
+    $linkedDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $linkedElementId];
+    $states = CBPDocument::GetDocumentStates($documentType, $linkedDocumentId);
+    $debugLog("Найдены состояния БП для {$linkedElementId}: " . print_r($states, true));
+
+    if (empty($states)) {
+        $this->WriteToTrackingService("linked_approve: У связанной заявки {$linkedElementId} нет активных БП");
+        continue;
+    }
+
+    $approvedAny = false;
+
+    foreach ($states as $state) {
+        $workflowId = (string)($state['ID'] ?? '');
+        if ($workflowId === '') {
             continue;
         }
 
-        $linkedDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $linkedElementId];
-        $states = CBPDocument::GetDocumentStates($documentType, $linkedDocumentId);
-        $debugLog("Найдены состояния БП для {$linkedElementId}: " . print_r($states, true));
+        $taskRes = CBPTaskService::GetList(
+            ['ID' => 'ASC'],
+            [
+                'WORKFLOW_ID' => $workflowId,
+                'STATUS' => CBPTaskStatus::Running,
+            ],
+            false,
+            false,
+            ['ID', 'NAME', 'WORKFLOW_ID', 'STATUS', 'USER_ID', 'USER_STATUS', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']
+        );
 
-        if (empty($states)) {
-            $this->WriteToTrackingService("linked_approve: У связанной заявки {$linkedElementId} нет активных БП");
-            continue;
-        }
-
-        $approvedAny = false;
-
-        foreach ($states as $state) {
-            $workflowId = (string)($state['ID'] ?? '');
-            if ($workflowId === '') {
+        $foundTasksForWorkflow = 0;
+        while ($task = $taskRes->Fetch()) {
+            $foundTasksForWorkflow++;
+            $taskId = (int)($task['ID'] ?? 0);
+            if ($taskId <= 0) {
                 continue;
             }
+            $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
 
-            $taskRes = CBPTaskService::GetList(
-                ['ID' => 'ASC'],
-                [
-                    'WORKFLOW_ID' => $workflowId,
-                    'STATUS' => CBPTaskStatus::Running,
-                ],
-                false,
-                false,
-                ['ID', 'NAME', 'WORKFLOW_ID', 'STATUS', 'USER_ID', 'USER_STATUS', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']
-            );
+            $comment = 'Автосогласовано по согласованию связанной заявки #' . $currentElementId;
+            $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
+            $executorCandidates = [];
+            if ($taskAssignedUserId > 0) {
+                $executorCandidates[] = $taskAssignedUserId;
+            }
+            $executorCandidates[] = $executorUserId;
+            $executorCandidates = array_values(array_unique($executorCandidates));
 
-            $foundTasksForWorkflow = 0;
-            while ($task = $taskRes->Fetch()) {
-                // Еще одна защита внутри цикла: если marker появился после завершения другого task, не пишем повторно.
-                if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
-                    $this->WriteToTrackingService("linked_approve: marker появился во время обработки, повтор пропущен: {$pairMarker}");
+            $ok = false;
+            $err = 'Не удалось завершить задачу ни одним исполнителем.';
+            $successUserId = 0;
+            foreach ($executorCandidates as $candidateUserId) {
+                $debugLog("Пробуем завершить taskId={$taskId} от userId={$candidateUserId}");
+                [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment, (string)($state['STATE_NAME'] ?? ''));
+                if ($ok) {
+                    $successUserId = $candidateUserId;
                     break;
                 }
+            }
 
-                $foundTasksForWorkflow++;
-                $taskId = (int)($task['ID'] ?? 0);
-                if ($taskId <= 0) {
+            if ($ok) {
+                $approvedAny = true;
+
+                if ($hasAutoApprovePairMarker($currentElementId, $pairMarker) || $hasAutoApprovePairMarker($linkedElementId, $pairMarker)) {
+                    $debugLog("После Approve история по паре уже содержит marker={$pairMarker}, повторную запись не делаем");
                     continue;
                 }
 
-                $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
+                $msgLinked = "Заявка согласована автоматически по связанной заявке #{$currentElementId}. Инициатор согласования: {$currentUserName}.";
+                CBPDocument::AddDocumentToHistory($linkedDocumentId, $pairMarker . ' ' . $msgLinked, $currentUserId);
+                $appendHistoryOnce($linkedElementId, $msgLinked, $pairMarker);
+                $this->WriteToTrackingService("linked_approve: {$msgLinked}");
 
-                $comment = 'Автосогласовано по согласованию связанной заявки #' . $currentElementId;
-                $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
-                $executorCandidates = [];
-                if ($taskAssignedUserId > 0) {
-                    $executorCandidates[] = $taskAssignedUserId;
-                }
-                $executorCandidates[] = $executorUserId;
-                $executorCandidates = array_values(array_unique($executorCandidates));
-
-                $ok = false;
-                $err = 'Не удалось завершить задачу ни одним исполнителем.';
-                $successUserId = 0;
-                foreach ($executorCandidates as $candidateUserId) {
-                    $debugLog("Пробуем завершить taskId={$taskId} от userId={$candidateUserId}");
-                    [$ok, $err] = $doApproveTask($task, $candidateUserId, $comment, (string)($state['STATE_NAME'] ?? ''));
-                    if ($ok) {
-                        $successUserId = $candidateUserId;
-                        break;
-                    }
-                }
-
-                if ($ok) {
-                    // После успешного завершения еще раз проверяем marker перед записью истории.
-                    if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
-                        $this->WriteToTrackingService("linked_approve: task {$taskId} завершен, но история уже была записана ранее, marker={$pairMarker}");
-                        $approvedAny = true;
-                        break;
-                    }
-
-                    $approvedAny = true;
-
-                    // Сначала фиксируем marker в обеих заявках, затем пишем историю.
-                    // Даже если зеркальный БП стартует сразу после Approve, он увидит marker и не продублирует запись.
-                    $addMarkerOnce($currentElementId, $pairMarker);
-                    $addMarkerOnce($linkedElementId, $pairMarker);
-
-                    $msgLinked = "Заявка согласована автоматически по связанной заявке #{$currentElementId}. Согласовал: {$currentUserName}.";
-                    CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $currentUserId);
-                    $appendHistoryLine($linkedElementId, $msgLinked);
-                    $this->WriteToTrackingService("linked_approve: {$msgLinked}");
-
-                    $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
-                    $msgMain = "Связанная заявка #{$linkedElementId} согласована автоматически. Согласовал: {$currentUserName}.";
-                    CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $currentUserId);
-                    $appendHistoryLine($currentElementId, $msgMain);
-                    $this->WriteToTrackingService("linked_approve: {$msgMain}");
-
-                    break;
-                }
-
+                $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
+                $msgMain = "Связанная заявка #{$linkedElementId} согласована автоматически, как связанная. Инициатор согласования: {$currentUserName}.";
+                CBPDocument::AddDocumentToHistory($mainDocumentId, $pairMarker . ' ' . $msgMain, $currentUserId);
+                $appendHistoryOnce($currentElementId, $msgMain, $pairMarker);
+                $this->WriteToTrackingService("linked_approve: {$msgMain}");
+            } else {
                 $this->WriteToTrackingService(
                     "linked_approve: Ошибка автосогласования task {$taskId} по заявке {$linkedElementId}: {$err}"
                 );
             }
-
-            if ($foundTasksForWorkflow === 0) {
-                $debugLog("По workflowId={$workflowId} не найдено задач по фильтру STATUS=Running (без USER_STATUS)");
-            }
-
-            if ($approvedAny) {
-                break;
-            }
         }
-
-        if (!$approvedAny) {
-            $this->WriteToTrackingService(
-                "linked_approve: У связанной заявки {$linkedElementId} не найдено ожидающих заданий БП для автосогласования"
-            );
+        if ($foundTasksForWorkflow === 0) {
+            $debugLog("По workflowId={$workflowId} не найдено задач по фильтру STATUS=Running (без USER_STATUS)");
         }
+    }
+
+    if (!$approvedAny) {
+        $this->WriteToTrackingService(
+            "linked_approve: У связанной заявки {$linkedElementId} не найдено ожидающих заданий БП для автосогласования"
+        );
+    }
     } finally {
-        $releasePairLock($pairMarker);
+        $releasePairLock($pairLockName);
     }
 }
