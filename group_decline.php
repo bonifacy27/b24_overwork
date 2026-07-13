@@ -993,12 +993,26 @@ foreach ($groupIds as $groupId) {
             "group_auto_decline: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
         );
 
+        $currentRequestMarker = $makeGroupMarker($groupId, $currentElementId);
+        if ($hasMarker($currentElementId, $currentRequestMarker)) {
+            $debugLog(
+                "Текущая заявка #{$currentElementId} уже обработана групповым автодействием "
+                . "по marker={$currentRequestMarker}; каскадный запуск не размножаем"
+            );
+            continue;
+        }
+
         // v1.2.0: первый проход по группе — обрабатываем ВСЕ заявки с типом оплаты "Предоставление отгула".
         // Важно сделать это до завершения заданий БП, потому что завершение заданий запускает такие же PHP-активити
         // в других заявках группы. Повторные экземпляры увидят marker и не запустят БП 1292 повторно.
         foreach ($requestIds as $dayOffRequestId) {
             $dayOffRequestId = (int)$dayOffRequestId;
             if ($dayOffRequestId <= 0) {
+                continue;
+            }
+
+            if ($dayOffRequestId === $currentElementId) {
+                $debugLog("Текущая заявка #{$dayOffRequestId} уже отклонена нажатием пользователя, повторно ее не обрабатываем как отгул");
                 continue;
             }
 
@@ -1016,6 +1030,11 @@ foreach ($groupIds as $groupId) {
         foreach ($requestIds as $requestId) {
             $requestId = (int)$requestId;
             if ($requestId <= 0) {
+                continue;
+            }
+
+            if ($requestId === $currentElementId) {
+                $debugLog("Текущая заявка #{$requestId} уже завершена нажатием пользователя, повторно ее не автозавершаем");
                 continue;
             }
 

@@ -673,9 +673,23 @@ foreach ($groupIds as $groupId) {
             "group_auto_approve: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
         );
 
+        $currentRequestMarker = $makeGroupMarker($groupId, $currentElementId);
+        if ($hasMarker($currentElementId, $currentRequestMarker)) {
+            $debugLog(
+                "Текущая заявка #{$currentElementId} уже обработана групповым автодействием "
+                . "по marker={$currentRequestMarker}; каскадный запуск не размножаем"
+            );
+            continue;
+        }
+
         foreach ($requestIds as $requestId) {
             $requestId = (int)$requestId;
             if ($requestId <= 0) {
+                continue;
+            }
+
+            if ($requestId === $currentElementId) {
+                $debugLog("Текущая заявка #{$requestId} уже завершена нажатием пользователя, повторно ее не автозавершаем");
                 continue;
             }
 
