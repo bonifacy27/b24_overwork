@@ -1,6 +1,6 @@
 <?php
 /**
- * linked_decline v1.0.4
+ * linked_decline v1.2.1
  *
  * Код для активити БП "PHP код" (Bitrix24).
  *
@@ -32,6 +32,18 @@
  *   05.06.2026 10:47:03 Связанная заявка #3603166 отклонена автоматически. Отклонил: ФИО.
  * - добавлены appendHistoryLine() и addMarkerOnce();
  * - защита от повторного зеркального запуска сохраняется через marker пары заявок.
+ *
+ * Изменения v1.2.0:
+ * - добавлена проверка связанной заявки по типу оплаты TIP_OPLATY;
+ * - если TIP_OPLATY = 3537688 ("Предоставление отгула"), запускается БП шаблона 1292;
+ * - добавлена защита от повторного запуска БП 1292 через marker в AUTO_DECLINE_MARKERS;
+ * - запуск БП 1292 выполняется независимо от автоотклонения задания.
+ *
+ * Изменения v1.2.1:
+ * - запуск БП 1292 дополнительно приведен к принципу group_auto_decline:
+ *   DB-lock на пару заявок + marker в AUTO_DECLINE_MARKERS;
+ * - marker запуска БП 1292 и workflowId не пишутся в пользовательскую историю ISTORIYA;
+ * - в ISTORIYA остаются только человекочитаемые записи автоотклонения.
  */
 
 $iblockId = 391;
@@ -39,6 +51,16 @@ $propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
 $propertyCodeStatus = 'STATUS';
 $propertyCodeHistory = 'ISTORIYA';
 $propertyCodeAutoDeclineMarkers = 'AUTO_DECLINE_MARKERS';
+
+// v1.2.0: тип оплаты связанной заявки.
+// PROPERTY_3087 / TIP_OPLATY — привязка к элементу справочника типов оплаты.
+// 3537688 — "Предоставление отгула".
+$propertyCodePaymentType = 'TIP_OPLATY';
+$paymentTypeDayOffElementId = 3537688;
+
+// v1.2.0: БП, который нужно запускать по связанной заявке с типом оплаты "Предоставление отгула".
+$dayOffWorkflowTemplateId = 1292;
+$dayOffWorkflowParameters = [];
 
 $statusDeclineElementId = 3578386; // ID элемента статуса "В работе C&B" в справочнике статусов.
 $statusDeclineName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
@@ -57,8 +79,8 @@ if ($currentElementId <= 0) {
     return;
 }
 
-if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc')) {
-    $this->WriteToTrackingService('linked_decline: Не удалось подключить модули iblock/bizproc');
+if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc') || !CModule::IncludeModule('lists')) {
+    $this->WriteToTrackingService('linked_decline: Не удалось подключить модули iblock/bizproc/lists');
     return;
 }
 
@@ -206,6 +228,116 @@ $addMarkerOnce = static function (int $elementId, string $marker) use ($iblockId
         $propertyCodeAutoDeclineMarkers => $markers,
     ]);
 };
+
+
+/**
+ * v1.2.0: Marker запуска БП 1292 по заявке с типом оплаты "Предоставление отгула".
+ * Marker не зависит от пары заявок: БП должен быть запущен по конкретной связанной заявке только один раз.
+ */
+$buildDayOffWorkflowMarker = static function (int $elementId) use ($dayOffWorkflowTemplateId, $paymentTypeDayOffElementId): string {
+    return 'AUTO_START_WORKFLOW:' . $dayOffWorkflowTemplateId . ':TIP_OPLATY:' . $paymentTypeDayOffElementId . ':REQUEST:' . $elementId;
+};
+
+/**
+ * v1.2.0: Получить ID элементов из свойства TIP_OPLATY.
+ * Поддерживает одиночное и множественное свойство-привязку.
+ */
+$getPaymentTypeIds = static function (int $elementId) use ($iblockId, $propertyCodePaymentType): array {
+    $ids = [];
+
+    if ($elementId <= 0) {
+        return [];
+    }
+
+    $res = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodePaymentType]);
+    while ($prop = $res->Fetch()) {
+        $value = (int)($prop['VALUE'] ?? 0);
+        if ($value > 0) {
+            $ids[$value] = true;
+        }
+    }
+
+    return array_keys($ids);
+};
+
+/**
+ * v1.2.0: Запустить БП 1292 по связанной заявке, если у нее TIP_OPLATY = 3537688.
+ * Запуск делается один раз за счет marker-а в AUTO_DECLINE_MARKERS.
+ */
+$startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $currentElementId) use (
+    $iblockId,
+    $paymentTypeDayOffElementId,
+    $dayOffWorkflowTemplateId,
+    $dayOffWorkflowParameters,
+    $getPaymentTypeIds,
+    $buildDayOffWorkflowMarker,
+    $hasMarker,
+    $addMarkerOnce,
+    $debugLog
+): array {
+    if ($linkedElementId <= 0) {
+        return [false, 'Некорректный ID связанной заявки'];
+    }
+
+    $paymentTypeIds = $getPaymentTypeIds($linkedElementId);
+    $debugLog(
+        "v1.2.0: TIP_OPLATY linkedElementId={$linkedElementId}: "
+        . print_r($paymentTypeIds, true)
+    );
+
+    if (!in_array($paymentTypeDayOffElementId, $paymentTypeIds, true)) {
+        return [false, 'Тип оплаты не "Предоставление отгула"'];
+    }
+
+    $workflowMarker = $buildDayOffWorkflowMarker($linkedElementId);
+    if ($hasMarker($linkedElementId, $workflowMarker)) {
+        return [false, "БП {$dayOffWorkflowTemplateId} уже запускался ранее, marker={$workflowMarker}"];
+    }
+
+    if (!class_exists('CBPDocument')) {
+        return [false, 'Класс CBPDocument недоступен'];
+    }
+
+    if (class_exists('Bitrix\\Main\\Loader')) {
+        if (!\Bitrix\Main\Loader::includeModule('bizproc')) {
+            return [false, 'Не удалось подключить модуль bizproc'];
+        }
+        \Bitrix\Main\Loader::includeModule('lists');
+    }
+
+    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $linkedElementId];
+    $workflowErrors = [];
+
+    try {
+        $workflowId = CBPDocument::StartWorkflow(
+            $dayOffWorkflowTemplateId,
+            $documentId,
+            $dayOffWorkflowParameters,
+            $workflowErrors
+        );
+
+        if (!empty($workflowErrors)) {
+            return [false, 'Ошибки запуска БП: ' . print_r($workflowErrors, true)];
+        }
+
+        if ((string)$workflowId === '') {
+            return [false, 'CBPDocument::StartWorkflow вернул пустой workflowId'];
+        }
+
+        // Marker ставим только после успешного старта.
+        $addMarkerOnce($linkedElementId, $workflowMarker);
+
+        $debugLog(
+            "v1.2.0: БП {$dayOffWorkflowTemplateId} запущен по заявке {$linkedElementId}, "
+            . "workflowId={$workflowId}, основание — связанная заявка {$currentElementId}"
+        );
+
+        return [true, (string)$workflowId];
+    } catch (\Throwable $e) {
+        return [false, $e->getMessage()];
+    }
+};
+
 
 /**
  * Запись в пользовательскую историю без служебных marker-ов.
@@ -658,6 +790,20 @@ foreach ($linkedElementIds as $linkedElementId) {
     }
 
     try {
+        // v1.2.0: сначала проверяем специальный сценарий "Предоставление отгула".
+        // Он не зависит от автоотклонения задания: если связанная заявка подходит по TIP_OPLATY,
+        // по ней должен стартовать отдельный БП 1292.
+        [$dayOffWorkflowStarted, $dayOffWorkflowInfo] = $startDayOffWorkflowIfNeeded($linkedElementId, $currentElementId);
+        if ($dayOffWorkflowStarted) {
+            // v1.2.1: marker запуска БП 1292 хранится только в AUTO_DECLINE_MARKERS.
+            // WorkflowId не пишем в ISTORIYA, чтобы не засорять пользовательскую историю техническими данными.
+            $this->WriteToTrackingService(
+                "linked_decline: По связанной заявке #{$linkedElementId} с типом оплаты «Предоставление отгула» запущен БП #{$dayOffWorkflowTemplateId}"
+            );
+        } else {
+            $debugLog("v1.2.1: БП {$dayOffWorkflowTemplateId} по связанной заявке {$linkedElementId} не запускался: {$dayOffWorkflowInfo}");
+        }
+
         // Повторная проверка под lock: если любая из заявок уже содержит marker пары, повторно ничего не делаем.
         if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
             $this->WriteToTrackingService("linked_decline: пара {$currentElementId}/{$linkedElementId} уже была обработана ранее, marker={$pairMarker}");
