@@ -178,6 +178,47 @@ function overtimeGetRequestComments(int $requestId, array $config): array
     return $comments;
 }
 
+
+function overtimeGetUserFullNameForComment(int $userId): string
+{
+    if ($userId <= 0 || !class_exists('CUser')) {
+        return '';
+    }
+
+    $user = CUser::GetByID($userId)->Fetch();
+    if (!is_array($user)) {
+        return '';
+    }
+
+    return trim(implode(' ', array_filter([
+        trim((string)($user['LAST_NAME'] ?? '')),
+        trim((string)($user['NAME'] ?? '')),
+        trim((string)($user['SECOND_NAME'] ?? '')),
+    ], static fn($part) => $part !== '')));
+}
+
+function overtimeNormalizeApprovalComment(string $comment, int $userId = 0): string
+{
+    $comment = trim($comment);
+    if ($comment === '') {
+        return '';
+    }
+
+    if (preg_match('/^\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}(?::\d{2})?\s+[^:]+:\s*(.*)$/us', $comment, $matches)) {
+        return trim((string)$matches[1]);
+    }
+
+    $userName = overtimeGetUserFullNameForComment($userId);
+    if ($userName !== '') {
+        $quotedUserName = preg_quote($userName, '/');
+        if (preg_match('/^' . $quotedUserName . '\s*[:—-]\s*(.*)$/ui', $comment, $matches)) {
+            return trim((string)$matches[1]);
+        }
+    }
+
+    return $comment;
+}
+
 function overtimeRenderRequestComment(string $comment, bool $isLast = false): string
 {
     $date = '';
@@ -1656,7 +1697,7 @@ if (
     $postAction = trim((string)$request->getPost('bp_action'));
     $allowedActions = array_column($approvalButtons, 'code');
     if ($postAction !== '' && in_array($postAction, $allowedActions, true)) {
-        $bpComment = trim((string)$request->getPost('bp_comment'));
+        $bpComment = overtimeNormalizeApprovalComment((string)$request->getPost('bp_comment'), $currentUserId);
         if ($orderJustificationEditable) {
             $orderJustificationValue = trim((string)$request->getPost('order_justification'));
         }
