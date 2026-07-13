@@ -95,13 +95,93 @@ if ($currentUserId <= 0) {
     $currentUserId = 1;
 }
 
-$currentUserName = 'Пользователь #' . $currentUserId;
-$userRs = CUser::GetByID($currentUserId);
-if ($userData = $userRs->Fetch()) {
-    $fio = trim((string)$userData['LAST_NAME'] . ' ' . (string)$userData['NAME'] . ' ' . (string)$userData['SECOND_NAME']);
-    if ($fio !== '') {
-        $currentUserName = $fio;
+
+$getUserDisplayName = static function (int $userId): string {
+    if ($userId <= 0) {
+        return '';
     }
+
+    $userName = 'Пользователь #' . $userId;
+    $userRs = CUser::GetByID($userId);
+    if ($userData = $userRs->Fetch()) {
+        $fio = trim((string)$userData['LAST_NAME'] . ' ' . (string)$userData['NAME'] . ' ' . (string)$userData['SECOND_NAME']);
+        if ($fio !== '') {
+            $userName = $fio;
+        }
+    }
+
+    return $userName;
+};
+
+$resolveActionUserId = static function (int $elementId, string $action, int $fallbackUserId) use ($iblockId): int {
+    if ($elementId <= 0 || !class_exists('CBPDocument') || !class_exists('CBPTaskService') || !class_exists('CBPTaskStatus')) {
+        return $fallbackUserId;
+    }
+
+    $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
+    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $elementId];
+    $states = CBPDocument::GetDocumentStates($documentType, $documentId);
+    if (empty($states)) {
+        return $fallbackUserId;
+    }
+
+    $desiredUserStatuses = [];
+    if (class_exists('CBPTaskUserStatus')) {
+        if ($action === 'decline' && defined('CBPTaskUserStatus::No')) {
+            $desiredUserStatuses[] = (int)constant('CBPTaskUserStatus::No');
+        }
+        if ($action === 'approve' && defined('CBPTaskUserStatus::Yes')) {
+            $desiredUserStatuses[] = (int)constant('CBPTaskUserStatus::Yes');
+        }
+    }
+
+    $fallbackCompletedUserId = 0;
+    foreach ($states as $state) {
+        $workflowId = (string)($state['ID'] ?? '');
+        if ($workflowId === '') {
+            continue;
+        }
+
+        $taskRes = CBPTaskService::GetList(
+            ['ID' => 'DESC'],
+            ['WORKFLOW_ID' => $workflowId],
+            false,
+            false,
+            ['ID', 'STATUS', 'USER_ID', 'USER_STATUS']
+        );
+        if (!is_object($taskRes)) {
+            continue;
+        }
+
+        while ($task = $taskRes->Fetch()) {
+            $userId = (int)($task['USER_ID'] ?? 0);
+            if ($userId <= 0) {
+                continue;
+            }
+
+            $taskStatus = (int)($task['STATUS'] ?? 0);
+            if ($taskStatus === (int)CBPTaskStatus::Running) {
+                continue;
+            }
+
+            $userStatus = (int)($task['USER_STATUS'] ?? 0);
+            if (!empty($desiredUserStatuses) && in_array($userStatus, $desiredUserStatuses, true)) {
+                return $userId;
+            }
+
+            if ($fallbackCompletedUserId <= 0 && $userStatus > 0) {
+                $fallbackCompletedUserId = $userId;
+            }
+        }
+    }
+
+    return $fallbackCompletedUserId > 0 ? $fallbackCompletedUserId : $fallbackUserId;
+};
+
+$actionUserId = $resolveActionUserId($currentElementId, 'decline', $currentUserId);
+if ($actionUserId > 0) {
+    $currentUserId = $actionUserId;
+    $currentUserName = $getUserDisplayName($currentUserId);
 }
 
 $debugLog = function (string $message) use ($debugEnabled): void {
