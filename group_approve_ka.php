@@ -35,6 +35,14 @@ $propertyCodeMarkers = 'AUTO_APPROVE_MARKERS';
 $statusApproveElementId = 3511771; // ID элемента статуса "В работе КА".
 $statusApproveName = 'В работе КА'; // Фолбэк-проверка по названию статуса.
 
+// Эти финальные/неактивные статусы нельзя затрагивать при групповом автосогласовании КА.
+$excludedStatusElementIds = [
+    3511824, // Выполнена
+    3580392, // Перенесена
+    3575323, // Отклонена
+    3511775, // Отменена
+];
+
 $executorUserId = 1; // Резервный пользователь для выполнения задания БП.
 $debugEnabled = true; // После проверки на бою можно поставить false.
 
@@ -697,6 +705,13 @@ foreach ($groupIds as $groupId) {
             }
 
             [$statusElementId, $statusValue] = $getElementStatus($requestId);
+            if (in_array((int)$statusElementId, $excludedStatusElementIds, true)) {
+                $debugLog(
+                    "Заявка #{$requestId} не затрагивается: статус '{$statusValue}', ID статуса '{$statusElementId}' "
+                    . "входит в список исключений для автосогласования КА"
+                );
+                continue;
+            }
             if (!$isExpectedStatus($requestId)) {
                 $debugLog(
                     "Заявка #{$requestId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
