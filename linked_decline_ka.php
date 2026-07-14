@@ -1,69 +1,76 @@
 <?php
 /**
- * group_auto_decline_v1_2_0.php
+ * linked_decline_ka v1.0.0
  *
- * Скрипт для активити БП "PHP код" (Bitrix24).
- *
- * Версия: 1.2.0
- * Дата: 24.06.2026
- *
- * Назначение:
- * Автоматически отклоняет все заявки одной групповой заявки.
+ * Код для активити БП "PHP код" (Bitrix24).
  *
  * Логика:
- * 1) Берет у текущей заявки значение свойства GROUP_LINK.
- * 2) Находит все заявки инфоблока 391, привязанные к этой же группе.
- * 3) Оставляет только заявки в статусе "В работе C&B".
- * 4) Если по заявке есть активное задание БП, выполняет его с отрицательным результатом Decline.
- * 5) Пишет запись в историю заявки.
- * 6) От дублей защищается через:
- *    - DB-lock на группу;
- *    - служебное поле AUTO_DECLINE_MARKERS.
+ * 1) Находит связанные заявки по свойству SVYAZANNYE_ZAYAVKI.
+ * 2) Проверяет, что связанная заявка в статусе "В работе КА".
+ * 3) Если есть текущее Running-задание БП по связанной заявке — выполняет его кнопкой "Отклонено".
+ * 4) Пишет человекочитаемую историю в обе заявки.
+ * 5) Для защиты от задвоения использует отдельное поле AUTO_DECLINE_MARKERS.
  *
- * Важно:
- * - Технический маркер НЕ пишется в пользовательскую историю ISTORIYA.
- * - Маркер хранится в AUTO_DECLINE_MARKERS.
+ * Изменения v1.0.4:
+ * - добавлен приоритетный способ отклонения через CBPTaskService::CompleteTask со статусом No;
+ * - добавлен ранний DoTask с фактической кнопкой TaskButton2;
+ * - PostTaskForm/SendExternalEvent оставлены как fallback для совместимости.
  *
- * Изменения v1.1.0:
- * - добавлена проверка заявок группы по типу оплаты TIP_OPLATY;
- * - если TIP_OPLATY = 3537688 ("Предоставление отгула"), запускается БП шаблона 1292;
- * - запуск БП 1292 защищен от дублей через DB-lock на группу и marker в AUTO_DECLINE_MARKERS;
- * - marker запуска БП хранится только в AUTO_DECLINE_MARKERS и не пишется в ISTORIYA.
+ * v1.0.4:
+ * - добавлена отправка отказа по фактическому HTML-полю задачи: nonapprove=Y;
+ * - добавлены служебные поля формы task popup: action=doTask, id, TASK_ID, workflow_id;
+ * - nonapprove=Y добавлен во все fallback-варианты PostTaskForm/DoTask.
+ *
+ * v1.0.4:
+ * - для SendExternalEvent добавлены поля APPROVE=0 и approve=N;
+ * - причина: стандартный activity approvecopyactiveschedule принимает отказ как отрицательный результат голосования, а не только как кнопку nonapprove.
+ *
+ * Изменения v1.1.1:
+ * - служебный marker больше не выводится в ISTORIYA;
+ * - marker хранится в отдельном множественном/строчном свойстве AUTO_DECLINE_MARKERS;
+ * - текст истории приведен к формату:
+ *   05.06.2026 10:47:03 Связанная заявка #3603166 отклонена автоматически на этапе КА. Отклонил: ФИО.
+ * - добавлены appendHistoryLine() и addMarkerOnce();
+ * - защита от повторного зеркального запуска сохраняется через marker пары заявок.
  *
  * Изменения v1.2.0:
- * - устранена коллизия повторного запуска БП 1292 при групповом автоотклонении;
- * - заявки с TIP_OPLATY = 3537688 сначала переводятся в статус "Отклонена";
- * - только после фиксации статуса и служебного marker-а запускается БП 1292;
- * - обработка заявок с отгулом выполняется первым проходом по всей группе до завершения заданий БП;
- * - технический marker по-прежнему хранится только в AUTO_DECLINE_MARKERS и не пишется в ISTORIYA.
+ * - добавлена проверка связанной заявки по типу оплаты TIP_OPLATY;
+ * - если TIP_OPLATY = 3537688 ("Предоставление отгула"), запускается БП шаблона 1292;
+ * - добавлена защита от повторного запуска БП 1292 через marker в AUTO_DECLINE_MARKERS;
+ * - запуск БП 1292 выполняется независимо от автоотклонения задания.
+ *
+ * Изменения v1.2.1:
+ * - запуск БП 1292 дополнительно приведен к принципу group_auto_decline:
+ *   DB-lock на пару заявок + marker в AUTO_DECLINE_MARKERS;
+ * - marker запуска БП 1292 и workflowId не пишутся в пользовательскую историю ISTORIYA;
+ * - в ISTORIYA остаются только человекочитаемые записи автоотклонения.
  */
 
 $iblockId = 391;
-
-$propertyCodeGroup = 'GROUP_LINK';
+$propertyCodeLinked = 'SVYAZANNYE_ZAYAVKI';
 $propertyCodeStatus = 'STATUS';
 $propertyCodeHistory = 'ISTORIYA';
-$propertyCodeMarkers = 'AUTO_DECLINE_MARKERS';
+$propertyCodeAutoDeclineMarkers = 'AUTO_DECLINE_MARKERS';
 
-// v1.1.0: тип оплаты заявки.
+// v1.2.0: тип оплаты связанной заявки.
 // PROPERTY_3087 / TIP_OPLATY — привязка к элементу справочника типов оплаты.
 // 3537688 — "Предоставление отгула".
 $propertyCodePaymentType = 'TIP_OPLATY';
 $paymentTypeDayOffElementId = 3537688;
 
-// v1.1.0: БП, который нужно запускать по заявке с типом оплаты "Предоставление отгула".
+// v1.2.0: БП, который нужно запускать по связанной заявке с типом оплаты "Предоставление отгула".
 $dayOffWorkflowTemplateId = 1292;
 $dayOffWorkflowParameters = [];
 
-$statusDeclineElementId = 3578386; // ID элемента статуса "В работе C&B".
-$statusDeclineName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
+$statusDeclineElementId = 3511771; // ID элемента статуса "В работе КА" в справочнике статусов.
+$statusDeclineName = 'В работе КА'; // Фолбэк-проверка по названию статуса.
 
-// v1.2.0: статус, в который переводим заявки с типом оплаты "Предоставление отгула" перед запуском БП 1292.
-$statusRejectedElementId = 3575323; // ID элемента статуса "Отклонена".
+// Для связанной заявки с типом оплаты "Отгул" перед запуском БП переводим STATUS в "Отклонена".
+$statusRejectedElementId = 3575323;
 $statusRejectedName = 'Отклонена';
 
-$executorUserId = 1; // Резервный пользователь для выполнения задания БП.
-$debugEnabled = true; // После проверки на бою можно поставить false.
+$debugEnabled = true; // При необходимости после проверки можно поставить false.
+$executorUserId = 1; // Выполняем задания БП от имени администратора, если исполнитель задания не сработал.
 
 $rootActivity = $this->GetRootActivity();
 $documentIdRaw = $rootActivity->GetDocumentId();
@@ -72,12 +79,12 @@ $currentElementId = is_array($documentIdRaw) ? end($documentIdRaw) : $documentId
 $currentElementId = (int)str_replace('element_', '', (string)$currentElementId);
 
 if ($currentElementId <= 0) {
-    $this->WriteToTrackingService('group_auto_decline: Не удалось определить ID текущей заявки');
+    $this->WriteToTrackingService('linked_decline_ka: Не удалось определить ID текущей заявки');
     return;
 }
 
-if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc')) {
-    $this->WriteToTrackingService('group_auto_decline: Не удалось подключить модули iblock/bizproc');
+if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc') || !CModule::IncludeModule('lists')) {
+    $this->WriteToTrackingService('linked_decline_ka: Не удалось подключить модули iblock/bizproc/lists');
     return;
 }
 
@@ -101,149 +108,98 @@ if ($userData = $userRs->Fetch()) {
     }
 }
 
-$documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
-
 $debugLog = function (string $message) use ($debugEnabled): void {
     if ($debugEnabled) {
-        $this->WriteToTrackingService('group_auto_decline [debug]: ' . $message);
+        $this->WriteToTrackingService('linked_decline_ka [debug]: ' . $message);
     }
 };
 
-$getElementTitle = static function (int $elementId) use ($iblockId): string {
-    if ($elementId <= 0) {
-        return '';
+$linkedElementIds = [];
+$rsProps = CIBlockElement::GetProperty($iblockId, $currentElementId, [], ['CODE' => $propertyCodeLinked]);
+while ($prop = $rsProps->Fetch()) {
+    if (!empty($prop['VALUE'])) {
+        $linkedElementIds[] = (int)$prop['VALUE'];
     }
+}
+$linkedElementIds = array_values(array_unique(array_filter($linkedElementIds)));
 
-    $rsElement = CIBlockElement::GetList(
-        [],
-        ['IBLOCK_ID' => $iblockId, 'ID' => $elementId],
-        false,
-        false,
-        ['ID', 'NAME']
-    );
+if (empty($linkedElementIds)) {
+    $this->WriteToTrackingService('linked_decline_ka: Связанные заявки не найдены');
+    return;
+}
 
-    if ($element = $rsElement->Fetch()) {
-        return trim((string)$element['NAME']);
-    }
+$documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $iblockId];
 
-    return '';
+/**
+ * Единый marker пары заявок. Порядок ID не важен.
+ */
+$buildPairMarker = static function (int $elementIdA, int $elementIdB): string {
+    $ids = [$elementIdA, $elementIdB];
+    sort($ids, SORT_NUMERIC);
+    return 'AUTO_DECLINE_KA_LINKED_REQUEST:' . $ids[0] . ':' . $ids[1];
 };
 
-$getPropertyValues = static function (int $elementId, string $propertyCode) use ($iblockId): array {
-    $values = [];
-
-    if ($elementId <= 0 || $propertyCode === '') {
-        return $values;
-    }
-
-    $rsProps = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCode]);
-    while ($prop = $rsProps->Fetch()) {
-        $value = $prop['VALUE'] ?? '';
-        if (is_array($value) && isset($value['TEXT'])) {
-            $value = $value['TEXT'];
-        }
-        $value = trim((string)$value);
-        if ($value !== '') {
-            $values[] = $value;
-        }
-    }
-
-    return array_values(array_unique($values));
-};
-
-$getLinkedGroupIds = static function (int $elementId) use ($getPropertyValues, $propertyCodeGroup): array {
-    $groupIds = [];
-    foreach ($getPropertyValues($elementId, $propertyCodeGroup) as $value) {
-        $groupId = (int)$value;
-        if ($groupId > 0) {
-            $groupIds[$groupId] = true;
-        }
-    }
-
-    return array_keys($groupIds);
-};
-
-$getElementStatus = static function (int $elementId) use ($iblockId, $propertyCodeStatus): array {
-    $statusValue = '';
-    $statusElementId = 0;
-
-    $statusPropRes = CIBlockElement::GetProperty($iblockId, $elementId, [], ['CODE' => $propertyCodeStatus]);
-    if ($statusProp = $statusPropRes->Fetch()) {
-        $statusValue = trim((string)($statusProp['VALUE_ENUM'] ?: $statusProp['VALUE']));
-        $statusElementId = (int)($statusProp['VALUE'] ?? 0);
-    }
-
-    return [$statusElementId, $statusValue];
-};
-
-$isExpectedStatus = static function (int $elementId) use ($getElementStatus, $statusDeclineElementId, $statusDeclineName): bool {
-    [$statusElementId, $statusValue] = $getElementStatus($elementId);
-
-    if ($statusDeclineElementId > 0 && $statusElementId > 0 && $statusElementId === $statusDeclineElementId) {
+/**
+ * MySQL named lock для защиты от одновременного запуска двух PHP-действий по паре заявок.
+ */
+$acquirePairLock = static function (string $marker) use ($debugLog): bool {
+    if (!class_exists('Bitrix\\Main\\Application')) {
         return true;
     }
 
-    return $statusValue !== '' && $statusValue === $statusDeclineName;
-};
+    try {
+        $connection = \Bitrix\Main\Application::getConnection();
+        $sqlHelper = $connection->getSqlHelper();
+        $lockName = 'linked_decline_ka_' . md5($marker);
+        $lockNameSql = $sqlHelper->forSql($lockName);
+        $lockResult = (int)$connection->queryScalar("SELECT GET_LOCK('{$lockNameSql}', 10)");
+        $debugLog("GET_LOCK {$lockName}: result={$lockResult}");
 
-$getGroupRequestIds = static function (int $groupId) use ($iblockId, $propertyCodeGroup): array {
-    $requestIds = [];
-
-    if ($groupId <= 0) {
-        return $requestIds;
+        return $lockResult === 1;
+    } catch (\Throwable $e) {
+        $debugLog('GET_LOCK недоступен: ' . $e->getMessage());
+        // Не блокируем бизнес-логику, если конкретная БД/окружение не поддержало GET_LOCK.
+        return true;
     }
-
-    $filter = [
-        'IBLOCK_ID' => $iblockId,
-        'ACTIVE' => 'Y',
-        '=PROPERTY_' . $propertyCodeGroup => $groupId,
-    ];
-
-    $rsElements = CIBlockElement::GetList(
-        ['ID' => 'ASC'],
-        $filter,
-        false,
-        false,
-        ['ID', 'IBLOCK_ID', 'NAME']
-    );
-
-    while ($element = $rsElements->Fetch()) {
-        $elementId = (int)$element['ID'];
-        if ($elementId > 0) {
-            $requestIds[$elementId] = true;
-        }
-    }
-
-    return array_keys($requestIds);
 };
 
-$formatHistoryLine = static function (string $message): string {
-    return date('d.m.Y H:i:s') . ' ' . $message;
-};
-
-$appendHistory = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory, $formatHistoryLine): void {
-    if ($elementId <= 0 || $message === '') {
+$releasePairLock = static function (string $marker) use ($debugLog): void {
+    if (!class_exists('Bitrix\\Main\\Application')) {
         return;
     }
 
-    $line = $formatHistoryLine($message);
-
-    $existing = '';
-    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
-    if ($prop = $propRes->Fetch()) {
-        $value = $prop['VALUE'] ?? '';
-        if (is_array($value) && isset($value['TEXT'])) {
-            $value = $value['TEXT'];
-        }
-        $existing = trim((string)$value);
+    try {
+        $connection = \Bitrix\Main\Application::getConnection();
+        $sqlHelper = $connection->getSqlHelper();
+        $lockName = 'linked_decline_ka_' . md5($marker);
+        $lockNameSql = $sqlHelper->forSql($lockName);
+        $releaseResult = (int)$connection->queryScalar("SELECT RELEASE_LOCK('{$lockNameSql}')");
+        $debugLog("RELEASE_LOCK {$lockName}: result={$releaseResult}");
+    } catch (\Throwable $e) {
+        $debugLog('RELEASE_LOCK ошибка: ' . $e->getMessage());
     }
-
-    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
 };
 
-$getMarkers = static function (int $elementId) use ($getPropertyValues, $propertyCodeMarkers): array {
-    return $getPropertyValues($elementId, $propertyCodeMarkers);
+/**
+ * Получить все значения свойства marker-ов.
+ * Поддерживает и множественное, и одиночное строковое свойство.
+ */
+$getMarkers = static function (int $elementId) use ($iblockId, $propertyCodeAutoDeclineMarkers): array {
+    $markers = [];
+
+    if ($elementId <= 0) {
+        return [];
+    }
+
+    $res = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeAutoDeclineMarkers]);
+    while ($prop = $res->Fetch()) {
+        $value = trim((string)($prop['VALUE'] ?? ''));
+        if ($value !== '') {
+            $markers[$value] = true;
+        }
+    }
+
+    return array_keys($markers);
 };
 
 $hasMarker = static function (int $elementId, string $marker) use ($getMarkers): bool {
@@ -254,48 +210,40 @@ $hasMarker = static function (int $elementId, string $marker) use ($getMarkers):
     return in_array($marker, $getMarkers($elementId), true);
 };
 
-$appendMarker = static function (int $elementId, string $marker) use ($iblockId, $propertyCodeMarkers, $getMarkers): void {
+/**
+ * Добавить marker в AUTO_DECLINE_MARKERS один раз.
+ * Важно: если поле множественное, SetPropertyValuesEx принимает массив значений.
+ * Если поле одиночное, будет сохранен массив как набор значений не всегда корректно — для надежности лучше сделать поле множественным.
+ */
+$addMarkerOnce = static function (int $elementId, string $marker) use ($iblockId, $propertyCodeAutoDeclineMarkers, $getMarkers): void {
     if ($elementId <= 0 || $marker === '') {
         return;
     }
 
     $markers = $getMarkers($elementId);
-    if (!in_array($marker, $markers, true)) {
-        $markers[] = $marker;
+    if (in_array($marker, $markers, true)) {
+        return;
     }
 
-    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeMarkers => $markers]);
+    $markers[] = $marker;
+    $markers = array_values(array_unique(array_filter(array_map('trim', $markers))));
+
+    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [
+        $propertyCodeAutoDeclineMarkers => $markers,
+    ]);
 };
 
-$appendHistoryOnce = static function (int $elementId, string $marker, string $message) use ($hasMarker, $appendMarker, $appendHistory): bool {
-    if ($elementId <= 0 || $marker === '' || $message === '') {
-        return false;
-    }
-
-    if ($hasMarker($elementId, $marker)) {
-        return false;
-    }
-
-    $appendHistory($elementId, $message);
-    $appendMarker($elementId, $marker);
-
-    return true;
-};
-
-$makeGroupMarker = static function (int $groupId, int $elementId): string {
-    return 'AUTO_DECLINE_GROUP_REQUEST:' . $groupId . ':' . $elementId;
-};
 
 /**
- * v1.1.0: marker запуска БП 1292 по заявке с типом оплаты "Предоставление отгула".
- * Marker не зависит от группы: БП должен быть запущен по конкретной заявке только один раз.
+ * v1.2.0: Marker запуска БП 1292 по заявке с типом оплаты "Предоставление отгула".
+ * Marker не зависит от пары заявок: БП должен быть запущен по конкретной связанной заявке только один раз.
  */
-$makeDayOffWorkflowMarker = static function (int $elementId) use ($dayOffWorkflowTemplateId, $paymentTypeDayOffElementId): string {
-    return 'AUTO_DAYOFF_REJECTED_AND_WORKFLOW_STARTED:' . $dayOffWorkflowTemplateId . ':TIP_OPLATY:' . $paymentTypeDayOffElementId . ':REQUEST:' . $elementId;
+$buildDayOffWorkflowMarker = static function (int $elementId) use ($dayOffWorkflowTemplateId, $paymentTypeDayOffElementId): string {
+    return 'AUTO_START_WORKFLOW:' . $dayOffWorkflowTemplateId . ':TIP_OPLATY:' . $paymentTypeDayOffElementId . ':REQUEST:' . $elementId;
 };
 
 /**
- * v1.1.0: получить ID элементов из свойства TIP_OPLATY.
+ * v1.2.0: Получить ID элементов из свойства TIP_OPLATY.
  * Поддерживает одиночное и множественное свойство-привязку.
  */
 $getPaymentTypeIds = static function (int $elementId) use ($iblockId, $propertyCodePaymentType): array {
@@ -316,10 +264,6 @@ $getPaymentTypeIds = static function (int $elementId) use ($iblockId, $propertyC
     return array_keys($ids);
 };
 
-/**
- * v1.2.0: установить статус заявки.
- * STATUS / PROPERTY_3081 — привязка к элементу справочника статусов.
- */
 $setRequestStatus = static function (int $elementId, int $statusElementId) use ($iblockId, $propertyCodeStatus, $debugLog): bool {
     if ($elementId <= 0 || $statusElementId <= 0) {
         return false;
@@ -329,40 +273,39 @@ $setRequestStatus = static function (int $elementId, int $statusElementId) use (
         CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [
             $propertyCodeStatus => $statusElementId,
         ]);
-        $debugLog("v1.2.0: заявка #{$elementId} переведена в статус ID={$statusElementId}");
+        $debugLog("Заявка #{$elementId} переведена в статус ID={$statusElementId}");
         return true;
     } catch (\Throwable $e) {
-        $debugLog("v1.2.0: ошибка установки статуса заявки #{$elementId}: " . $e->getMessage());
+        $debugLog("Ошибка установки статуса заявки #{$elementId}: " . $e->getMessage());
         return false;
     }
 };
 
 /**
- * v1.1.0: если у заявки TIP_OPLATY = 3537688, запускает БП 1292.
- * Защита от дублей: DB-lock на группу + marker в AUTO_DECLINE_MARKERS.
- * Технический marker и workflowId в пользовательскую историю ISTORIYA не пишутся.
+ * v1.2.0: Запустить БП 1292 по связанной заявке, если у нее TIP_OPLATY = 3537688.
+ * Запуск делается один раз за счет marker-а в AUTO_DECLINE_MARKERS.
  */
-$startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElementId, int $groupId) use (
+$startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $currentElementId) use (
+    $iblockId,
     $paymentTypeDayOffElementId,
     $dayOffWorkflowTemplateId,
     $dayOffWorkflowParameters,
     $statusRejectedElementId,
     $statusRejectedName,
     $getPaymentTypeIds,
-    $getElementStatus,
     $setRequestStatus,
-    $makeDayOffWorkflowMarker,
+    $buildDayOffWorkflowMarker,
     $hasMarker,
-    $appendMarker,
+    $addMarkerOnce,
     $debugLog
 ): array {
-    if ($requestId <= 0) {
-        return [false, 'Некорректный ID заявки'];
+    if ($linkedElementId <= 0) {
+        return [false, 'Некорректный ID связанной заявки'];
     }
 
-    $paymentTypeIds = $getPaymentTypeIds($requestId);
+    $paymentTypeIds = $getPaymentTypeIds($linkedElementId);
     $debugLog(
-        "v1.2.0: TIP_OPLATY requestId={$requestId}: "
+        "v1.2.0: TIP_OPLATY linkedElementId={$linkedElementId}: "
         . print_r($paymentTypeIds, true)
     );
 
@@ -370,25 +313,17 @@ $startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElem
         return [false, 'Тип оплаты не "Предоставление отгула"'];
     }
 
-    $workflowMarker = $makeDayOffWorkflowMarker($requestId);
-    if ($hasMarker($requestId, $workflowMarker)) {
-        return [false, "Заявка с отгулом уже обработана ранее, marker={$workflowMarker}"];
+    $workflowMarker = $buildDayOffWorkflowMarker($linkedElementId);
+    if ($hasMarker($linkedElementId, $workflowMarker)) {
+        return [false, "БП {$dayOffWorkflowTemplateId} уже запускался ранее, marker={$workflowMarker}"];
     }
 
-    // v1.2.0: сначала переводим заявку с отгулом в статус "Отклонена".
-    [$currentStatusId, $currentStatusName] = $getElementStatus($requestId);
-    if ($currentStatusId !== $statusRejectedElementId) {
-        if (!$setRequestStatus($requestId, $statusRejectedElementId)) {
-            return [false, "Не удалось перевести заявку в статус '{$statusRejectedName}'"];
-        }
-    } else {
-        $debugLog("v1.2.0: заявка #{$requestId} уже в статусе '{$statusRejectedName}'");
+    if (!$setRequestStatus($linkedElementId, $statusRejectedElementId)) {
+        return [false, "Не удалось перевести связанную заявку в статус '{$statusRejectedName}'"];
     }
 
-    // v1.2.0: marker ставим ДО запуска БП 1292.
-    // Это защищает от повторных экземпляров группового скрипта, которые стартуют после автоотклонения других заявок группы.
-    // Marker технический: в ISTORIYA он не пишется.
-    $appendMarker($requestId, $workflowMarker);
+    // Marker ставим до запуска БП: повторные экземпляры не должны стартовать workflow второй раз.
+    $addMarkerOnce($linkedElementId, $workflowMarker);
 
     if (!class_exists('CBPDocument')) {
         return [false, 'Класс CBPDocument недоступен'];
@@ -401,7 +336,7 @@ $startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElem
         \Bitrix\Main\Loader::includeModule('lists');
     }
 
-    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
+    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $linkedElementId];
     $workflowErrors = [];
 
     try {
@@ -421,9 +356,9 @@ $startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElem
         }
 
         $debugLog(
-            "v1.2.0: заявка #{$requestId} с отгулом переведена в статус '{$statusRejectedName}', "
+            "v1.2.0: связанная заявка {$linkedElementId} переведена в статус '{$statusRejectedName}', "
             . "БП {$dayOffWorkflowTemplateId} запущен, workflowId={$workflowId}, "
-            . "группа={$groupId}, инициатор={$currentElementId}"
+            . "основание — связанная заявка {$currentElementId}"
         );
 
         return [true, (string)$workflowId];
@@ -432,83 +367,26 @@ $startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElem
     }
 };
 
-$finalizeDeclinedRequest = function (int $requestId, string $marker, string $historyMessage) use (
-    $statusRejectedElementId,
-    $statusRejectedName,
-    $getElementStatus,
-    $setRequestStatus,
-    $hasMarker,
-    $appendHistoryOnce,
-    $currentUserId,
-    $debugLog
-): bool {
-    if ($requestId <= 0 || $marker === '' || $historyMessage === '') {
-        return false;
-    }
 
-    if ($hasMarker($requestId, $marker)) {
-        $debugLog("Заявка #{$requestId} уже имеет marker {$marker}, финализация отклонения не повторяется");
-        return false;
-    }
-
-    [$currentStatusId, $currentStatusName] = $getElementStatus($requestId);
-    if ($currentStatusId !== $statusRejectedElementId) {
-        if (!$setRequestStatus($requestId, $statusRejectedElementId)) {
-            $debugLog("Не удалось перевести заявку #{$requestId} в статус '{$statusRejectedName}' перед записью истории");
-            return false;
-        }
-    } else {
-        $debugLog("Заявка #{$requestId} уже находится в статусе '{$statusRejectedName}'");
-    }
-
-    $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
-    if ($historyWasAdded && class_exists('CBPDocument')) {
-        $requestDocumentId = ['lists', 'Bitrix\Lists\BizprocDocumentLists', $requestId];
-        CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
-    }
-
-    return $historyWasAdded;
-};
-
-$getConnection = static function () {
-    if (class_exists('Bitrix\\Main\\Application')) {
-        return \Bitrix\Main\Application::getConnection();
-    }
-
-    return null;
-};
-
-$acquireLock = static function (string $lockKey, int $timeoutSeconds = 10) use ($getConnection, $debugLog): bool {
-    $connection = $getConnection();
-    if (!$connection || $lockKey === '') {
-        $debugLog('DB-lock недоступен, продолжаем только с маркерами');
-        return true;
-    }
-
-    try {
-        $sqlHelper = $connection->getSqlHelper();
-        $safeLockName = $sqlHelper->forSql('b24_' . md5($lockKey));
-        $result = (int)$connection->queryScalar("SELECT GET_LOCK('{$safeLockName}', " . (int)$timeoutSeconds . ")");
-        return $result === 1;
-    } catch (\Throwable $e) {
-        $debugLog('Ошибка получения DB-lock: ' . $e->getMessage());
-        return true;
-    }
-};
-
-$releaseLock = static function (string $lockKey) use ($getConnection, $debugLog): void {
-    $connection = $getConnection();
-    if (!$connection || $lockKey === '') {
+/**
+ * Запись в пользовательскую историю без служебных marker-ов.
+ * Формат: 05.06.2026 10:47:03 Текст сообщения
+ */
+$appendHistoryLine = static function (int $elementId, string $message) use ($iblockId, $propertyCodeHistory): void {
+    if ($elementId <= 0 || trim($message) === '') {
         return;
     }
 
-    try {
-        $sqlHelper = $connection->getSqlHelper();
-        $safeLockName = $sqlHelper->forSql('b24_' . md5($lockKey));
-        $connection->queryExecute("SELECT RELEASE_LOCK('{$safeLockName}')");
-    } catch (\Throwable $e) {
-        $debugLog('Ошибка освобождения DB-lock: ' . $e->getMessage());
+    $line = date('d.m.Y H:i:s') . ' ' . trim($message);
+
+    $existing = '';
+    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
+    if ($prop = $propRes->Fetch()) {
+        $existing = trim((string)($prop['VALUE'] ?? ''));
     }
+
+    $newValue = $existing !== '' ? ($existing . "\n" . $line) : $line;
+    CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeHistory => $newValue]);
 };
 
 $isTaskStillRunning = static function (int $taskId): bool {
@@ -558,9 +436,8 @@ $resolveDeclineActionCode = static function (int $taskId): string {
     return 'Decline';
 };
 
-$runAsUser = function (int $userId, callable $callback) use ($debugLog) {
+$runAsUser = static function (int $userId, callable $callback) use ($debugLog) {
     global $USER;
-
     $canAuth = is_object($USER) && method_exists($USER, 'Authorize') && method_exists($USER, 'GetID');
     $prevUserId = $canAuth ? (int)$USER->GetID() : 0;
 
@@ -579,7 +456,7 @@ $runAsUser = function (int $userId, callable $callback) use ($debugLog) {
     }
 };
 
-$collectTaskDiagnostics = function (int $taskId, int $userId, string $stage = '') use ($debugLog): void {
+$collectTaskDiagnostics = static function (int $taskId, int $userId, string $stage = '') use ($debugLog): void {
     if (!class_exists('CBPTaskService')) {
         return;
     }
@@ -620,14 +497,13 @@ $collectTaskDiagnostics = function (int $taskId, int $userId, string $stage = ''
     $debugLog("diag[{$stage}] controls attempts: " . print_r($controlsAttempts, true));
 };
 
-$doDeclineTask = function (array $task, int $userId, string $comment = '', string $fallbackActivityName = '') use ($resolveDeclineActionCode, $isTaskStillRunning, $debugLog, $collectTaskDiagnostics, $runAsUser): array {
+$doDeclineTask = static function (array $task, int $userId, string $comment = '', string $fallbackActivityName = '') use ($resolveDeclineActionCode, $isTaskStillRunning, $debugLog, $collectTaskDiagnostics, $runAsUser): array {
     $taskId = (int)($task['ID'] ?? 0);
     if ($taskId <= 0) {
         return [false, 'Некорректный taskId'];
     }
 
     $actionCode = $resolveDeclineActionCode($taskId);
-
     if ((string)($task['ACTIVITY_NAME'] ?? '') === '' && class_exists('CBPTaskService')) {
         $taskReloadRes = CBPTaskService::GetList(
             ['ID' => 'DESC'],
@@ -801,7 +677,6 @@ $doDeclineTask = function (array $task, int $userId, string $comment = '', strin
                     'REAL_USER_ID' => $userId,
                 ],
             ];
-
             foreach ($codesToTry as $codeTry) {
                 $requests[] = [
                     'nonapprove' => 'Y',
@@ -827,22 +702,18 @@ $doDeclineTask = function (array $task, int $userId, string $comment = '', strin
             foreach ($requests as $idx => $requestFields) {
                 $errors = [];
                 $debugLog("Вызов CBPDocument::PostTaskForm для taskId={$taskId}, attempt={$idx}, поля: " . print_r($requestFields, true));
-
                 $postResult = $runAsUser($userId, static function () use ($taskId, $userId, $requestFields, &$errors) {
                     return CBPDocument::PostTaskForm($taskId, $userId, $requestFields, $errors, '', $userId);
                 });
-
                 $debugLog("PostTaskForm result для taskId={$taskId}, attempt={$idx}: " . print_r($postResult, true));
                 if (!empty($errors)) {
                     $debugLog("PostTaskForm errors для taskId={$taskId}, attempt={$idx}: " . print_r($errors, true));
                 }
-
                 if (empty($errors) && !$isTaskStillRunning($taskId)) {
                     $debugLog("PostTaskForm успешно завершил taskId={$taskId} на attempt={$idx}");
                     return [true, ''];
                 }
             }
-
             $debugLog("После всех попыток PostTaskForm taskId={$taskId} всё ещё running");
             $collectTaskDiagnostics($taskId, $userId, 'after_posttaskform');
         }
@@ -853,7 +724,6 @@ $doDeclineTask = function (array $task, int $userId, string $comment = '', strin
             (string)($task['ACTIVITY'] ?? ''),
             $fallbackActivityName,
         ])));
-
         if ($workflowId !== '' && !empty($activityCandidates) && class_exists('CBPRuntime') && method_exists('CBPRuntime', 'SendExternalEvent')) {
             $payload = [
                 'USER_ID' => $userId,
@@ -875,20 +745,16 @@ $doDeclineTask = function (array $task, int $userId, string $comment = '', strin
                 'reject' => 'Y',
                 'status' => 'N',
             ];
-
             foreach ($activityCandidates as $activityCandidate) {
                 $debugLog("Вызов CBPRuntime::SendExternalEvent workflowId={$workflowId}, activity={$activityCandidate}, payload=" . print_r($payload, true));
-
                 $eventResult = $runAsUser($userId, static function () use ($workflowId, $activityCandidate, $payload) {
                     return CBPRuntime::SendExternalEvent($workflowId, $activityCandidate, $payload);
                 });
-
                 $debugLog("SendExternalEvent result taskId={$taskId}, activity={$activityCandidate}: " . print_r($eventResult, true));
                 if (!$isTaskStillRunning($taskId)) {
                     $debugLog("SendExternalEvent успешно завершил taskId={$taskId}, activity={$activityCandidate}");
                     return [true, ''];
                 }
-
                 $debugLog("После SendExternalEvent taskId={$taskId} всё ещё running, activity={$activityCandidate}");
                 $collectTaskDiagnostics($taskId, $userId, 'after_external_event_' . $activityCandidate);
             }
@@ -910,20 +776,16 @@ $doDeclineTask = function (array $task, int $userId, string $comment = '', strin
                     'comment' => $comment,
                     'task_comment' => $comment,
                 ];
-
                 $debugLog("Вызов CBPTaskService::DoTask для taskId={$taskId}, codeTry={$codeTry}, payload: " . print_r($payload, true));
-
                 $doTaskResult = $runAsUser($userId, static function () use ($taskId, $userId, $payload) {
                     return CBPTaskService::DoTask($taskId, $userId, $payload);
                 });
-
                 $debugLog("DoTask result для taskId={$taskId}, codeTry={$codeTry}: " . print_r($doTaskResult, true));
                 if (!$isTaskStillRunning($taskId)) {
                     $debugLog("DoTask успешно завершил taskId={$taskId} с codeTry={$codeTry}");
                     return [true, ''];
                 }
             }
-
             $debugLog("После всех попыток DoTask taskId={$taskId} всё ещё running");
             $collectTaskDiagnostics($taskId, $userId, 'after_dotask');
         }
@@ -939,200 +801,117 @@ $doDeclineTask = function (array $task, int $userId, string $comment = '', strin
     if (empty($controlsDbg) && method_exists('CBPTaskService', 'GetTaskControls')) {
         $controlsDbg = (array)CBPTaskService::GetTaskControls($taskId);
     }
-
     $debugLog("Итог: taskId={$taskId} не завершился. Controls: " . print_r($controlsDbg, true));
 
     return [false, 'Задание не завершилось после попытки отклонения'];
 };
 
-$getRunningTasksForElement = function (int $elementId) use ($documentType, $debugLog): array {
-    $tasks = [];
-
-    if ($elementId <= 0) {
-        return $tasks;
-    }
-
-    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $elementId];
-    $states = CBPDocument::GetDocumentStates($documentType, $documentId);
-    $debugLog("Найдены состояния БП для заявки {$elementId}: " . print_r($states, true));
-
-    if (empty($states)) {
-        return $tasks;
-    }
-
-    foreach ($states as $state) {
-        $workflowId = (string)($state['ID'] ?? '');
-        if ($workflowId === '') {
-            continue;
-        }
-
-        $taskRes = CBPTaskService::GetList(
-            ['ID' => 'ASC'],
-            [
-                'WORKFLOW_ID' => $workflowId,
-                'STATUS' => CBPTaskStatus::Running,
-            ],
-            false,
-            false,
-            ['ID', 'NAME', 'WORKFLOW_ID', 'STATUS', 'USER_ID', 'USER_STATUS', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']
-        );
-
-        $foundTasksForWorkflow = 0;
-        while ($task = $taskRes->Fetch()) {
-            $foundTasksForWorkflow++;
-            $taskId = (int)($task['ID'] ?? 0);
-            if ($taskId <= 0) {
-                continue;
-            }
-
-            $tasks[] = [
-                'TASK' => $task,
-                'STATE' => $state,
-            ];
-        }
-
-        if ($foundTasksForWorkflow === 0) {
-            $debugLog("По заявке {$elementId}, workflowId={$workflowId} не найдено задач по фильтру STATUS=Running");
-        }
-    }
-
-    return $tasks;
-};
-
-$groupIds = $getLinkedGroupIds($currentElementId);
-if (empty($groupIds)) {
-    $this->WriteToTrackingService("group_auto_decline: У текущей заявки #{$currentElementId} не заполнено поле {$propertyCodeGroup}");
-    return;
-}
-
-foreach ($groupIds as $groupId) {
-    $groupId = (int)$groupId;
-    if ($groupId <= 0) {
+foreach ($linkedElementIds as $linkedElementId) {
+    if ($linkedElementId <= 0 || $linkedElementId === $currentElementId) {
         continue;
     }
 
-    $groupName = $getElementTitle($groupId);
-    $groupTitleForMessage = $groupName !== '' ? ($groupName . ' #' . $groupId) : ('#' . $groupId);
+    $pairMarker = $buildPairMarker($currentElementId, $linkedElementId);
 
-    $lockKey = 'AUTO_DECLINE_GROUP:' . $groupId;
-    if (!$acquireLock($lockKey, 10)) {
-        $this->WriteToTrackingService("group_auto_decline: Группа {$groupTitleForMessage} уже обрабатывается другим процессом, пропускаем");
+    if (!$acquirePairLock($pairMarker)) {
+        $this->WriteToTrackingService("linked_decline_ka: пара {$currentElementId}/{$linkedElementId} уже обрабатывается другим процессом");
         continue;
     }
 
     try {
-        $requestIds = $getGroupRequestIds($groupId);
-        if (empty($requestIds)) {
-            $this->WriteToTrackingService("group_auto_decline: По группе {$groupTitleForMessage} заявки не найдены");
+        // v1.2.0: сначала проверяем специальный сценарий "Предоставление отгула".
+        // Он не зависит от автоотклонения задания: если связанная заявка подходит по TIP_OPLATY,
+        // по ней должен стартовать отдельный БП 1292.
+        [$dayOffWorkflowStarted, $dayOffWorkflowInfo] = $startDayOffWorkflowIfNeeded($linkedElementId, $currentElementId);
+        if ($dayOffWorkflowStarted) {
+            // v1.2.1: marker запуска БП 1292 хранится только в AUTO_DECLINE_MARKERS.
+            // WorkflowId не пишем в ISTORIYA, чтобы не засорять пользовательскую историю техническими данными.
+            $this->WriteToTrackingService(
+                "linked_decline_ka: По связанной заявке #{$linkedElementId} с типом оплаты «Предоставление отгула» запущен БП #{$dayOffWorkflowTemplateId}"
+            );
+        } else {
+            $debugLog("v1.2.1: БП {$dayOffWorkflowTemplateId} по связанной заявке {$linkedElementId} не запускался: {$dayOffWorkflowInfo}");
+        }
+
+        // Повторная проверка под lock: если любая из заявок уже содержит marker пары, повторно ничего не делаем.
+        if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
+            $this->WriteToTrackingService("linked_decline_ka: пара {$currentElementId}/{$linkedElementId} уже была обработана ранее, marker={$pairMarker}");
             continue;
         }
 
-        $this->WriteToTrackingService(
-            "group_auto_decline: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
-        );
+        $statusValue = '';
+        $statusElementId = 0;
+        $statusPropRes = CIBlockElement::GetProperty($iblockId, $linkedElementId, [], ['CODE' => $propertyCodeStatus]);
+        if ($statusProp = $statusPropRes->Fetch()) {
+            $statusValue = trim((string)($statusProp['VALUE_ENUM'] ?: $statusProp['VALUE']));
+            $statusElementId = (int)($statusProp['VALUE'] ?? 0);
+        }
 
-        $currentRequestMarker = $makeGroupMarker($groupId, $currentElementId);
-        if ($hasMarker($currentElementId, $currentRequestMarker)) {
-            $debugLog(
-                "Текущая заявка #{$currentElementId} уже обработана групповым автодействием "
-                . "по marker={$currentRequestMarker}; каскадный запуск не размножаем"
+        $isExpectedStatus = false;
+        if ($statusDeclineElementId > 0 && $statusElementId > 0 && $statusElementId === $statusDeclineElementId) {
+            $isExpectedStatus = true;
+        }
+        if (!$isExpectedStatus && $statusValue !== '' && $statusValue === $statusDeclineName) {
+            $isExpectedStatus = true;
+        }
+
+        if (!$isExpectedStatus) {
+            $this->WriteToTrackingService(
+                "linked_decline_ka: Заявка {$linkedElementId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
+                . "(ожидался '{$statusDeclineName}', ID '{$statusDeclineElementId}')"
             );
             continue;
         }
 
-        // v1.2.0: первый проход по группе — обрабатываем ВСЕ заявки с типом оплаты "Предоставление отгула".
-        // Важно сделать это до завершения заданий БП, потому что завершение заданий запускает такие же PHP-активити
-        // в других заявках группы. Повторные экземпляры увидят marker и не запустят БП 1292 повторно.
-        foreach ($requestIds as $dayOffRequestId) {
-            $dayOffRequestId = (int)$dayOffRequestId;
-            if ($dayOffRequestId <= 0) {
-                continue;
-            }
+        $linkedDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $linkedElementId];
+        $states = CBPDocument::GetDocumentStates($documentType, $linkedDocumentId);
+        $debugLog("Найдены состояния БП для {$linkedElementId}: " . print_r($states, true));
 
-            if ($dayOffRequestId === $currentElementId) {
-                $debugLog("Текущая заявка #{$dayOffRequestId} уже отклонена нажатием пользователя, повторно ее не обрабатываем как отгул");
-                continue;
-            }
-
-            if (!empty($getRunningTasksForElement($dayOffRequestId))) {
-                $debugLog("Заявка #{$dayOffRequestId} с отгулом имеет активное задание БП; статус вручную не меняем, будет выполнено отклонение через задание");
-                continue;
-            }
-
-            [$dayOffWorkflowStarted, $dayOffWorkflowInfo] = $startDayOffWorkflowIfNeeded($dayOffRequestId, $currentElementId, $groupId);
-            if ($dayOffWorkflowStarted) {
-                $this->WriteToTrackingService(
-                    "group_auto_decline: Заявка #{$dayOffRequestId} с типом оплаты «Предоставление отгула» переведена в статус «Отклонена», запущен БП #{$dayOffWorkflowTemplateId}"
-                );
-            } else {
-                $debugLog("v1.2.0: БП {$dayOffWorkflowTemplateId} по заявке #{$dayOffRequestId} не запускался: {$dayOffWorkflowInfo}");
-            }
-
-            if (in_array($paymentTypeDayOffElementId, $getPaymentTypeIds($dayOffRequestId), true)) {
-                $dayOffGroupMarker = $makeGroupMarker($groupId, $dayOffRequestId);
-                $dayOffHistoryMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
-                if ($finalizeDeclinedRequest($dayOffRequestId, $dayOffGroupMarker, $dayOffHistoryMessage)) {
-                    $this->WriteToTrackingService("group_auto_decline: {$dayOffHistoryMessage}");
-                }
-            }
+        if (empty($states)) {
+            $this->WriteToTrackingService("linked_decline_ka: У связанной заявки {$linkedElementId} нет активных БП");
+            continue;
         }
 
-        // Второй проход — штатное автоотклонение активных заданий БП по заявкам группы.
-        foreach ($requestIds as $requestId) {
-            $requestId = (int)$requestId;
-            if ($requestId <= 0) {
+        $declinedAny = false;
+
+        foreach ($states as $state) {
+            $workflowId = (string)($state['ID'] ?? '');
+            if ($workflowId === '') {
                 continue;
             }
 
-            if ($requestId === $currentElementId) {
-                $debugLog("Текущая заявка #{$requestId} уже завершена нажатием пользователя, повторно ее не автозавершаем");
-                continue;
-            }
+            $taskRes = CBPTaskService::GetList(
+                ['ID' => 'ASC'],
+                [
+                    'WORKFLOW_ID' => $workflowId,
+                    'STATUS' => CBPTaskStatus::Running,
+                ],
+                false,
+                false,
+                ['ID', 'NAME', 'WORKFLOW_ID', 'STATUS', 'USER_ID', 'USER_STATUS', 'ACTIVITY', 'ACTIVITY_NAME', 'PARAMETERS']
+            );
 
-            [$statusElementId, $statusValue] = $getElementStatus($requestId);
-            $debugLog("Заявка #{$requestId}: текущий статус '{$statusValue}', ID статуса '{$statusElementId}'. Проверяем активные задания БП/финализацию отклонения.");
-
-            $marker = $makeGroupMarker($groupId, $requestId);
-            if ($hasMarker($requestId, $marker)) {
-                $debugLog("Заявка #{$requestId} уже имеет маркер {$marker}, повторная история не пишется");
-                continue;
-            }
-
-            // Повторно собираем активные задачи уже внутри lock, чтобы не согласовать то, что успел завершить другой процесс.
-            $taskItems = $getRunningTasksForElement($requestId);
-            if (empty($taskItems)) {
-                $historyMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
-                if ($finalizeDeclinedRequest($requestId, $marker, $historyMessage)) {
-                    $this->WriteToTrackingService("group_auto_decline: {$historyMessage}");
-                } else {
-                    $debugLog("У заявки #{$requestId} нет активных заданий БП для автоотклонения, финализация не выполнена или уже была выполнена");
+            $foundTasksForWorkflow = 0;
+            while ($task = $taskRes->Fetch()) {
+                // Еще одна защита внутри цикла: если marker появился после завершения другого task, не пишем повторно.
+                if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
+                    $this->WriteToTrackingService("linked_decline_ka: marker появился во время обработки, повтор пропущен: {$pairMarker}");
+                    break;
                 }
-                continue;
-            }
 
-            $declinedAny = false;
-            $lastError = '';
-
-            foreach ($taskItems as $taskItem) {
-                $task = (array)($taskItem['TASK'] ?? []);
-                $state = (array)($taskItem['STATE'] ?? []);
+                $foundTasksForWorkflow++;
                 $taskId = (int)($task['ID'] ?? 0);
                 if ($taskId <= 0) {
                     continue;
                 }
 
-                // Перед попыткой еще раз проверяем задачу, так как параллельные БП могли ее уже закрыть.
-                if (!$isTaskStillRunning($taskId)) {
-                    $debugLog("taskId={$taskId} по заявке #{$requestId} уже не Running, пропускаем");
-                    continue;
-                }
+                $debugLog("Найдена задача для linkedElementId={$linkedElementId}, workflowId={$workflowId}: " . print_r($task, true));
 
-                $comment = 'Автоотклонено по групповой заявке ' . $groupTitleForMessage . '. Инициатор: заявка #' . $currentElementId;
+                $comment = 'Автоотклонено на этапе КА по связанной заявке #' . $currentElementId;
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
-
                 $executorCandidates = [];
-                // Важно: автодействие должно выполняться от имени пользователя,
-                // который нажал кнопку в головной заявке, а не от первого исполнителя найденного задания.
+                // Важно: связанную заявку сначала завершаем от имени пользователя,
+                // который нажал кнопку в основной заявке, а не от первого исполнителя найденного задания.
                 if ($currentUserId > 0) {
                     $executorCandidates[] = $currentUserId;
                 }
@@ -1144,43 +923,65 @@ foreach ($groupIds as $groupId) {
 
                 $ok = false;
                 $err = 'Не удалось завершить задачу ни одним исполнителем.';
-
+                $successUserId = 0;
                 foreach ($executorCandidates as $candidateUserId) {
-                    $debugLog("Пробуем завершить taskId={$taskId} по заявке #{$requestId} от userId={$candidateUserId}");
-                    [$ok, $err] = $doDeclineTask($task, (int)$candidateUserId, $comment, (string)($state['STATE_NAME'] ?? ''));
+                    $debugLog("Пробуем завершить taskId={$taskId} от userId={$candidateUserId}");
+                    [$ok, $err] = $doDeclineTask($task, $candidateUserId, $comment, (string)($state['STATE_NAME'] ?? ''));
                     if ($ok) {
+                        $successUserId = $candidateUserId;
                         break;
                     }
                 }
 
                 if ($ok) {
+                    // После успешного завершения еще раз проверяем marker перед записью истории.
+                    if ($hasMarker($currentElementId, $pairMarker) || $hasMarker($linkedElementId, $pairMarker)) {
+                        $this->WriteToTrackingService("linked_decline_ka: task {$taskId} завершен, но история уже была записана ранее, marker={$pairMarker}");
+                        $declinedAny = true;
+                        break;
+                    }
+
                     $declinedAny = true;
-                } else {
-                    $lastError = $err;
-                    $this->WriteToTrackingService(
-                        "group_auto_decline: Ошибка автоотклонения task {$taskId} по заявке #{$requestId}: {$err}"
-                    );
+
+                    // Сначала фиксируем marker в обеих заявках, затем пишем историю.
+                    // Даже если зеркальный БП стартует сразу после Decline, он увидит marker и не продублирует запись.
+                    $addMarkerOnce($currentElementId, $pairMarker);
+                    $addMarkerOnce($linkedElementId, $pairMarker);
+
+                    $msgLinked = "Заявка отклонена автоматически на этапе КА по связанной заявке #{$currentElementId}. Отклонил: {$currentUserName}.";
+                    CBPDocument::AddDocumentToHistory($linkedDocumentId, $msgLinked, $currentUserId);
+                    $appendHistoryLine($linkedElementId, $msgLinked);
+                    $this->WriteToTrackingService("linked_decline_ka: {$msgLinked}");
+
+                    $mainDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $currentElementId];
+                    $msgMain = "Связанная заявка #{$linkedElementId} отклонена автоматически на этапе КА. Отклонил: {$currentUserName}.";
+                    CBPDocument::AddDocumentToHistory($mainDocumentId, $msgMain, $currentUserId);
+                    $appendHistoryLine($currentElementId, $msgMain);
+                    $this->WriteToTrackingService("linked_decline_ka: {$msgMain}");
+
+                    break;
                 }
+
+                $this->WriteToTrackingService(
+                    "linked_decline_ka: Ошибка автоотклонения task {$taskId} по заявке {$linkedElementId}: {$err}"
+                );
+            }
+
+            if ($foundTasksForWorkflow === 0) {
+                $debugLog("По workflowId={$workflowId} не найдено задач по фильтру STATUS=Running (без USER_STATUS)");
             }
 
             if ($declinedAny) {
-                $requestDocumentId = ['lists', 'Bitrix\Lists\BizprocDocumentLists', $requestId];
-                $historyMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
-
-                // Для заявок с активным заданием БП статус вручную не меняем: его должен выставить сам маршрут БП.
-                // Здесь только фиксируем историю и marker, чтобы не было повторной обработки группы.
-                $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
-                if ($historyWasAdded) {
-                    CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
-                    $this->WriteToTrackingService("group_auto_decline: {$historyMessage}");
-                } else {
-                    $debugLog("История по заявке #{$requestId} уже была добавлена ранее, marker={$marker}");
-                }
-            } elseif ($lastError === '') {
-                $debugLog("Заявка #{$requestId} не была отклонена: активные задания не завершены или уже закрыты");
+                break;
             }
         }
+
+        if (!$declinedAny) {
+            $this->WriteToTrackingService(
+                "linked_decline_ka: У связанной заявки {$linkedElementId} не найдено ожидающих заданий БП для автоотклонения"
+            );
+        }
     } finally {
-        $releaseLock($lockKey);
+        $releasePairLock($pairMarker);
     }
 }

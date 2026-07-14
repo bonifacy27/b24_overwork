@@ -1,6 +1,6 @@
 <?php
 /**
- * group_auto_decline_v1_2_0.php
+ * group_auto_decline_ka_v1_0_0.php
  *
  * Скрипт для активити БП "PHP код" (Bitrix24).
  *
@@ -55,8 +55,8 @@ $paymentTypeDayOffElementId = 3537688;
 $dayOffWorkflowTemplateId = 1292;
 $dayOffWorkflowParameters = [];
 
-$statusDeclineElementId = 3578386; // ID элемента статуса "В работе C&B".
-$statusDeclineName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
+$statusDeclineElementId = 3511771; // ID элемента статуса "В работе КА".
+$statusDeclineName = 'В работе КА'; // Фолбэк-проверка по названию статуса.
 
 // v1.2.0: статус, в который переводим заявки с типом оплаты "Предоставление отгула" перед запуском БП 1292.
 $statusRejectedElementId = 3575323; // ID элемента статуса "Отклонена".
@@ -72,12 +72,12 @@ $currentElementId = is_array($documentIdRaw) ? end($documentIdRaw) : $documentId
 $currentElementId = (int)str_replace('element_', '', (string)$currentElementId);
 
 if ($currentElementId <= 0) {
-    $this->WriteToTrackingService('group_auto_decline: Не удалось определить ID текущей заявки');
+    $this->WriteToTrackingService('group_auto_decline_ka: Не удалось определить ID текущей заявки');
     return;
 }
 
 if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc')) {
-    $this->WriteToTrackingService('group_auto_decline: Не удалось подключить модули iblock/bizproc');
+    $this->WriteToTrackingService('group_auto_decline_ka: Не удалось подключить модули iblock/bizproc');
     return;
 }
 
@@ -105,7 +105,7 @@ $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $ib
 
 $debugLog = function (string $message) use ($debugEnabled): void {
     if ($debugEnabled) {
-        $this->WriteToTrackingService('group_auto_decline [debug]: ' . $message);
+        $this->WriteToTrackingService('group_auto_decline_ka [debug]: ' . $message);
     }
 };
 
@@ -267,7 +267,7 @@ $appendMarker = static function (int $elementId, string $marker) use ($iblockId,
     CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeMarkers => $markers]);
 };
 
-$appendHistoryOnce = static function (int $elementId, string $marker, string $message) use ($hasMarker, $appendMarker, $appendHistory): bool {
+$appendHistoryOnce = static function (int $elementId, string $marker, string $message) use ($iblockId, $propertyCodeHistory, $hasMarker, $appendMarker, $appendHistory): bool {
     if ($elementId <= 0 || $marker === '' || $message === '') {
         return false;
     }
@@ -276,14 +276,31 @@ $appendHistoryOnce = static function (int $elementId, string $marker, string $me
         return false;
     }
 
-    $appendHistory($elementId, $message);
+    $existing = '';
+    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
+    if ($prop = $propRes->Fetch()) {
+        $value = $prop['VALUE'] ?? '';
+        if (is_array($value) && isset($value['TEXT'])) {
+            $value = $value['TEXT'];
+        }
+        $existing = trim((string)$value);
+    }
+
+    if ($existing !== '' && strpos($existing, $message) !== false) {
+        $appendMarker($elementId, $marker);
+        return false;
+    }
+
+    // Marker ставим до записи истории: каскадные экземпляры, ожидающие DB-lock,
+    // не должны успеть повторно добавить ту же строку в ISTORIYA.
     $appendMarker($elementId, $marker);
+    $appendHistory($elementId, $message);
 
     return true;
 };
 
 $makeGroupMarker = static function (int $groupId, int $elementId): string {
-    return 'AUTO_DECLINE_GROUP_REQUEST:' . $groupId . ':' . $elementId;
+    return 'AUTO_DECLINE_KA_GROUP_REQUEST:' . $groupId . ':' . $elementId;
 };
 
 /**
@@ -1001,7 +1018,7 @@ $getRunningTasksForElement = function (int $elementId) use ($documentType, $debu
 
 $groupIds = $getLinkedGroupIds($currentElementId);
 if (empty($groupIds)) {
-    $this->WriteToTrackingService("group_auto_decline: У текущей заявки #{$currentElementId} не заполнено поле {$propertyCodeGroup}");
+    $this->WriteToTrackingService("group_auto_decline_ka: У текущей заявки #{$currentElementId} не заполнено поле {$propertyCodeGroup}");
     return;
 }
 
@@ -1014,21 +1031,21 @@ foreach ($groupIds as $groupId) {
     $groupName = $getElementTitle($groupId);
     $groupTitleForMessage = $groupName !== '' ? ($groupName . ' #' . $groupId) : ('#' . $groupId);
 
-    $lockKey = 'AUTO_DECLINE_GROUP:' . $groupId;
+    $lockKey = 'AUTO_DECLINE_KA_GROUP:' . $groupId;
     if (!$acquireLock($lockKey, 10)) {
-        $this->WriteToTrackingService("group_auto_decline: Группа {$groupTitleForMessage} уже обрабатывается другим процессом, пропускаем");
+        $this->WriteToTrackingService("group_auto_decline_ka: Группа {$groupTitleForMessage} уже обрабатывается другим процессом, пропускаем");
         continue;
     }
 
     try {
         $requestIds = $getGroupRequestIds($groupId);
         if (empty($requestIds)) {
-            $this->WriteToTrackingService("group_auto_decline: По группе {$groupTitleForMessage} заявки не найдены");
+            $this->WriteToTrackingService("group_auto_decline_ka: По группе {$groupTitleForMessage} заявки не найдены");
             continue;
         }
 
         $this->WriteToTrackingService(
-            "group_auto_decline: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
+            "group_auto_decline_ka: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
         );
 
         $currentRequestMarker = $makeGroupMarker($groupId, $currentElementId);
@@ -1040,44 +1057,10 @@ foreach ($groupIds as $groupId) {
             continue;
         }
 
-        // v1.2.0: первый проход по группе — обрабатываем ВСЕ заявки с типом оплаты "Предоставление отгула".
-        // Важно сделать это до завершения заданий БП, потому что завершение заданий запускает такие же PHP-активити
-        // в других заявках группы. Повторные экземпляры увидят marker и не запустят БП 1292 повторно.
-        foreach ($requestIds as $dayOffRequestId) {
-            $dayOffRequestId = (int)$dayOffRequestId;
-            if ($dayOffRequestId <= 0) {
-                continue;
-            }
+        // Первый проход — автоотклонение активных заданий БП по заявкам группы.
+        // Для заявок с активным заданием статус вручную не меняем: маршрут БП должен выставить его сам.
+        $requestIdsWithoutActiveTasks = [];
 
-            if ($dayOffRequestId === $currentElementId) {
-                $debugLog("Текущая заявка #{$dayOffRequestId} уже отклонена нажатием пользователя, повторно ее не обрабатываем как отгул");
-                continue;
-            }
-
-            if (!empty($getRunningTasksForElement($dayOffRequestId))) {
-                $debugLog("Заявка #{$dayOffRequestId} с отгулом имеет активное задание БП; статус вручную не меняем, будет выполнено отклонение через задание");
-                continue;
-            }
-
-            [$dayOffWorkflowStarted, $dayOffWorkflowInfo] = $startDayOffWorkflowIfNeeded($dayOffRequestId, $currentElementId, $groupId);
-            if ($dayOffWorkflowStarted) {
-                $this->WriteToTrackingService(
-                    "group_auto_decline: Заявка #{$dayOffRequestId} с типом оплаты «Предоставление отгула» переведена в статус «Отклонена», запущен БП #{$dayOffWorkflowTemplateId}"
-                );
-            } else {
-                $debugLog("v1.2.0: БП {$dayOffWorkflowTemplateId} по заявке #{$dayOffRequestId} не запускался: {$dayOffWorkflowInfo}");
-            }
-
-            if (in_array($paymentTypeDayOffElementId, $getPaymentTypeIds($dayOffRequestId), true)) {
-                $dayOffGroupMarker = $makeGroupMarker($groupId, $dayOffRequestId);
-                $dayOffHistoryMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
-                if ($finalizeDeclinedRequest($dayOffRequestId, $dayOffGroupMarker, $dayOffHistoryMessage)) {
-                    $this->WriteToTrackingService("group_auto_decline: {$dayOffHistoryMessage}");
-                }
-            }
-        }
-
-        // Второй проход — штатное автоотклонение активных заданий БП по заявкам группы.
         foreach ($requestIds as $requestId) {
             $requestId = (int)$requestId;
             if ($requestId <= 0) {
@@ -1085,7 +1068,7 @@ foreach ($groupIds as $groupId) {
             }
 
             if ($requestId === $currentElementId) {
-                $debugLog("Текущая заявка #{$requestId} уже завершена нажатием пользователя, повторно ее не автозавершаем");
+                $debugLog("Текущая заявка #{$requestId} уже завершена нажатием пользователя, повторно ее не автоотклоняем");
                 continue;
             }
 
@@ -1101,12 +1084,8 @@ foreach ($groupIds as $groupId) {
             // Повторно собираем активные задачи уже внутри lock, чтобы не согласовать то, что успел завершить другой процесс.
             $taskItems = $getRunningTasksForElement($requestId);
             if (empty($taskItems)) {
-                $historyMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
-                if ($finalizeDeclinedRequest($requestId, $marker, $historyMessage)) {
-                    $this->WriteToTrackingService("group_auto_decline: {$historyMessage}");
-                } else {
-                    $debugLog("У заявки #{$requestId} нет активных заданий БП для автоотклонения, финализация не выполнена или уже была выполнена");
-                }
+                $requestIdsWithoutActiveTasks[] = $requestId;
+                $debugLog("У заявки #{$requestId} нет активных заданий БП для автоотклонения; обработаем во втором проходе");
                 continue;
             }
 
@@ -1127,7 +1106,7 @@ foreach ($groupIds as $groupId) {
                     continue;
                 }
 
-                $comment = 'Автоотклонено по групповой заявке ' . $groupTitleForMessage . '. Инициатор: заявка #' . $currentElementId;
+                $comment = 'Автоотклонено на этапе КА по групповой заявке ' . $groupTitleForMessage . '. Инициатор: заявка #' . $currentElementId;
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
 
                 $executorCandidates = [];
@@ -1158,26 +1137,47 @@ foreach ($groupIds as $groupId) {
                 } else {
                     $lastError = $err;
                     $this->WriteToTrackingService(
-                        "group_auto_decline: Ошибка автоотклонения task {$taskId} по заявке #{$requestId}: {$err}"
+                        "group_auto_decline_ka: Ошибка автоотклонения task {$taskId} по заявке #{$requestId}: {$err}"
                     );
                 }
             }
 
             if ($declinedAny) {
                 $requestDocumentId = ['lists', 'Bitrix\Lists\BizprocDocumentLists', $requestId];
-                $historyMessage = "Заявка отклонена автоматически по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
+                $historyMessage = "Заявка отклонена автоматически на этапе КА по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
 
                 // Для заявок с активным заданием БП статус вручную не меняем: его должен выставить сам маршрут БП.
                 // Здесь только фиксируем историю и marker, чтобы не было повторной обработки группы.
                 $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
                 if ($historyWasAdded) {
                     CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
-                    $this->WriteToTrackingService("group_auto_decline: {$historyMessage}");
+                    $this->WriteToTrackingService("group_auto_decline_ka: {$historyMessage}");
                 } else {
                     $debugLog("История по заявке #{$requestId} уже была добавлена ранее, marker={$marker}");
                 }
             } elseif ($lastError === '') {
                 $debugLog("Заявка #{$requestId} не была отклонена: активные задания не завершены или уже закрыты");
+            }
+        }
+
+        // Второй проход — остальные заявки группы без активных заданий БП: переводим в статус "Отклонена" и пишем историю.
+        foreach ($requestIdsWithoutActiveTasks as $requestIdWithoutTask) {
+            $requestIdWithoutTask = (int)$requestIdWithoutTask;
+            if ($requestIdWithoutTask <= 0) {
+                continue;
+            }
+
+            $marker = $makeGroupMarker($groupId, $requestIdWithoutTask);
+            if ($hasMarker($requestIdWithoutTask, $marker)) {
+                $debugLog("Заявка #{$requestIdWithoutTask} уже имеет маркер {$marker}, повторная финализация не выполняется");
+                continue;
+            }
+
+            $historyMessage = "Заявка отклонена автоматически на этапе КА по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
+            if ($finalizeDeclinedRequest($requestIdWithoutTask, $marker, $historyMessage)) {
+                $this->WriteToTrackingService("group_auto_decline_ka: {$historyMessage}");
+            } else {
+                $debugLog("Заявка #{$requestIdWithoutTask} без активных заданий БП не была финализирована или уже была обработана");
             }
         }
     } finally {

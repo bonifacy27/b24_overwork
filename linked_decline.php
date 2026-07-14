@@ -65,6 +65,10 @@ $dayOffWorkflowParameters = [];
 $statusDeclineElementId = 3578386; // ID элемента статуса "В работе C&B" в справочнике статусов.
 $statusDeclineName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
 
+// Для связанной заявки с типом оплаты "Отгул" перед запуском БП переводим STATUS в "Отклонена".
+$statusRejectedElementId = 3575323;
+$statusRejectedName = 'Отклонена';
+
 $debugEnabled = true; // При необходимости после проверки можно поставить false.
 $executorUserId = 1; // Выполняем задания БП от имени администратора, если исполнитель задания не сработал.
 
@@ -260,6 +264,23 @@ $getPaymentTypeIds = static function (int $elementId) use ($iblockId, $propertyC
     return array_keys($ids);
 };
 
+$setRequestStatus = static function (int $elementId, int $statusElementId) use ($iblockId, $propertyCodeStatus, $debugLog): bool {
+    if ($elementId <= 0 || $statusElementId <= 0) {
+        return false;
+    }
+
+    try {
+        CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [
+            $propertyCodeStatus => $statusElementId,
+        ]);
+        $debugLog("Заявка #{$elementId} переведена в статус ID={$statusElementId}");
+        return true;
+    } catch (\Throwable $e) {
+        $debugLog("Ошибка установки статуса заявки #{$elementId}: " . $e->getMessage());
+        return false;
+    }
+};
+
 /**
  * v1.2.0: Запустить БП 1292 по связанной заявке, если у нее TIP_OPLATY = 3537688.
  * Запуск делается один раз за счет marker-а в AUTO_DECLINE_MARKERS.
@@ -269,7 +290,10 @@ $startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $curre
     $paymentTypeDayOffElementId,
     $dayOffWorkflowTemplateId,
     $dayOffWorkflowParameters,
+    $statusRejectedElementId,
+    $statusRejectedName,
     $getPaymentTypeIds,
+    $setRequestStatus,
     $buildDayOffWorkflowMarker,
     $hasMarker,
     $addMarkerOnce,
@@ -293,6 +317,13 @@ $startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $curre
     if ($hasMarker($linkedElementId, $workflowMarker)) {
         return [false, "БП {$dayOffWorkflowTemplateId} уже запускался ранее, marker={$workflowMarker}"];
     }
+
+    if (!$setRequestStatus($linkedElementId, $statusRejectedElementId)) {
+        return [false, "Не удалось перевести связанную заявку в статус '{$statusRejectedName}'"];
+    }
+
+    // Marker ставим до запуска БП: повторные экземпляры не должны стартовать workflow второй раз.
+    $addMarkerOnce($linkedElementId, $workflowMarker);
 
     if (!class_exists('CBPDocument')) {
         return [false, 'Класс CBPDocument недоступен'];
@@ -324,12 +355,10 @@ $startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $curre
             return [false, 'CBPDocument::StartWorkflow вернул пустой workflowId'];
         }
 
-        // Marker ставим только после успешного старта.
-        $addMarkerOnce($linkedElementId, $workflowMarker);
-
         $debugLog(
-            "v1.2.0: БП {$dayOffWorkflowTemplateId} запущен по заявке {$linkedElementId}, "
-            . "workflowId={$workflowId}, основание — связанная заявка {$currentElementId}"
+            "v1.2.0: связанная заявка {$linkedElementId} переведена в статус '{$statusRejectedName}', "
+            . "БП {$dayOffWorkflowTemplateId} запущен, workflowId={$workflowId}, "
+            . "основание — связанная заявка {$currentElementId}"
         );
 
         return [true, (string)$workflowId];
@@ -881,6 +910,11 @@ foreach ($linkedElementIds as $linkedElementId) {
                 $comment = 'Автоотклонено по связанной заявке #' . $currentElementId;
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
                 $executorCandidates = [];
+                // Важно: связанную заявку сначала завершаем от имени пользователя,
+                // который нажал кнопку в основной заявке, а не от первого исполнителя найденного задания.
+                if ($currentUserId > 0) {
+                    $executorCandidates[] = $currentUserId;
+                }
                 if ($taskAssignedUserId > 0) {
                     $executorCandidates[] = $taskAssignedUserId;
                 }

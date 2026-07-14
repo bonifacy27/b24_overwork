@@ -1,6 +1,6 @@
 <?php
 /**
- * group_auto_approve_v1_0_0.php
+ * group_auto_approve_ka_v1_0_0.php
  *
  * Скрипт для активити БП "PHP код" (Bitrix24).
  *
@@ -13,7 +13,7 @@
  * Логика:
  * 1) Берет у текущей заявки значение свойства GROUP_LINK.
  * 2) Находит все заявки инфоблока 391, привязанные к этой же группе.
- * 3) Оставляет только заявки в статусе "В работе C&B".
+ * 3) Оставляет только заявки в статусе "В работе КА".
  * 4) Если по заявке есть активное задание БП, выполняет его с положительным результатом Approve.
  * 5) Пишет запись в историю заявки.
  * 6) От дублей защищается через:
@@ -32,8 +32,16 @@ $propertyCodeStatus = 'STATUS';
 $propertyCodeHistory = 'ISTORIYA';
 $propertyCodeMarkers = 'AUTO_APPROVE_MARKERS';
 
-$statusApproveElementId = 3578386; // ID элемента статуса "В работе C&B".
-$statusApproveName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
+$statusApproveElementId = 3511771; // ID элемента статуса "В работе КА".
+$statusApproveName = 'В работе КА'; // Фолбэк-проверка по названию статуса.
+
+// Эти финальные/неактивные статусы нельзя затрагивать при групповом автосогласовании КА.
+$excludedStatusElementIds = [
+    3511824, // Выполнена
+    3580392, // Перенесена
+    3575323, // Отклонена
+    3511775, // Отменена
+];
 
 $executorUserId = 1; // Резервный пользователь для выполнения задания БП.
 $debugEnabled = true; // После проверки на бою можно поставить false.
@@ -45,12 +53,12 @@ $currentElementId = is_array($documentIdRaw) ? end($documentIdRaw) : $documentId
 $currentElementId = (int)str_replace('element_', '', (string)$currentElementId);
 
 if ($currentElementId <= 0) {
-    $this->WriteToTrackingService('group_auto_approve: Не удалось определить ID текущей заявки');
+    $this->WriteToTrackingService('group_auto_approve_ka: Не удалось определить ID текущей заявки');
     return;
 }
 
 if (!CModule::IncludeModule('iblock') || !CModule::IncludeModule('bizproc')) {
-    $this->WriteToTrackingService('group_auto_approve: Не удалось подключить модули iblock/bizproc');
+    $this->WriteToTrackingService('group_auto_approve_ka: Не удалось подключить модули iblock/bizproc');
     return;
 }
 
@@ -78,7 +86,7 @@ $documentType = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', 'iblock_' . $ib
 
 $debugLog = function (string $message) use ($debugEnabled): void {
     if ($debugEnabled) {
-        $this->WriteToTrackingService('group_auto_approve [debug]: ' . $message);
+        $this->WriteToTrackingService('group_auto_approve_ka [debug]: ' . $message);
     }
 };
 
@@ -256,7 +264,7 @@ $appendHistoryOnce = static function (int $elementId, string $marker, string $me
 };
 
 $makeGroupMarker = static function (int $groupId, int $elementId): string {
-    return 'AUTO_APPROVE_GROUP_REQUEST:' . $groupId . ':' . $elementId;
+    return 'AUTO_APPROVE_KA_GROUP_REQUEST:' . $groupId . ':' . $elementId;
 };
 
 $getConnection = static function () {
@@ -643,7 +651,7 @@ $getRunningTasksForElement = function (int $elementId) use ($documentType, $debu
 
 $groupIds = $getLinkedGroupIds($currentElementId);
 if (empty($groupIds)) {
-    $this->WriteToTrackingService("group_auto_approve: У текущей заявки #{$currentElementId} не заполнено поле {$propertyCodeGroup}");
+    $this->WriteToTrackingService("group_auto_approve_ka: У текущей заявки #{$currentElementId} не заполнено поле {$propertyCodeGroup}");
     return;
 }
 
@@ -656,21 +664,21 @@ foreach ($groupIds as $groupId) {
     $groupName = $getElementTitle($groupId);
     $groupTitleForMessage = $groupName !== '' ? ($groupName . ' #' . $groupId) : ('#' . $groupId);
 
-    $lockKey = 'AUTO_APPROVE_GROUP:' . $groupId;
+    $lockKey = 'AUTO_APPROVE_KA_GROUP:' . $groupId;
     if (!$acquireLock($lockKey, 10)) {
-        $this->WriteToTrackingService("group_auto_approve: Группа {$groupTitleForMessage} уже обрабатывается другим процессом, пропускаем");
+        $this->WriteToTrackingService("group_auto_approve_ka: Группа {$groupTitleForMessage} уже обрабатывается другим процессом, пропускаем");
         continue;
     }
 
     try {
         $requestIds = $getGroupRequestIds($groupId);
         if (empty($requestIds)) {
-            $this->WriteToTrackingService("group_auto_approve: По группе {$groupTitleForMessage} заявки не найдены");
+            $this->WriteToTrackingService("group_auto_approve_ka: По группе {$groupTitleForMessage} заявки не найдены");
             continue;
         }
 
         $this->WriteToTrackingService(
-            "group_auto_approve: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
+            "group_auto_approve_ka: Найдено заявок в группе {$groupTitleForMessage}: " . count($requestIds)
         );
 
         $currentRequestMarker = $makeGroupMarker($groupId, $currentElementId);
@@ -682,6 +690,9 @@ foreach ($groupIds as $groupId) {
             continue;
         }
 
+        // Первый проход — автосогласование активных заданий БП по заявкам группы.
+        $requestIdsWithoutActiveTasks = [];
+
         foreach ($requestIds as $requestId) {
             $requestId = (int)$requestId;
             if ($requestId <= 0) {
@@ -689,11 +700,18 @@ foreach ($groupIds as $groupId) {
             }
 
             if ($requestId === $currentElementId) {
-                $debugLog("Текущая заявка #{$requestId} уже завершена нажатием пользователя, повторно ее не автозавершаем");
+                $debugLog("Текущая заявка #{$requestId} уже завершена нажатием пользователя, повторно ее не автосогласовываем");
                 continue;
             }
 
             [$statusElementId, $statusValue] = $getElementStatus($requestId);
+            if (in_array((int)$statusElementId, $excludedStatusElementIds, true)) {
+                $debugLog(
+                    "Заявка #{$requestId} не затрагивается: статус '{$statusValue}', ID статуса '{$statusElementId}' "
+                    . "входит в список исключений для автосогласования КА"
+                );
+                continue;
+            }
             if (!$isExpectedStatus($requestId)) {
                 $debugLog(
                     "Заявка #{$requestId} пропущена, статус '{$statusValue}', ID статуса '{$statusElementId}' "
@@ -711,7 +729,8 @@ foreach ($groupIds as $groupId) {
             // Повторно собираем активные задачи уже внутри lock, чтобы не согласовать то, что успел завершить другой процесс.
             $taskItems = $getRunningTasksForElement($requestId);
             if (empty($taskItems)) {
-                $debugLog("У заявки #{$requestId} нет активных заданий БП для автосогласования");
+                $requestIdsWithoutActiveTasks[] = $requestId;
+                $debugLog("У заявки #{$requestId} нет активных заданий БП для автосогласования; обработаем во втором проходе");
                 continue;
             }
 
@@ -732,7 +751,7 @@ foreach ($groupIds as $groupId) {
                     continue;
                 }
 
-                $comment = 'Автосогласовано по групповой заявке ' . $groupTitleForMessage . '. Инициатор: заявка #' . $currentElementId;
+                $comment = 'Автосогласовано на этапе КА по групповой заявке ' . $groupTitleForMessage . '. Инициатор: заявка #' . $currentElementId;
                 $taskAssignedUserId = (int)($task['USER_ID'] ?? 0);
 
                 $executorCandidates = [];
@@ -763,25 +782,49 @@ foreach ($groupIds as $groupId) {
                 } else {
                     $lastError = $err;
                     $this->WriteToTrackingService(
-                        "group_auto_approve: Ошибка автосогласования task {$taskId} по заявке #{$requestId}: {$err}"
+                        "group_auto_approve_ka: Ошибка автосогласования task {$taskId} по заявке #{$requestId}: {$err}"
                     );
                 }
             }
 
             if ($approvedAny) {
                 $requestDocumentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
-                $historyMessage = "Заявка согласована автоматически по групповой заявке {$groupTitleForMessage}. Согласовал: {$currentUserName}.";
+                $historyMessage = "Заявка согласована автоматически на этапе КА по групповой заявке {$groupTitleForMessage}. Согласовал: {$currentUserName}.";
 
                 // История и marker пишутся один раз на заявку по группе.
                 $historyWasAdded = $appendHistoryOnce($requestId, $marker, $historyMessage);
                 if ($historyWasAdded) {
                     CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
-                    $this->WriteToTrackingService("group_auto_approve: {$historyMessage}");
+                    $this->WriteToTrackingService("group_auto_approve_ka: {$historyMessage}");
                 } else {
                     $debugLog("История по заявке #{$requestId} уже была добавлена ранее, marker={$marker}");
                 }
             } elseif ($lastError === '') {
                 $debugLog("Заявка #{$requestId} не была согласована: активные задания не завершены или уже закрыты");
+            }
+        }
+
+        // Второй проход — остальные заявки группы без активных заданий БП: фиксируем групповое автосогласование в истории.
+        foreach ($requestIdsWithoutActiveTasks as $requestIdWithoutTask) {
+            $requestIdWithoutTask = (int)$requestIdWithoutTask;
+            if ($requestIdWithoutTask <= 0) {
+                continue;
+            }
+
+            $marker = $makeGroupMarker($groupId, $requestIdWithoutTask);
+            if ($hasMarker($requestIdWithoutTask, $marker)) {
+                $debugLog("Заявка #{$requestIdWithoutTask} уже имеет маркер {$marker}, повторная история не пишется");
+                continue;
+            }
+
+            $historyMessage = "Заявка согласована автоматически на этапе КА по групповой заявке {$groupTitleForMessage}. Согласовал: {$currentUserName}.";
+            $historyWasAdded = $appendHistoryOnce($requestIdWithoutTask, $marker, $historyMessage);
+            if ($historyWasAdded) {
+                $requestDocumentId = ['lists', 'Bitrix\Lists\BizprocDocumentLists', $requestIdWithoutTask];
+                CBPDocument::AddDocumentToHistory($requestDocumentId, $historyMessage, $currentUserId);
+                $this->WriteToTrackingService("group_auto_approve_ka: {$historyMessage}");
+            } else {
+                $debugLog("История по заявке #{$requestIdWithoutTask} уже была добавлена ранее, marker={$marker}");
             }
         }
     } finally {
