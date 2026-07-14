@@ -707,6 +707,23 @@ function overtimeFindBlockingDuplicateRequest(
 
         $existingStartTs = strtotime($existingStart->format('Y-m-d H:i:s'));
         $existingEndTs = strtotime($existingEnd->format('Y-m-d H:i:s'));
+        if ($existingWorkTypeId === (int)$config['WORK_TYPE_DUTY_ID']) {
+            $existingStartDate = $existingStart->format('Y-m-d');
+            $existingEndDate = $existingEnd->format('Y-m-d');
+            $existingStartHasTime = preg_match('/\d{1,2}:\d{2}/', $existingStartRaw) === 1;
+            $existingEndHasTime = preg_match('/\d{1,2}:\d{2}/', $existingEndRaw) === 1;
+
+            if (!$existingStartHasTime) {
+                $existingStartTs = strtotime($existingStartDate . ' 00:00:00');
+            }
+            if (!$existingEndHasTime) {
+                $existingEndTs = strtotime($existingEndDate . ' 23:59:59');
+            }
+            if ($existingEndTs <= $existingStartTs && $existingStartDate === $existingEndDate) {
+                $existingStartTs = strtotime($existingStartDate . ' 00:00:00');
+                $existingEndTs = strtotime($existingEndDate . ' 23:59:59');
+            }
+        }
         if ($existingEndTs <= $existingStartTs) {
             $diagnostics[] = 'skip #' . (int)$item['ID'] . ': invalid period';
             continue;

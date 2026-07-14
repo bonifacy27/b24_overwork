@@ -1,7 +1,7 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.8.5-duty-cb-duplicates');
+    define('OVERTIME_REQUEST_VERSION', '1.8.6-duty-date-only-duplicates');
 }
 
 $overtimeConfig = [
