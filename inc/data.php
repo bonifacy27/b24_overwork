@@ -601,6 +601,12 @@ function overtimeFindBlockingDuplicateRequest(
     $excludedStatuses = array_values(array_filter($excludedStatuses, static function (int $statusId): bool {
         return $statusId > 0;
     }));
+    $dutyDuplicateBlockingStatuses = array_values(array_filter(
+        array_map('intval', (array)($config['DUTY_DUPLICATE_BLOCKING_STATUS_IDS'] ?? [])),
+        static function (int $statusId): bool {
+            return $statusId > 0;
+        }
+    ));
 
     $filter = [
         'IBLOCK_ID' => $config['IBLOCK_REQUESTS'],
@@ -644,8 +650,18 @@ function overtimeFindBlockingDuplicateRequest(
         $existingStartRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? ''));
         $existingEndRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? ''));
         $existingStatusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
+        $existingWorkTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
         if (in_array($existingStatusId, $excludedStatuses, true)) {
             $diagnostics[] = 'skip #' . (int)$item['ID'] . ': excluded status=' . $existingStatusId;
+            continue;
+        }
+
+        if (
+            $existingWorkTypeId === (int)$config['WORK_TYPE_DUTY_ID']
+            && !empty($dutyDuplicateBlockingStatuses)
+            && !in_array($existingStatusId, $dutyDuplicateBlockingStatuses, true)
+        ) {
+            $diagnostics[] = 'skip #' . (int)$item['ID'] . ': duty duplicate status is not blocking=' . $existingStatusId;
             continue;
         }
 
@@ -692,7 +708,7 @@ function overtimeFindBlockingDuplicateRequest(
             'id' => (int)($item['ID'] ?? 0),
             'name' => (string)($item['NAME'] ?? ''),
             'status_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
-            'work_type_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0),
+            'work_type_id' => $existingWorkTypeId,
             'work_type_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? ''),
             'start' => date('d.m.Y H:i', $existingStartTs),
             'end' => date('d.m.Y H:i', $existingEndTs),
