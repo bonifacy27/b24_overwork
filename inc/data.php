@@ -691,6 +691,10 @@ function overtimeFindBlockingDuplicateRequest(
                 $existingStartRaw = $workStartDate . ' ' . $workStartTime . ':00';
                 $existingEndRaw = $workEndDate . ' ' . $workEndTime . ':00';
                 $diagnostics[] = 'fallback #' . (int)$item['ID'] . ': using work date/time properties';
+            } elseif ($existingWorkTypeId === (int)$config['WORK_TYPE_DUTY_ID'] && $workStartDate !== '' && $workEndDate !== '') {
+                $existingStartRaw = $workStartDate;
+                $existingEndRaw = $workEndDate;
+                $diagnostics[] = 'fallback #' . (int)$item['ID'] . ': using duty work dates without time';
             } else {
                 $diagnostics[] = 'skip #' . (int)$item['ID'] . ': empty dates';
                 continue;

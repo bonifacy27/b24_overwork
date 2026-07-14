@@ -1,7 +1,7 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.8.6-duty-date-only-duplicates');
+    define('OVERTIME_REQUEST_VERSION', '1.8.7-duty-work-date-fallback');
 }
 
 $overtimeConfig = [
