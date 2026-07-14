@@ -192,6 +192,20 @@ BX.ready(function () {
                 + '</tr>';
         });
         html += '</tbody></table>';
+
+        const validationMessages = [];
+        if (lastPreviewResponse && lastPreviewResponse.rows) {
+            Object.keys(lastPreviewResponse.rows).forEach(function(index){
+                const item = lastPreviewResponse.rows[index];
+                ((item && item.errors) || []).forEach(function(error){
+                    if (validationMessages.indexOf(error) === -1) {
+                        validationMessages.push(error);
+                    }
+                });
+            });
+        }
+        html += buildErrors(validationMessages);
+
         target.innerHTML = html;
         showElement(target);
     }
@@ -992,6 +1006,7 @@ BX.ready(function () {
                     updateLateWarningUiFromPreview(response);
                     updateCreateButtonLabel();
                     updateCreateButtonState(response);
+                    renderDutySummary();
 
                     if (!response || (response.success === false && response.errors)) {
                         if (payload.mode === 'single') {

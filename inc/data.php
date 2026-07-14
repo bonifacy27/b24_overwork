@@ -626,6 +626,7 @@ function overtimeFindBlockingDuplicateRequest(
             'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
             'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
             'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
         ]
     );
 
@@ -691,6 +692,8 @@ function overtimeFindBlockingDuplicateRequest(
             'id' => (int)($item['ID'] ?? 0),
             'name' => (string)($item['NAME'] ?? ''),
             'status_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'work_type_id' => (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0),
+            'work_type_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? ''),
             'start' => date('d.m.Y H:i', $existingStartTs),
             'end' => date('d.m.Y H:i', $existingEndTs),
         ];
