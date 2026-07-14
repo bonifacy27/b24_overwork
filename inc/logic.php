@@ -939,6 +939,42 @@ function overtimeValidatePastDateRestriction(int $employeeId, DateTime $start, D
     ];
 }
 
+
+function overtimeBuildDuplicateConflictError(int $employeeId, array $blockingDuplicate, array $config, bool $newIsDuty = false): string
+{
+    $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
+    $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
+    $duplicatePeriod = trim((string)($blockingDuplicate['start'] ?? '')) . ' — ' . trim((string)($blockingDuplicate['end'] ?? ''));
+    $existingTypeId = (int)($blockingDuplicate['work_type_id'] ?? 0);
+    $existingTypeName = trim((string)($blockingDuplicate['work_type_name'] ?? ''));
+    $statusText = $duplicateStatus !== '' ? (' (статус: ' . $duplicateStatus . ')') : '';
+    $typeText = $existingTypeName !== '' ? (' типа "' . $existingTypeName . '"') : '';
+
+    if ($newIsDuty && $existingTypeId === (int)$config['WORK_TYPE_DUTY_ID']) {
+        return 'Для сотрудника ' . overtimeGetUserNameById($employeeId)
+            . ' уже есть дежурство на выбранную дату: #' . $duplicateId
+            . $statusText
+            . ', период ' . $duplicatePeriod . '.'
+            . ' Создание дубля невозможно.';
+    }
+
+    if ($newIsDuty && in_array($existingTypeId, [(int)$config['WORK_TYPE_OVERTIME_ID'], (int)$config['WORK_TYPE_WEEKEND_ID']], true)) {
+        return 'Нельзя создать дежурство для сотрудника ' . overtimeGetUserNameById($employeeId)
+            . ' на день со сверхурочной работой или работой в выходной день: #' . $duplicateId
+            . $typeText
+            . $statusText
+            . ', период ' . $duplicatePeriod . '.';
+    }
+
+    return 'Обнаружено пересечение с существующей заявкой сотрудника '
+        . overtimeGetUserNameById($employeeId)
+        . ': #' . $duplicateId
+        . $typeText
+        . $statusText
+        . ', период ' . $duplicatePeriod . '.'
+        . ' Создание дубля невозможно.';
+}
+
 function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, string $timeStart, string $dateEnd, string $timeEnd, bool $isDuty, array $config): array
 {
     $errors = [];
@@ -1025,16 +1061,7 @@ function overtimeBuildSinglePreviewItem(int $employeeId, string $dateStart, stri
             }
         }
         if ($blockingDuplicate !== null) {
-            $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
-            $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
-            $duplicatePeriod = trim((string)($blockingDuplicate['start'] ?? '')) . ' — ' . trim((string)($blockingDuplicate['end'] ?? ''));
-            $statusText = $duplicateStatus !== '' ? (' (статус: ' . $duplicateStatus . ')') : '';
-            $errors[] = 'Обнаружено пересечение с существующей заявкой сотрудника '
-                . overtimeGetUserNameById($employeeId)
-                . ': #' . $duplicateId
-                . $statusText
-                . ', период ' . $duplicatePeriod . '.'
-                . ' Создание дубля невозможно.';
+            $errors[] = overtimeBuildDuplicateConflictError($employeeId, $blockingDuplicate, $config, $isDuty);
             $blockCreate = true;
             break;
         }
@@ -1164,12 +1191,16 @@ function overtimeBuildModePreview(string $mode, array $payload, array $config): 
         $items = [];
         $isDuty = (($common['is_duty'] ?? 'N') === 'Y');
 
+        $seenDutyDates = [];
+
         foreach ($rows as $index => $row) {
+            $employeeId = (int)($row['employee_id'] ?? 0);
             if ($isDuty && trim((string)($row['duty_dates'] ?? '')) !== '') {
                 $segments = overtimeParseDutyDateRanges((string)$row['duty_dates']);
                 foreach ($segments as $segmentIndex => $segment) {
-                    $items[$index . '_' . $segmentIndex] = overtimeBuildSinglePreviewItem(
-                        (int)($row['employee_id'] ?? 0),
+                    $itemKey = $index . '_' . $segmentIndex;
+                    $items[$itemKey] = overtimeBuildSinglePreviewItem(
+                        $employeeId,
                         $segment['date_start'],
                         '',
                         $segment['date_end'],
@@ -1177,12 +1208,37 @@ function overtimeBuildModePreview(string $mode, array $payload, array $config): 
                         true,
                         $config
                     );
+
+                    $startTs = strtotime($segment['date_start']);
+                    $endTs = strtotime($segment['date_end']);
+                    if ($employeeId > 0 && $startTs !== false && $endTs !== false) {
+                        for ($dateTs = $startTs; $dateTs <= $endTs; $dateTs = strtotime('+1 day', $dateTs)) {
+                            if ($dateTs === false) {
+                                break;
+                            }
+                            $dateKey = $employeeId . '|' . date('Y-m-d', $dateTs);
+                            if (isset($seenDutyDates[$dateKey])) {
+                                $message = 'Для сотрудника ' . overtimeGetUserNameById($employeeId)
+                                    . ' дата дежурства ' . date('d.m.Y', $dateTs)
+                                    . ' выбрана повторно в строках формы. Создание дубля невозможно.';
+                                $items[$itemKey]['errors'][] = $message;
+                                $items[$itemKey]['block_create'] = true;
+                                $previousKey = $seenDutyDates[$dateKey];
+                                if (isset($items[$previousKey])) {
+                                    $items[$previousKey]['errors'][] = $message;
+                                    $items[$previousKey]['block_create'] = true;
+                                }
+                            } else {
+                                $seenDutyDates[$dateKey] = $itemKey;
+                            }
+                        }
+                    }
                 }
                 continue;
             }
 
             $items[$index] = overtimeBuildSinglePreviewItem(
-                (int)($row['employee_id'] ?? 0),
+                $employeeId,
                 trim((string)($row['date_start'] ?? '')),
                 trim((string)($row['time_start'] ?? '')),
                 trim((string)($row['date_end'] ?? '')),
@@ -1675,16 +1731,12 @@ function overtimeCreateEmployeeRequestPack(
             $ignoreRequestIds
         );
         if ($blockingDuplicate !== null) {
-            $duplicateId = (int)($blockingDuplicate['id'] ?? 0);
-            $duplicateStatus = trim((string)($blockingDuplicate['status_name'] ?? ''));
-            $duplicatePeriod = trim((string)($blockingDuplicate['start'] ?? '')) . ' — ' . trim((string)($blockingDuplicate['end'] ?? ''));
-            $statusText = $duplicateStatus !== '' ? (' (статус: ' . $duplicateStatus . ')') : '';
-            $errors[] = 'Обнаружено пересечение с существующей заявкой сотрудника '
-                . overtimeGetUserNameById($employeeId)
-                . ': #' . $duplicateId
-                . $statusText
-                . ', период ' . $duplicatePeriod . '.'
-                . ' Создание дубля невозможно.';
+            $errors[] = overtimeBuildDuplicateConflictError(
+                $employeeId,
+                $blockingDuplicate,
+                $config,
+                (int)($segment['type_id'] ?? 0) === (int)$config['WORK_TYPE_DUTY_ID']
+            );
             break;
         }
 
@@ -1814,6 +1866,46 @@ function overtimeCreateEmployeeRequestPack(
     ];
 }
 
+
+function overtimeFindDutyDateDuplicateErrorsInRows(array $rows): array
+{
+    $errors = [];
+    $seen = [];
+
+    foreach ($rows as $rowIndex => $row) {
+        $employeeId = (int)($row['employee_id'] ?? 0);
+        if ($employeeId <= 0) {
+            continue;
+        }
+
+        foreach (overtimeParseDutyDateRanges((string)($row['duty_dates'] ?? '')) as $range) {
+            $startTs = strtotime($range['date_start']);
+            $endTs = strtotime($range['date_end']);
+            if ($startTs === false || $endTs === false) {
+                continue;
+            }
+
+            for ($dateTs = $startTs; $dateTs <= $endTs; $dateTs = strtotime('+1 day', $dateTs)) {
+                if ($dateTs === false) {
+                    break;
+                }
+
+                $dateKey = $employeeId . '|' . date('Y-m-d', $dateTs);
+                if (!isset($seen[$dateKey])) {
+                    $seen[$dateKey] = $rowIndex;
+                    continue;
+                }
+
+                $errors[] = 'Для сотрудника ' . overtimeGetUserNameById($employeeId)
+                    . ' дата дежурства ' . date('d.m.Y', $dateTs)
+                    . ' выбрана повторно в строках формы. Создание дубля невозможно.';
+            }
+        }
+    }
+
+    return array_values(array_unique($errors));
+}
+
 function overtimeCreateByMode(string $mode, array $post, array $files, int $createdBy, array $config): array
 {
     $creatorAccess = overtimeGetCreatorAccessMap($createdBy, $config);
@@ -1876,6 +1968,13 @@ function overtimeCreateByMode(string $mode, array $post, array $files, int $crea
             $employeeId = (int)($row['employee_id'] ?? 0);
             if ($employeeId > 0) {
                 $employeeIds[] = $employeeId;
+            }
+        }
+
+        if (($common['is_duty'] ?? 'N') === 'Y') {
+            $errors = array_merge($errors, overtimeFindDutyDateDuplicateErrorsInRows($rows));
+            if (!empty($errors)) {
+                return ['success' => false, 'errors' => $errors, 'created_ids' => [], 'group_id' => 0];
             }
         }
 
@@ -1977,6 +2076,13 @@ function overtimeCreateByMode(string $mode, array $post, array $files, int $crea
             $employeeId = (int)($row['employee_id'] ?? 0);
             if ($employeeId > 0) {
                 $employeeIds[] = $employeeId;
+            }
+        }
+
+        if (($common['is_duty'] ?? 'N') === 'Y') {
+            $errors = array_merge($errors, overtimeFindDutyDateDuplicateErrorsInRows($rows));
+            if (!empty($errors)) {
+                return ['success' => false, 'errors' => $errors, 'created_ids' => [], 'group_id' => 0];
             }
         }
 

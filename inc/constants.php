@@ -1,7 +1,7 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.8.4-duty-modal-fixes');
+    define('OVERTIME_REQUEST_VERSION', '1.8.7-duty-work-date-fallback');
 }
 
 $overtimeConfig = [
@@ -25,6 +25,10 @@ $overtimeConfig = [
     'STATUS_CANCELLED_ID'   => 3511775,
     'STATUS_TRANSFERRED_ID' => 3580392,
     'STATUS_REFINEMENT_ID'  => 3582614,
+    'STATUS_COMPLETED_ID'   => 3511824,
+    'STATUS_IN_WORK_CB_ID'  => 3578386,
+    'DUTY_DUPLICATE_BLOCKING_STATUS_IDS' => [3511824, 3578386],
+    'DUTY_DUPLICATE_BLOCKING_STATUS_NAMES' => ['Выполнена', 'Выполнено', 'В работе C&B', 'В работе С&B'],
 
     // Список пользователей, которым доступен флаг "Дежурство"
     'DUTY_ACCESS_PROP_EMPLOYEE' => 'SOTRUDNIK',

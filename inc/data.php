@@ -601,6 +601,20 @@ function overtimeFindBlockingDuplicateRequest(
     $excludedStatuses = array_values(array_filter($excludedStatuses, static function (int $statusId): bool {
         return $statusId > 0;
     }));
+    $dutyDuplicateBlockingStatuses = array_values(array_filter(
+        array_map('intval', (array)($config['DUTY_DUPLICATE_BLOCKING_STATUS_IDS'] ?? [])),
+        static function (int $statusId): bool {
+            return $statusId > 0;
+        }
+    ));
+    $dutyDuplicateBlockingStatusNames = array_values(array_filter(
+        array_map(static function ($statusName): string {
+            return mb_strtolower(trim((string)$statusName), 'UTF-8');
+        }, (array)($config['DUTY_DUPLICATE_BLOCKING_STATUS_NAMES'] ?? [])),
+        static function (string $statusName): bool {
+            return $statusName !== '';
+        }
+    ));
 
     $filter = [
         'IBLOCK_ID' => $config['IBLOCK_REQUESTS'],
@@ -626,6 +640,7 @@ function overtimeFindBlockingDuplicateRequest(
             'PROPERTY_' . $config['REQ_PROP_WORK_END_DATE'],
             'PROPERTY_' . $config['REQ_PROP_WORK_START_TIME'],
             'PROPERTY_' . $config['REQ_PROP_WORK_END_TIME'],
+            'PROPERTY_' . $config['REQ_PROP_WORK_TYPE'],
         ]
     );
 
@@ -643,9 +658,27 @@ function overtimeFindBlockingDuplicateRequest(
         $existingStartRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_START'] . '_VALUE'] ?? ''));
         $existingEndRaw = trim((string)($item['PROPERTY_' . $config['REQ_PROP_END'] . '_VALUE'] ?? ''));
         $existingStatusId = (int)($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? 0);
+        $existingStatusName = overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? '');
+        $existingStatusNameNormalized = mb_strtolower(trim($existingStatusName), 'UTF-8');
+        $existingWorkTypeId = (int)($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? 0);
         if (in_array($existingStatusId, $excludedStatuses, true)) {
             $diagnostics[] = 'skip #' . (int)$item['ID'] . ': excluded status=' . $existingStatusId;
             continue;
+        }
+
+        if ($existingWorkTypeId === (int)$config['WORK_TYPE_DUTY_ID']) {
+            $isBlockingDutyStatusById = !empty($dutyDuplicateBlockingStatuses)
+                && in_array($existingStatusId, $dutyDuplicateBlockingStatuses, true);
+            $isBlockingDutyStatusByName = $existingStatusNameNormalized !== ''
+                && in_array($existingStatusNameNormalized, $dutyDuplicateBlockingStatusNames, true);
+
+            if (!$isBlockingDutyStatusById && !$isBlockingDutyStatusByName) {
+                $diagnostics[] = 'skip #' . (int)$item['ID']
+                    . ': duty duplicate status is not blocking='
+                    . $existingStatusId
+                    . ($existingStatusName !== '' ? ' (' . $existingStatusName . ')' : '');
+                continue;
+            }
         }
 
         if ($existingStartRaw === '' || $existingEndRaw === '') {
@@ -658,6 +691,10 @@ function overtimeFindBlockingDuplicateRequest(
                 $existingStartRaw = $workStartDate . ' ' . $workStartTime . ':00';
                 $existingEndRaw = $workEndDate . ' ' . $workEndTime . ':00';
                 $diagnostics[] = 'fallback #' . (int)$item['ID'] . ': using work date/time properties';
+            } elseif ($existingWorkTypeId === (int)$config['WORK_TYPE_DUTY_ID'] && $workStartDate !== '' && $workEndDate !== '') {
+                $existingStartRaw = $workStartDate;
+                $existingEndRaw = $workEndDate;
+                $diagnostics[] = 'fallback #' . (int)$item['ID'] . ': using duty work dates without time';
             } else {
                 $diagnostics[] = 'skip #' . (int)$item['ID'] . ': empty dates';
                 continue;
@@ -674,6 +711,23 @@ function overtimeFindBlockingDuplicateRequest(
 
         $existingStartTs = strtotime($existingStart->format('Y-m-d H:i:s'));
         $existingEndTs = strtotime($existingEnd->format('Y-m-d H:i:s'));
+        if ($existingWorkTypeId === (int)$config['WORK_TYPE_DUTY_ID']) {
+            $existingStartDate = $existingStart->format('Y-m-d');
+            $existingEndDate = $existingEnd->format('Y-m-d');
+            $existingStartHasTime = preg_match('/\d{1,2}:\d{2}/', $existingStartRaw) === 1;
+            $existingEndHasTime = preg_match('/\d{1,2}:\d{2}/', $existingEndRaw) === 1;
+
+            if (!$existingStartHasTime) {
+                $existingStartTs = strtotime($existingStartDate . ' 00:00:00');
+            }
+            if (!$existingEndHasTime) {
+                $existingEndTs = strtotime($existingEndDate . ' 23:59:59');
+            }
+            if ($existingEndTs <= $existingStartTs && $existingStartDate === $existingEndDate) {
+                $existingStartTs = strtotime($existingStartDate . ' 00:00:00');
+                $existingEndTs = strtotime($existingEndDate . ' 23:59:59');
+            }
+        }
         if ($existingEndTs <= $existingStartTs) {
             $diagnostics[] = 'skip #' . (int)$item['ID'] . ': invalid period';
             continue;
@@ -690,7 +744,9 @@ function overtimeFindBlockingDuplicateRequest(
         return [
             'id' => (int)($item['ID'] ?? 0),
             'name' => (string)($item['NAME'] ?? ''),
-            'status_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_STATUS'] . '_VALUE'] ?? ''),
+            'status_name' => $existingStatusName,
+            'work_type_id' => $existingWorkTypeId,
+            'work_type_name' => overtimeResolveEnumOrElementValueSafe($item['PROPERTY_' . $config['REQ_PROP_WORK_TYPE'] . '_VALUE'] ?? ''),
             'start' => date('d.m.Y H:i', $existingStartTs),
             'end' => date('d.m.Y H:i', $existingEndTs),
         ];
