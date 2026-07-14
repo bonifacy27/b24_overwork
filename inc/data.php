@@ -183,6 +183,16 @@ function overtimeCanCreatePastPeriodForEmployee(int $employeeId, array $config):
     return in_array($employeeId, $allowedEmployeeIds, true);
 }
 
+function overtimeCanCurrentCreatorCreatePastPeriod(array $config): bool
+{
+    $creatorId = (int)($config['CURRENT_USER_ID'] ?? 0);
+    if ($creatorId <= 0) {
+        return false;
+    }
+
+    return overtimeCanCreatePastPeriodForEmployee($creatorId, $config);
+}
+
 
 function overtimeGetDeputizedManagerIds(int $deputyId): array
 {

@@ -75,6 +75,8 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .diff-row.is-collapsed > .overtime-grid-4,
     .diff-row.is-collapsed > .overtime-duty-only,
     .diff-row.is-collapsed > .row-preview {display:none;}
+    .diff-row-employee-title {display:none; font-weight:400; color:#5f6b77;}
+    .diff-row.is-collapsed .diff-row-employee-title {display:inline;}
 </style>
 
 <div class="overtime-wrap">
@@ -305,7 +307,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                     <?php foreach ($formData['rows_diff'] as $index => $row): ?>
                         <div class="overtime-row-card diff-row" data-index="<?= (int)$index ?>">
                             <div class="overtime-row-header">
-                                <strong>Строка #<?= (int)($index + 1) ?></strong>
+                                <strong>Строка #<?= (int)($index + 1) ?><span class="diff-row-employee-title"></span></strong>
                                 <div class="overtime-row-actions">
                                     <button type="button" class="ui-btn ui-btn-light-border toggle-diff-row-body">Свернуть</button>
                                     <button type="button" class="ui-btn ui-btn-light-border remove-diff-row">Удалить</button>

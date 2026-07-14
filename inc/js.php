@@ -13,7 +13,7 @@ BX.ready(function () {
     const isDebug = <?= !empty($overtimeConfig['DEBUG']) ? 'true' : 'false' ?>;
     const dutyAllowed = <?= !empty($overtimeConfig['ALLOW_DUTY']) ? 'true' : 'false' ?>;
     const creatorCanCreate = <?= !empty(($overtimeConfig['CREATOR_ACCESS_MAP']['is_manager'] ?? false)) ? 'true' : 'false' ?>;
-    const pastPeriodAllowedEmployees = <?= \Bitrix\Main\Web\Json::encode(overtimeGetPastPeriodAllowedEmployeeIds($overtimeConfig)) ?>;
+    const creatorCanCreatePastPeriod = <?= overtimeCanCurrentCreatorCreatePastPeriod($overtimeConfig) ? 'true' : 'false' ?>;
 
     let lastPreviewResponse = null;
     let previewTimer = null;
@@ -139,6 +139,24 @@ BX.ready(function () {
             || '';
     }
 
+    function updateDiffRowCollapsedTitle(row) {
+        if (!row) {
+            return;
+        }
+
+        const title = row.querySelector('.diff-row-employee-title');
+        if (!title) {
+            return;
+        }
+
+        const employee = getRowEmployeeName(row);
+        title.textContent = employee && employee !== 'Выберите сотрудника' ? ' — ' + employee : '';
+    }
+
+    function updateAllDiffRowCollapsedTitles() {
+        document.querySelectorAll('.diff-row').forEach(updateDiffRowCollapsedTitle);
+    }
+
     function renderDutySummary() {
         const target = document.getElementById('duty_summary');
         if (!target) {
@@ -209,33 +227,21 @@ BX.ready(function () {
         return target.value.split(/\r?\n/).map(function(item){ return item.trim(); }).filter(Boolean);
     }
 
-    function isPastPeriodAllowedForRow(row) {
-        const employeeInput = row ? row.querySelector('input[name*="[employee_id]"]') : null;
-        const employeeId = employeeInput ? parseInt(employeeInput.value || '0', 10) : 0;
-        return pastPeriodAllowedEmployees.map(function(id){ return parseInt(id, 10); }).indexOf(employeeId) !== -1;
-    }
-
     function applyPastDateLimits(row) {
         if (!row) {
             return;
         }
 
-        const allowPast = isPastPeriodAllowedForRow(row);
         row.querySelectorAll('input[type="date"]').forEach(function(input){
-            setDateInputMin(input, allowPast);
+            setDateInputMin(input);
         });
     }
 
-    function isPastPeriodAllowedEmployeeId(employeeId) {
-        employeeId = parseInt(employeeId || '0', 10);
-        return pastPeriodAllowedEmployees.map(function(id){ return parseInt(id, 10); }).indexOf(employeeId) !== -1;
-    }
-
-    function setDateInputMin(input, allowPast) {
+    function setDateInputMin(input) {
         if (!input) {
             return;
         }
-        if (allowPast) {
+        if (creatorCanCreatePastPeriod) {
             input.removeAttribute('min');
         } else {
             input.min = minAllowedDate;
@@ -243,19 +249,9 @@ BX.ready(function () {
     }
 
     function updatePastDateLimits() {
-        const singleEmployee = document.getElementById('single_employee_id');
-        const singleAllowPast = isPastPeriodAllowedEmployeeId(singleEmployee ? singleEmployee.value : 0);
-        setDateInputMin(document.getElementById('single_date_start'), singleAllowPast);
-        setDateInputMin(document.getElementById('single_date_end'), singleAllowPast);
-
-        let sameAllowPast = false;
-        document.querySelectorAll('.same-row input[name*="[employee_id]"]').forEach(function(input){
-            sameAllowPast = sameAllowPast || isPastPeriodAllowedEmployeeId(input.value);
+        document.querySelectorAll('input[type="date"]').forEach(function(input){
+            setDateInputMin(input);
         });
-        setDateInputMin(document.getElementById('same_date_start'), sameAllowPast);
-        setDateInputMin(document.getElementById('same_date_end'), sameAllowPast);
-
-        document.querySelectorAll('.diff-row').forEach(applyPastDateLimits);
     }
 
     function syncDutyCalendarSelection(row) {
@@ -651,6 +647,7 @@ BX.ready(function () {
                     input.value = item.getId();
                     box.innerHTML = escapeHtml(title || 'Выбран сотрудник');
                     setEmployeeInfo(box, title, subtitle);
+                    updateDiffRowCollapsedTitle(box.closest('.diff-row'));
                     renderDutySummary();
                     updatePastDateLimits();
                     requestPreview();
@@ -659,6 +656,7 @@ BX.ready(function () {
                     input.value = '';
                     box.innerHTML = 'Выберите сотрудника';
                     setEmployeeInfo(box, '', '');
+                    updateDiffRowCollapsedTitle(box.closest('.diff-row'));
                     renderDutySummary();
                     updatePastDateLimits();
                     requestPreview();
@@ -1301,7 +1299,8 @@ BX.ready(function () {
     function rebuildDiffIndexes() {
         document.querySelectorAll('.diff-row').forEach(function(row, idx){
             row.dataset.index = idx;
-            row.querySelector('.overtime-row-header strong').textContent = 'Строка #' + (idx + 1);
+            row.querySelector('.overtime-row-header strong').innerHTML = 'Строка #' + (idx + 1) + '<span class="diff-row-employee-title"></span>';
+            updateDiffRowCollapsedTitle(row);
 
             const selector = row.querySelector('.overtime-selector-row');
             selector.dataset.input = 'rows_diff_' + idx + '_employee_id';
@@ -1385,14 +1384,14 @@ BX.ready(function () {
             }).join('');
 
             const container = document.getElementById('rows_diff_container');
-            container.querySelectorAll('.diff-row').forEach(function(row){ row.classList.add('is-collapsed'); const btn = row.querySelector('.toggle-diff-row-body'); if (btn) { btn.textContent = 'Раскрыть'; } });
+            container.querySelectorAll('.diff-row').forEach(function(row){ updateDiffRowCollapsedTitle(row); row.classList.add('is-collapsed'); const btn = row.querySelector('.toggle-diff-row-body'); if (btn) { btn.textContent = 'Раскрыть'; } });
             const idx = container.querySelectorAll('.diff-row').length;
             const div = document.createElement('div');
             div.className = 'overtime-row-card diff-row';
             div.dataset.index = idx;
             div.innerHTML = `
                 <div class="overtime-row-header">
-                    <strong>Строка #${idx + 1}</strong>
+                    <strong>Строка #${idx + 1}<span class="diff-row-employee-title"></span></strong>
                     <div class="overtime-row-actions">
                         <button type="button" class="ui-btn ui-btn-light-border toggle-diff-row-body">Свернуть</button>
                         <button type="button" class="ui-btn ui-btn-light-border remove-diff-row">Удалить</button>
@@ -1493,6 +1492,7 @@ BX.ready(function () {
         if (diffToggleBtn) {
             const row = diffToggleBtn.closest('.diff-row');
             if (row) {
+                updateDiffRowCollapsedTitle(row);
                 row.classList.toggle('is-collapsed');
                 diffToggleBtn.textContent = row.classList.contains('is-collapsed') ? 'Раскрыть' : 'Свернуть';
             }
@@ -1567,6 +1567,7 @@ BX.ready(function () {
     });
 
     updatePastDateLimits();
+    updateAllDiffRowCollapsedTitles();
     switchMode(modeInput.value || 'single');
     updateDutyFormVisibility();
     updateDutyDiagnostics('initial');

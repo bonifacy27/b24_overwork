@@ -929,7 +929,7 @@ function overtimeValidatePastDateRestriction(int $employeeId, DateTime $start, D
         return ['allowed' => true, 'error' => ''];
     }
 
-    if (overtimeCanCreatePastPeriodForEmployee($employeeId, $config)) {
+    if (overtimeCanCurrentCreatorCreatePastPeriod($config)) {
         return ['allowed' => true, 'error' => ''];
     }
 
