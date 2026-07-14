@@ -65,9 +65,9 @@ $dayOffWorkflowParameters = [];
 $statusDeclineElementId = 3578386; // ID элемента статуса "В работе C&B" в справочнике статусов.
 $statusDeclineName = 'В работе C&B'; // Фолбэк-проверка по названию статуса.
 
-// Для связанной заявки с типом оплаты "Отгул" перед запуском БП переводим STATUS в "Отменена".
-$statusCanceledElementId = 3511775;
-$statusCanceledName = 'Отменена';
+// Для связанной заявки с типом оплаты "Отгул" перед запуском БП переводим STATUS в "Отклонена".
+$statusRejectedElementId = 3575323;
+$statusRejectedName = 'Отклонена';
 
 $debugEnabled = true; // При необходимости после проверки можно поставить false.
 $executorUserId = 1; // Выполняем задания БП от имени администратора, если исполнитель задания не сработал.
@@ -290,8 +290,8 @@ $startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $curre
     $paymentTypeDayOffElementId,
     $dayOffWorkflowTemplateId,
     $dayOffWorkflowParameters,
-    $statusCanceledElementId,
-    $statusCanceledName,
+    $statusRejectedElementId,
+    $statusRejectedName,
     $getPaymentTypeIds,
     $setRequestStatus,
     $buildDayOffWorkflowMarker,
@@ -318,8 +318,8 @@ $startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $curre
         return [false, "БП {$dayOffWorkflowTemplateId} уже запускался ранее, marker={$workflowMarker}"];
     }
 
-    if (!$setRequestStatus($linkedElementId, $statusCanceledElementId)) {
-        return [false, "Не удалось перевести связанную заявку в статус '{$statusCanceledName}'"];
+    if (!$setRequestStatus($linkedElementId, $statusRejectedElementId)) {
+        return [false, "Не удалось перевести связанную заявку в статус '{$statusRejectedName}'"];
     }
 
     // Marker ставим до запуска БП: повторные экземпляры не должны стартовать workflow второй раз.
@@ -356,7 +356,7 @@ $startDayOffWorkflowIfNeeded = static function (int $linkedElementId, int $curre
         }
 
         $debugLog(
-            "v1.2.0: связанная заявка {$linkedElementId} переведена в статус '{$statusCanceledName}', "
+            "v1.2.0: связанная заявка {$linkedElementId} переведена в статус '{$statusRejectedName}', "
             . "БП {$dayOffWorkflowTemplateId} запущен, workflowId={$workflowId}, "
             . "основание — связанная заявка {$currentElementId}"
         );
