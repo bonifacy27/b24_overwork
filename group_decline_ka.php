@@ -267,7 +267,7 @@ $appendMarker = static function (int $elementId, string $marker) use ($iblockId,
     CIBlockElement::SetPropertyValuesEx($elementId, $iblockId, [$propertyCodeMarkers => $markers]);
 };
 
-$appendHistoryOnce = static function (int $elementId, string $marker, string $message) use ($hasMarker, $appendMarker, $appendHistory): bool {
+$appendHistoryOnce = static function (int $elementId, string $marker, string $message) use ($iblockId, $propertyCodeHistory, $hasMarker, $appendMarker, $appendHistory): bool {
     if ($elementId <= 0 || $marker === '' || $message === '') {
         return false;
     }
@@ -276,8 +276,25 @@ $appendHistoryOnce = static function (int $elementId, string $marker, string $me
         return false;
     }
 
-    $appendHistory($elementId, $message);
+    $existing = '';
+    $propRes = CIBlockElement::GetProperty($iblockId, $elementId, ['sort' => 'asc'], ['CODE' => $propertyCodeHistory]);
+    if ($prop = $propRes->Fetch()) {
+        $value = $prop['VALUE'] ?? '';
+        if (is_array($value) && isset($value['TEXT'])) {
+            $value = $value['TEXT'];
+        }
+        $existing = trim((string)$value);
+    }
+
+    if ($existing !== '' && strpos($existing, $message) !== false) {
+        $appendMarker($elementId, $marker);
+        return false;
+    }
+
+    // Marker ставим до записи истории: каскадные экземпляры, ожидающие DB-lock,
+    // не должны успеть повторно добавить ту же строку в ISTORIYA.
     $appendMarker($elementId, $marker);
+    $appendHistory($elementId, $message);
 
     return true;
 };
