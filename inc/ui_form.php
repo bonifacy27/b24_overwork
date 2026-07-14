@@ -66,9 +66,15 @@ foreach ($formData['rows_diff'] as $index => $row) {
     .overtime-duty-calendar-weekdays span {font-size:12px; color:#6b7785; text-align:center;}
     .overtime-duty-calendar-day {border:1px solid #cfd7df; border-radius:4px; background:#f8fbff; padding:4px 0; cursor:pointer; text-align:center; font-size:12px;}
     .overtime-duty-calendar-day:hover {background:#e6f4ff; border-color:#7bb4ff;}
+    .overtime-duty-calendar-day.is-selected {background:#2fc6f6; border-color:#1b9ed0; color:#fff; font-weight:600;}
     .overtime-duty-calendar-day[disabled] {background:#f1f3f5; color:#a0a8b0; cursor:not-allowed; border-color:#e1e5ea;}
     .diff-duty-dates {display:none;}
     .overtime-duty-summary {margin-top:14px;}
+    .diff-row.is-collapsed > .overtime-field,
+    .diff-row.is-collapsed > .overtime-subtitle,
+    .diff-row.is-collapsed > .overtime-grid-4,
+    .diff-row.is-collapsed > .overtime-duty-only,
+    .diff-row.is-collapsed > .row-preview {display:none;}
 </style>
 
 <div class="overtime-wrap">
@@ -301,6 +307,7 @@ foreach ($formData['rows_diff'] as $index => $row) {
                             <div class="overtime-row-header">
                                 <strong>Строка #<?= (int)($index + 1) ?></strong>
                                 <div class="overtime-row-actions">
+                                    <button type="button" class="ui-btn ui-btn-light-border toggle-diff-row-body">Свернуть</button>
                                     <button type="button" class="ui-btn ui-btn-light-border remove-diff-row">Удалить</button>
                                 </div>
                             </div>

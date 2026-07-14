@@ -13,6 +13,7 @@ BX.ready(function () {
     const isDebug = <?= !empty($overtimeConfig['DEBUG']) ? 'true' : 'false' ?>;
     const dutyAllowed = <?= !empty($overtimeConfig['ALLOW_DUTY']) ? 'true' : 'false' ?>;
     const creatorCanCreate = <?= !empty(($overtimeConfig['CREATOR_ACCESS_MAP']['is_manager'] ?? false)) ? 'true' : 'false' ?>;
+    const pastPeriodAllowedEmployees = <?= \Bitrix\Main\Web\Json::encode(overtimeGetPastPeriodAllowedEmployeeIds($overtimeConfig)) ?>;
 
     let lastPreviewResponse = null;
     let previewTimer = null;
@@ -97,6 +98,7 @@ BX.ready(function () {
         if (existingLines.indexOf(line) === -1) {
             existingLines.push(line);
             target.value = existingLines.join("\n");
+            syncDutyCalendarSelection(row);
             renderDutySummary();
             requestPreview();
         }
@@ -117,6 +119,7 @@ BX.ready(function () {
 
         if (filteredLines.length !== existingLines.length) {
             target.value = filteredLines.join("\n");
+            syncDutyCalendarSelection(row);
             renderDutySummary();
             requestPreview();
         }
@@ -197,6 +200,68 @@ BX.ready(function () {
         return new Date(parts[0], parts[1] - 1, parts[2]);
     }
 
+    function getDutyDateLines(row) {
+        const target = row ? row.querySelector('.diff-duty-dates') : null;
+        if (!target) {
+            return [];
+        }
+
+        return target.value.split(/\r?\n/).map(function(item){ return item.trim(); }).filter(Boolean);
+    }
+
+    function isPastPeriodAllowedForRow(row) {
+        const employeeInput = row ? row.querySelector('input[name*="[employee_id]"]') : null;
+        const employeeId = employeeInput ? parseInt(employeeInput.value || '0', 10) : 0;
+        return pastPeriodAllowedEmployees.map(function(id){ return parseInt(id, 10); }).indexOf(employeeId) !== -1;
+    }
+
+    function applyPastDateLimits(row) {
+        if (!row) {
+            return;
+        }
+
+        const allowPast = isPastPeriodAllowedForRow(row);
+        row.querySelectorAll('input[type="date"]').forEach(function(input){
+            setDateInputMin(input, allowPast);
+        });
+    }
+
+    function isPastPeriodAllowedEmployeeId(employeeId) {
+        employeeId = parseInt(employeeId || '0', 10);
+        return pastPeriodAllowedEmployees.map(function(id){ return parseInt(id, 10); }).indexOf(employeeId) !== -1;
+    }
+
+    function setDateInputMin(input, allowPast) {
+        if (!input) {
+            return;
+        }
+        if (allowPast) {
+            input.removeAttribute('min');
+        } else {
+            input.min = minAllowedDate;
+        }
+    }
+
+    function updatePastDateLimits() {
+        const singleEmployee = document.getElementById('single_employee_id');
+        const singleAllowPast = isPastPeriodAllowedEmployeeId(singleEmployee ? singleEmployee.value : 0);
+        setDateInputMin(document.getElementById('single_date_start'), singleAllowPast);
+        setDateInputMin(document.getElementById('single_date_end'), singleAllowPast);
+
+        let sameAllowPast = false;
+        document.querySelectorAll('.same-row input[name*="[employee_id]"]').forEach(function(input){
+            sameAllowPast = sameAllowPast || isPastPeriodAllowedEmployeeId(input.value);
+        });
+        setDateInputMin(document.getElementById('same_date_start'), sameAllowPast);
+        setDateInputMin(document.getElementById('same_date_end'), sameAllowPast);
+
+        document.querySelectorAll('.diff-row').forEach(applyPastDateLimits);
+    }
+
+    function syncDutyCalendarSelection(row) {
+        renderDutyCalendar(row);
+    }
+
     function renderDutyCalendar(row) {
         const widget = row ? row.querySelector('.duty-calendar-widget') : null;
         if (!widget) {
@@ -223,7 +288,9 @@ BX.ready(function () {
         for (let day = 1; day <= daysInMonth; day++) {
             const date = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), day);
             const value = formatDateObject(date);
-            days.push('<button type="button" class="overtime-duty-calendar-day" data-date="' + value + '">' + day + '</button>');
+            const selectedDates = getDutyDateLines(row);
+            const selectedClass = selectedDates.indexOf(value) !== -1 ? ' is-selected' : '';
+            days.push('<button type="button" class="overtime-duty-calendar-day' + selectedClass + '" data-date="' + value + '">' + day + '</button>');
         }
 
         widget.dataset.monthOffset = String(offset);
@@ -240,6 +307,7 @@ BX.ready(function () {
 
     function renderDutyCalendars() {
         document.querySelectorAll('.diff-row').forEach(function(row){
+            applyPastDateLimits(row);
             renderDutyCalendar(row);
         });
     }
@@ -256,7 +324,7 @@ BX.ready(function () {
 
         input.value = '';
         input.type = 'date';
-        input.min = minAllowedDate;
+        applyPastDateLimits(row);
         input.readOnly = false;
 
         if (typeof input.showPicker === 'function') {
@@ -584,6 +652,7 @@ BX.ready(function () {
                     box.innerHTML = escapeHtml(title || 'Выбран сотрудник');
                     setEmployeeInfo(box, title, subtitle);
                     renderDutySummary();
+                    updatePastDateLimits();
                     requestPreview();
                 },
                 'Item:onDeselect': function() {
@@ -591,6 +660,7 @@ BX.ready(function () {
                     box.innerHTML = 'Выберите сотрудника';
                     setEmployeeInfo(box, '', '');
                     renderDutySummary();
+                    updatePastDateLimits();
                     requestPreview();
                 }
             }
@@ -719,12 +789,12 @@ BX.ready(function () {
         }
 
         if (modeInput.value === 'single') {
-            return !!(response.single && response.single.block_create);
+            return !!(response.single && (response.single.block_create || (response.single.errors && response.single.errors.length)));
         }
 
         if (response.rows) {
             return Object.keys(response.rows).some(function(index){
-                return !!(response.rows[index] && response.rows[index].block_create);
+                return !!(response.rows[index] && (response.rows[index].block_create || (response.rows[index].errors && response.rows[index].errors.length)));
             });
         }
 
@@ -1315,6 +1385,7 @@ BX.ready(function () {
             }).join('');
 
             const container = document.getElementById('rows_diff_container');
+            container.querySelectorAll('.diff-row').forEach(function(row){ row.classList.add('is-collapsed'); const btn = row.querySelector('.toggle-diff-row-body'); if (btn) { btn.textContent = 'Раскрыть'; } });
             const idx = container.querySelectorAll('.diff-row').length;
             const div = document.createElement('div');
             div.className = 'overtime-row-card diff-row';
@@ -1323,6 +1394,7 @@ BX.ready(function () {
                 <div class="overtime-row-header">
                     <strong>Строка #${idx + 1}</strong>
                     <div class="overtime-row-actions">
+                        <button type="button" class="ui-btn ui-btn-light-border toggle-diff-row-body">Свернуть</button>
                         <button type="button" class="ui-btn ui-btn-light-border remove-diff-row">Удалить</button>
                     </div>
                 </div>
@@ -1361,6 +1433,7 @@ BX.ready(function () {
             initSelector(div.querySelector('.overtime-selector-row'));
             bindDynamicPreviewEvents(div);
             updateDutyFormVisibility();
+            applyPastDateLimits(div);
             updateDutyDiagnostics('add_diff_row');
             div.querySelector('.remove-diff-row').addEventListener('click', function(){
                 div.remove();
@@ -1413,6 +1486,16 @@ BX.ready(function () {
         const calendarInput = e.target.closest('.duty-date-picker');
         if (calendarInput) {
             openDutyCalendar(calendarInput);
+            return;
+        }
+
+        const diffToggleBtn = e.target.closest('.toggle-diff-row-body');
+        if (diffToggleBtn) {
+            const row = diffToggleBtn.closest('.diff-row');
+            if (row) {
+                row.classList.toggle('is-collapsed');
+                diffToggleBtn.textContent = row.classList.contains('is-collapsed') ? 'Раскрыть' : 'Свернуть';
+            }
             return;
         }
 
@@ -1483,6 +1566,7 @@ BX.ready(function () {
         updateDutyDiagnostics('duty-date-picker change');
     });
 
+    updatePastDateLimits();
     switchMode(modeInput.value || 'single');
     updateDutyFormVisibility();
     updateDutyDiagnostics('initial');
