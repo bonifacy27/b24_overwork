@@ -369,14 +369,8 @@ function isTimeOffPaymentTypeCustom($paymentTypeId, $paymentTypeName)
 function canCancelRequestCustom(array $row): bool
 {
     $statusName = mb_strtolower(trim((string)($row['STATUS_NAME'] ?? '')), 'UTF-8');
-    if ($statusName !== 'выполнена') {
-        return false;
-    }
 
-    return !isTimeOffPaymentTypeCustom(
-        (int)($row['TIP_OPLATY_ID'] ?? 0),
-        (string)($row['TIP_OPLATY'] ?? '')
-    );
+    return $statusName === 'выполнена';
 }
 
 function extractRequestIdFromDocumentIdCustom($documentId, $iblockId)

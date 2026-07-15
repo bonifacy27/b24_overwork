@@ -3,9 +3,9 @@ use Bitrix\Main\Loader;
 
 require_once $_SERVER['DOCUMENT_ROOT'] . '/bitrix/modules/main/include/prolog_before.php';
 
-if (!Loader::includeModule('iblock') || !Loader::includeModule('main')) {
+if (!Loader::includeModule('iblock') || !Loader::includeModule('main') || !Loader::includeModule('bizproc') || !Loader::includeModule('lists')) {
     require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
-    ShowError('Не удалось подключить модули iblock/main');
+    ShowError('Не удалось подключить модули iblock/main/bizproc/lists');
     require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/footer.php');
     return;
 }
@@ -21,6 +21,8 @@ $workStartTimePropId = 3115;
 $workEndDatePropId = 3114;
 $workEndTimePropId = 3116;
 $totalHoursPropId = 3086;
+$timeOffPaymentTypeId = 3537688;
+$dayOffWorkflowTemplateId = 1292;
 
 $requestId = (int)($_REQUEST['id'] ?? 0);
 if ($requestId <= 0) {
@@ -71,6 +73,11 @@ $workEndDate = trim((string)($item['PROPERTY_' . $workEndDatePropId . '_VALUE'] 
 $workEndTime = trim((string)($item['PROPERTY_' . $workEndTimePropId . '_VALUE'] ?? ''));
 $totalHours = trim((string)($item['PROPERTY_' . $totalHoursPropId . '_VALUE'] ?? ''));
 $historyCurrent = trim((string)($item['PROPERTY_' . $historyPropId . '_VALUE'] ?? ''));
+$isTimeOffPaymentType = overtimeCancelIsTimeOffPaymentType(
+    $item['PROPERTY_' . $payTypePropId . '_VALUE'] ?? '',
+    $payType,
+    $timeOffPaymentTypeId
+);
 
 if ($statusElementId <= 0 || mb_strtolower($statusName, 'UTF-8') !== 'выполнена') {
     require($_SERVER['DOCUMENT_ROOT'] . '/bitrix/header.php');
@@ -106,6 +113,46 @@ function overtimeCancelResolveLinkedValue($value): string
     }
 
     return (string)$value;
+}
+
+
+function overtimeCancelIsTimeOffPaymentType($paymentTypeValue, string $paymentTypeName, int $timeOffPaymentTypeId): bool
+{
+    $ids = is_array($paymentTypeValue) ? $paymentTypeValue : [$paymentTypeValue];
+    foreach ($ids as $id) {
+        if ((int)$id > 0 && (int)$id === $timeOffPaymentTypeId) {
+            return true;
+        }
+    }
+
+    $paymentTypeName = mb_strtolower(trim($paymentTypeName), 'UTF-8');
+
+    return $paymentTypeName === 'предоставление отгула' || $paymentTypeName === 'отгул';
+}
+
+function overtimeCancelStartDayOffWorkflow(int $requestId, int $workflowTemplateId): array
+{
+    if ($requestId <= 0) {
+        return [false, 'Некорректный ID заявки для запуска БП.'];
+    }
+
+    if (!class_exists('CBPDocument')) {
+        return [false, 'Класс CBPDocument недоступен.'];
+    }
+
+    $documentId = ['lists', 'Bitrix\\Lists\\BizprocDocumentLists', $requestId];
+    $workflowErrors = [];
+    $workflowId = CBPDocument::StartWorkflow($workflowTemplateId, $documentId, [], $workflowErrors);
+
+    if (!empty($workflowErrors)) {
+        return [false, 'Ошибки запуска БП 1292: ' . print_r($workflowErrors, true)];
+    }
+
+    if ((string)$workflowId === '') {
+        return [false, 'БП 1292 не был запущен: пустой workflowId.'];
+    }
+
+    return [true, (string)$workflowId];
 }
 
 function overtimeCancelFindStatusElementId(string $value): int
@@ -165,7 +212,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && check_bitrix_sessid()) {
                 $historyPropId => $newHistory,
             ]);
 
-            $ok = 'Заявка успешно отменена.';
+            if ($isTimeOffPaymentType) {
+                [$workflowStarted, $workflowResult] = overtimeCancelStartDayOffWorkflow($requestId, $dayOffWorkflowTemplateId);
+                if (!$workflowStarted) {
+                    $error = 'Заявка переведена в статус "Отменена", но не удалось запустить БП 1292: ' . $workflowResult;
+                    $ok = 'Заявка переведена в статус "Отменена".';
+                } else {
+                    $ok = 'Заявка успешно отменена. БП 1292 запущен.';
+                }
+            } else {
+                $ok = 'Заявка успешно отменена.';
+            }
+
             $statusName = 'Отменена';
         }
     }
