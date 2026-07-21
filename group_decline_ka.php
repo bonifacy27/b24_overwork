@@ -13,9 +13,9 @@
  * Логика:
  * 1) Берет у текущей заявки значение свойства GROUP_LINK.
  * 2) Находит все заявки инфоблока 391, привязанные к этой же группе.
- * 3) Оставляет только заявки в статусе "В работе C&B".
+ * 3) Если в группе есть заявки с типом оплаты "Предоставление отгула", переводит их в статус "Отменена" и запускает БП 1292.
  * 4) Если по заявке есть активное задание БП, выполняет его с отрицательным результатом Decline.
- * 5) Пишет запись в историю заявки.
+ * 5) Заявки группы в статусе "Выполнена" без типа оплаты "Предоставление отгула" переводит в статус "Отменена" и пишет историю.
  * 6) От дублей защищается через:
  *    - DB-lock на группу;
  *    - служебное поле AUTO_DECLINE_MARKERS.
@@ -32,7 +32,7 @@
  *
  * Изменения v1.2.0:
  * - устранена коллизия повторного запуска БП 1292 при групповом автоотклонении;
- * - заявки с TIP_OPLATY = 3537688 сначала переводятся в статус "Отклонена";
+ * - заявки с TIP_OPLATY = 3537688 сначала переводятся в статус "Отменена";
  * - только после фиксации статуса и служебного marker-а запускается БП 1292;
  * - обработка заявок с отгулом выполняется первым проходом по всей группе до завершения заданий БП;
  * - технический marker по-прежнему хранится только в AUTO_DECLINE_MARKERS и не пишется в ISTORIYA.
@@ -58,9 +58,11 @@ $dayOffWorkflowParameters = [];
 $statusDeclineElementId = 3511771; // ID элемента статуса "В работе КА".
 $statusDeclineName = 'В работе КА'; // Фолбэк-проверка по названию статуса.
 
-// v1.2.0: статус, в который переводим заявки с типом оплаты "Предоставление отгула" перед запуском БП 1292.
-$statusRejectedElementId = 3575323; // ID элемента статуса "Отклонена".
-$statusRejectedName = 'Отклонена';
+// v1.3.0: статус, в который переводим отменяемые заявки.
+$statusCompletedElementId = 3511824; // ID элемента статуса "Выполнена".
+$statusCompletedName = 'Выполнена';
+$statusRejectedElementId = 3511775; // ID элемента статуса "Отменена".
+$statusRejectedName = 'Отменена';
 
 $executorUserId = 1; // Резервный пользователь для выполнения задания БП.
 $debugEnabled = true; // После проверки на бою можно поставить false.
@@ -355,7 +357,7 @@ $setRequestStatus = static function (int $elementId, int $statusElementId) use (
 };
 
 /**
- * v1.1.0: если у заявки TIP_OPLATY = 3537688, запускает БП 1292.
+ * v1.1.0: если у заявки TIP_OPLATY = 3537688, переводит ее в "Отменена" и запускает БП 1292.
  * Защита от дублей: DB-lock на группу + marker в AUTO_DECLINE_MARKERS.
  * Технический marker и workflowId в пользовательскую историю ISTORIYA не пишутся.
  */
@@ -392,7 +394,7 @@ $startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElem
         return [false, "Заявка с отгулом уже обработана ранее, marker={$workflowMarker}"];
     }
 
-    // v1.2.0: сначала переводим заявку с отгулом в статус "Отклонена".
+    // v1.3.0: сначала переводим заявку с отгулом в статус "Отменена".
     [$currentStatusId, $currentStatusName] = $getElementStatus($requestId);
     if ($currentStatusId !== $statusRejectedElementId) {
         if (!$setRequestStatus($requestId, $statusRejectedElementId)) {
@@ -438,7 +440,7 @@ $startDayOffWorkflowIfNeeded = static function (int $requestId, int $currentElem
         }
 
         $debugLog(
-            "v1.2.0: заявка #{$requestId} с отгулом переведена в статус '{$statusRejectedName}', "
+            "v1.3.0: заявка #{$requestId} с отгулом переведена в статус '{$statusRejectedName}', "
             . "БП {$dayOffWorkflowTemplateId} запущен, workflowId={$workflowId}, "
             . "группа={$groupId}, инициатор={$currentElementId}"
         );
@@ -1057,8 +1059,27 @@ foreach ($groupIds as $groupId) {
             continue;
         }
 
-        // Первый проход — автоотклонение активных заданий БП по заявкам группы.
-        // Для заявок с активным заданием статус вручную не меняем: маршрут БП должен выставить его сам.
+        // Первый проход — обрабатываем ВСЕ заявки с типом оплаты "Предоставление отгула":
+        // переводим в "Отменена" и запускаем БП 1292 до завершения заданий БП по группе.
+        foreach ($requestIds as $dayOffRequestId) {
+            $dayOffRequestId = (int)$dayOffRequestId;
+            if ($dayOffRequestId <= 0) {
+                continue;
+            }
+
+            [$dayOffWorkflowStarted, $dayOffWorkflowInfo] = $startDayOffWorkflowIfNeeded($dayOffRequestId, $currentElementId, $groupId);
+            if ($dayOffWorkflowStarted) {
+                $this->WriteToTrackingService(
+                    "group_auto_decline_ka: Заявка #{$dayOffRequestId} с типом оплаты «Предоставление отгула» переведена в статус «{$statusRejectedName}», запущен БП #{$dayOffWorkflowTemplateId}"
+                );
+            } else {
+                $debugLog("v1.3.0: БП {$dayOffWorkflowTemplateId} по заявке #{$dayOffRequestId} не запускался: {$dayOffWorkflowInfo}");
+            }
+        }
+
+        // Второй проход — автоотклонение активных заданий БП по заявкам группы.
+        // Для заявок с активным заданием статус уже мог быть выставлен вручную для спец-сценариев,
+        // но само задание БП обязательно пытаемся завершить отклонением.
         $requestIdsWithoutActiveTasks = [];
 
         foreach ($requestIds as $requestId) {
@@ -1160,7 +1181,9 @@ foreach ($groupIds as $groupId) {
             }
         }
 
-        // Второй проход — остальные заявки группы без активных заданий БП: переводим в статус "Отклонена" и пишем историю.
+        // Третий проход — заявки группы без активных заданий БП:
+        // - "Предоставление отгула" уже переведены в "Отменена" и получили запуск БП 1292;
+        // - остальные заявки отменяем только если они были в статусе "Выполнена".
         foreach ($requestIdsWithoutActiveTasks as $requestIdWithoutTask) {
             $requestIdWithoutTask = (int)$requestIdWithoutTask;
             if ($requestIdWithoutTask <= 0) {
@@ -1173,7 +1196,19 @@ foreach ($groupIds as $groupId) {
                 continue;
             }
 
-            $historyMessage = "Заявка отклонена автоматически на этапе КА по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
+            $isDayOffRequest = in_array($paymentTypeDayOffElementId, $getPaymentTypeIds($requestIdWithoutTask), true);
+            [$requestStatusId, $requestStatusName] = $getElementStatus($requestIdWithoutTask);
+            $isCompletedRequest = $requestStatusId === $statusCompletedElementId || $requestStatusName === $statusCompletedName;
+
+            if (!$isDayOffRequest && !$isCompletedRequest) {
+                $debugLog(
+                    "Заявка #{$requestIdWithoutTask} без активных заданий БП не отменяется: "
+                    . "тип оплаты не отгул, статус '{$requestStatusName}'/{$requestStatusId} не '{$statusCompletedName}'"
+                );
+                continue;
+            }
+
+            $historyMessage = "Заявка отменена автоматически на этапе КА по групповой заявке {$groupTitleForMessage}. Отклонил: {$currentUserName}.";
             if ($finalizeDeclinedRequest($requestIdWithoutTask, $marker, $historyMessage)) {
                 $this->WriteToTrackingService("group_auto_decline_ka: {$historyMessage}");
             } else {
