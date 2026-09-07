@@ -1157,6 +1157,7 @@ if ($isExcelExport) {
         'ФИО',
         'Периоды работы',
         'Тип работ',
+        'Статус',
         'Обоснование',
         'ИТОГО сверхурочных часов по ТК РФ',
         'ИТОГО часы для оплаты единовременной премией',
@@ -1172,13 +1173,14 @@ if ($isExcelExport) {
         $sheet->setCellValueByColumnAndRow(2, $rowNum, (string)$row['FIO']);
         $sheet->setCellValueByColumnAndRow(3, $rowNum, trim((string)$row['START'] . ' — ' . (string)$row['END']));
         $sheet->setCellValueByColumnAndRow(4, $rowNum, (string)$row['TIP_RABOTY']);
-        $sheet->setCellValueByColumnAndRow(5, $rowNum, (string)$row['OBOSNOVANIE']);
-        $sheet->setCellValueByColumnAndRow(6, $rowNum, (float)$row['HOURS_TK']);
-        $sheet->setCellValueByColumnAndRow(7, $rowNum, (float)$row['HOURS_BONUS']);
+        $sheet->setCellValueByColumnAndRow(5, $rowNum, (string)$row['STATUS_NAME']);
+        $sheet->setCellValueByColumnAndRow(6, $rowNum, (string)$row['OBOSNOVANIE']);
+        $sheet->setCellValueByColumnAndRow(7, $rowNum, (float)$row['HOURS_TK']);
+        $sheet->setCellValueByColumnAndRow(8, $rowNum, (float)$row['HOURS_BONUS']);
         $rowNum++;
     }
 
-    foreach (range('A', 'G') as $colLetter) {
+    foreach (range('A', 'H') as $colLetter) {
         $sheet->getColumnDimension($colLetter)->setAutoSize(true);
     }
 
