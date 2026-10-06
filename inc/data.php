@@ -466,29 +466,84 @@ function overtimeGetPaymentTypesByWorkType(int $workTypeId, array $config): arra
     return $result;
 }
 
-function overtimeGetOvertimeHoursInRegistry(int $employeeId, int $year, array $config): float
+function overtimeGetEmployee1cGuid(int $employeeId, array $config): string
 {
-    $sum = 0.0;
+    $user = $employeeId > 0 ? CUser::GetByID($employeeId)->Fetch() : false;
+    $field = (string)($config['ZUP_EMPLOYEE_GUID_FIELD'] ?? 'UF_1C_GUID');
+    $guid = $user ? trim((string)($user[$field] ?? '')) : '';
 
-    $res = CIBlockElement::GetList(
-        [],
-        [
-            'IBLOCK_ID' => $config['IBLOCK_OVERTIME_REGISTRY'],
-            'ACTIVE' => 'Y',
-            'PROPERTY_' . $config['REG_PROP_EMPLOYEE'] => $employeeId,
-            'PROPERTY_' . $config['REG_PROP_YEAR'] => $year,
-        ],
-        false,
-        false,
-        ['ID', 'PROPERTY_' . $config['REG_PROP_HOURS']]
-    );
-
-    while ($item = $res->Fetch()) {
-        $value = $item['PROPERTY_' . $config['REG_PROP_HOURS'] . '_VALUE'];
-        $sum += (float)str_replace(',', '.', (string)$value);
+    if ($guid === '') {
+        throw new RuntimeException('У сотрудника не заполнено поле ' . $field . ' с GUID 1С.');
     }
 
-    return round($sum, 2);
+    return $guid;
+}
+
+/**
+ * Возвращает оформленные в 1С ЗУП часы сверхурочной работы за год на указанную дату.
+ * Пока интеграция выключена, запрос не выполняется и возвращается значение заглушки.
+ */
+function overtimeGetAnnualOvertimeHoursFromZup(int $employeeId, string $currentDate, array $config): float
+{
+    static $cache = [];
+
+    $employeeGuid = overtimeGetEmployee1cGuid($employeeId, $config);
+    $cacheKey = md5(serialize([
+        $employeeGuid,
+        $currentDate,
+        (bool)($config['ZUP_OVERTIME_SERVICE_ENABLED'] ?? false),
+        (string)($config['ZUP_OVERTIME_SERVICE_URL'] ?? ''),
+        (float)($config['ZUP_OVERTIME_STUB_HOURS'] ?? 0),
+    ]));
+
+    if (isset($cache[$cacheKey])) {
+        return $cache[$cacheKey];
+    }
+
+    if (empty($config['ZUP_OVERTIME_SERVICE_ENABLED'])) {
+        $cache[$cacheKey] = round((float)($config['ZUP_OVERTIME_STUB_HOURS'] ?? 0), 2);
+        return $cache[$cacheKey];
+    }
+
+    $serviceUrl = trim((string)($config['ZUP_OVERTIME_SERVICE_URL'] ?? ''));
+    if ($serviceUrl === '') {
+        throw new RuntimeException('Не задан адрес веб-сервиса часов сверхурочной работы 1С ЗУП.');
+    }
+
+    $requestBody = \Bitrix\Main\Web\Json::encode([
+        'employeeGuid' => $employeeGuid,
+        'currentDate' => $currentDate,
+    ]);
+
+    $httpClient = new \Bitrix\Main\Web\HttpClient([
+        'socketTimeout' => (int)($config['ZUP_OVERTIME_SERVICE_TIMEOUT'] ?? 5),
+        'streamTimeout' => (int)($config['ZUP_OVERTIME_SERVICE_TIMEOUT'] ?? 5),
+    ]);
+    $httpClient->setHeader('Content-Type', 'application/json; charset=UTF-8');
+    $httpClient->setHeader('Accept', 'application/json');
+    $responseBody = $httpClient->post($serviceUrl, $requestBody);
+
+    if ($responseBody === false || $httpClient->getStatus() < 200 || $httpClient->getStatus() >= 300) {
+        throw new RuntimeException('Веб-сервис 1С ЗУП не вернул успешный ответ. HTTP-код: ' . $httpClient->getStatus() . '.');
+    }
+
+    try {
+        $response = \Bitrix\Main\Web\Json::decode($responseBody);
+    } catch (Throwable $e) {
+        throw new RuntimeException('Веб-сервис 1С ЗУП вернул некорректный JSON.', 0, $e);
+    }
+
+    if (!is_array($response) || !isset($response['overtimeHours']) || !is_numeric($response['overtimeHours'])) {
+        throw new RuntimeException('В ответе веб-сервиса 1С ЗУП отсутствует числовое поле overtimeHours.');
+    }
+
+    $hours = (float)$response['overtimeHours'];
+    if ($hours < 0) {
+        throw new RuntimeException('Веб-сервис 1С ЗУП вернул отрицательное количество часов.');
+    }
+
+    $cache[$cacheKey] = round($hours, 2);
+    return $cache[$cacheKey];
 }
 
 function overtimeSplitHoursByDay(DateTime $start, DateTime $end): array

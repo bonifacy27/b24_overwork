@@ -146,7 +146,7 @@ function overtimeAnalyzeChecks(int $employeeId, array $segments, array $config):
     if (empty($overtimeSegments)) {
         return [
             'messages' => [],
-            'registry_total' => 0,
+            'annual_overtime_total' => 0,
             'current_overtime_hours' => 0,
             'two_day_exceed' => [],
         ];
@@ -168,17 +168,16 @@ function overtimeAnalyzeChecks(int $employeeId, array $segments, array $config):
     }
 
     $currentOvertimeHours = round($currentOvertimeHours, 2);
-    $year = (int)$overtimeSegments[0]['start']->format('Y');
-    $registryHours = overtimeGetOvertimeHoursInRegistry($employeeId, $year, $config);
-    $withCurrent = round($registryHours + $currentOvertimeHours, 2);
+    $annualOvertimeHours = overtimeGetAnnualOvertimeHoursFromZup($employeeId, date('Y-m-d'), $config);
+    $withCurrent = round($annualOvertimeHours + $currentOvertimeHours, 2);
     $annualLimit = overtimeGetAnnualHoursLimit($config);
     $consecutiveLimitHours = overtimeGetConsecutiveDaysLimitHours($config);
     $consecutiveLimitDays = overtimeGetConsecutiveDaysLimitDays($config);
 
-    if ($registryHours > $annualLimit) {
+    if ($annualOvertimeHours > $annualLimit) {
         $messages[] = [
             'type' => 'warning',
-            'text' => 'Количество сверхурочных часов в текущем году уже более ' . $annualLimit . ' часов: ' . $registryHours . 'ч.',
+            'text' => 'Количество сверхурочных часов в текущем году уже более ' . $annualLimit . ' часов: ' . $annualOvertimeHours . 'ч.',
         ];
     } elseif ($withCurrent > $annualLimit) {
         $messages[] = [
@@ -237,7 +236,7 @@ function overtimeAnalyzeChecks(int $employeeId, array $segments, array $config):
 
     return [
         'messages' => $messages,
-        'registry_total' => $registryHours,
+        'annual_overtime_total' => $annualOvertimeHours,
         'current_overtime_hours' => $currentOvertimeHours,
         'two_day_exceed' => $twoDayExceed ?? [],
     ];
@@ -279,10 +278,9 @@ function overtimeRestoreSegments(array $rawSegments): array
     return $result;
 }
 
-function overtimeGetRegistryHoursBeforeCurrentSegment(int $employeeId, DateTime $segmentStart, array $config): float
+function overtimeGetAnnualHoursBeforeCurrentSegment(int $employeeId, array $config): float
 {
-    $year = (int)$segmentStart->format('Y');
-    return overtimeGetOvertimeHoursInRegistry($employeeId, $year, $config);
+    return overtimeGetAnnualOvertimeHoursFromZup($employeeId, date('Y-m-d'), $config);
 }
 
 function overtimeGetExistingOvertimeHoursByDayForSegment(int $employeeId, DateTime $segmentStart, DateTime $segmentEnd, array $config): array
@@ -357,7 +355,7 @@ function overtimeExplainRejectedSlot(
     array $candidateSlot,
     array $acceptedSlots,
     array $existingByDay,
-    float $registryHoursBefore,
+    float $annualHoursBefore,
     float $segmentTotalHours,
     array $config
 ): array {
@@ -372,13 +370,13 @@ function overtimeExplainRejectedSlot(
         $acceptedByDay[$slot['date']] += (float)$slot['hours'];
     }
 
-    $finalYearValue = round($registryHoursBefore + $segmentTotalHours, 2);
+    $finalYearValue = round($annualHoursBefore + $segmentTotalHours, 2);
 
     $annualLimit = overtimeGetAnnualHoursLimit($config);
     $consecutiveLimitHours = overtimeGetConsecutiveDaysLimitHours($config);
     $consecutiveLimitDays = overtimeGetConsecutiveDaysLimitDays($config);
 
-    if (($registryHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > $annualLimit) {
+    if (($annualHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > $annualLimit) {
         return [
             'reason_code' => 'YEAR_LIMIT',
             'reason_text' => 'не включены в оплату по ТК РФ, так как при добавлении всей заявки годовое количество сверхурочных часов превысило бы ' . $annualLimit . ' (' . $finalYearValue . ')',
@@ -410,7 +408,7 @@ function overtimeExplainRejectedSlot(
     ];
 }
 
-function overtimeCanAllocateSlotToTk(array $candidateSlot, array $acceptedSlots, array $existingByDay, float $registryHoursBefore, array $config): bool
+function overtimeCanAllocateSlotToTk(array $candidateSlot, array $acceptedSlots, array $existingByDay, float $annualHoursBefore, array $config): bool
 {
     $acceptedHours = 0.0;
     $acceptedByDay = [];
@@ -423,7 +421,7 @@ function overtimeCanAllocateSlotToTk(array $candidateSlot, array $acceptedSlots,
         $acceptedByDay[$slot['date']] += (float)$slot['hours'];
     }
 
-    if (($registryHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > overtimeGetAnnualHoursLimit($config)) {
+    if (($annualHoursBefore + $acceptedHours + (float)$candidateSlot['hours']) > overtimeGetAnnualHoursLimit($config)) {
         return false;
     }
 
@@ -546,7 +544,7 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
         $interval = overtimeFormatDebugInterval($segment['start'], $segment['end']);
 
         return [
-            'registry_hours_before' => 0.0,
+            'annual_hours_before' => 0.0,
             'existing_by_day' => [],
             'rows' => [
                 [
@@ -577,21 +575,21 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
     }
 
     $slots = overtimeSplitSegmentToHourSlots($segment['start'], $segment['end']);
-    $registryHoursBefore = overtimeGetRegistryHoursBeforeCurrentSegment($employeeId, $segment['start'], $config);
+    $annualHoursBefore = overtimeGetAnnualHoursBeforeCurrentSegment($employeeId, $config);
     $existingByDay = overtimeGetExistingOvertimeHoursByDayForSegment($employeeId, $segment['start'], $segment['end'], $config);
     $segmentTotalHours = (float)$segment['hours'];
-    $finalYearValue = round($registryHoursBefore + $segmentTotalHours, 2);
+    $finalYearValue = round($annualHoursBefore + $segmentTotalHours, 2);
 
     $acceptedSlots = [];
     $premiumSlots = [];
 
     foreach ($slots as $slot) {
-        if (overtimeCanAllocateSlotToTk($slot, $acceptedSlots, $existingByDay, $registryHoursBefore, $config)) {
+        if (overtimeCanAllocateSlotToTk($slot, $acceptedSlots, $existingByDay, $annualHoursBefore, $config)) {
             $slot['reason_code'] = '';
             $slot['reason_text'] = '';
             $acceptedSlots[] = $slot;
         } else {
-            $reason = overtimeExplainRejectedSlot($slot, $acceptedSlots, $existingByDay, $registryHoursBefore, $segmentTotalHours, $config);
+            $reason = overtimeExplainRejectedSlot($slot, $acceptedSlots, $existingByDay, $annualHoursBefore, $segmentTotalHours, $config);
             $slot['reason_code'] = $reason['reason_code'];
             $slot['reason_text'] = $reason['reason_text'];
             $premiumSlots[] = $slot;
@@ -716,7 +714,7 @@ function overtimeBuildPaymentBreakdown(int $employeeId, array $segment, array $c
     ];
 
     return [
-        'registry_hours_before' => round($registryHoursBefore, 2),
+        'annual_hours_before' => round($annualHoursBefore, 2),
         'existing_by_day' => $existingByDay,
         'rows' => $rows,
         'summary' => $summary,
