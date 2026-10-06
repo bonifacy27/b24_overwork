@@ -10,6 +10,8 @@
 | `WorkStartAt` | `DATETIME2(0)` | нет | Дата и время начала работ. |
 | `WorkEndAt` | `DATETIME2(0)` | нет | Дата и время окончания работ. |
 | `TotalHours` | `DECIMAL(9,2)` | нет | Общее количество часов по заявке. |
+| `WorkJustification` | `NVARCHAR(200)` | нет | Обоснование для приказа из `OBOSNOVANIE_DLYA_PRIKAZA` головной заявки. Одинаково для текущей, связанных и групповых заявок одного запуска. |
+| `PaymentType` | `NVARCHAR(10)` | нет | Краткий английский код типа оплаты: `DOUBLE` — «В двойном размере», `LABOR_CODE` — «Согласно ТК РФ». |
 | `GroupRequestId` | `BIGINT` | да | ID групповой заявки. `NULL` означает, что заявка не является групповой. Отдельный признак групповой заявки не нужен. |
 | `IsLinkedRequest` | `BIT` | нет | `1`, если у заявки есть связанные заявки; иначе `0`. |
 | `IsProcessed` | `BIT` | нет | Признак обработки записи в 1С: `0` — запись еще нужно загрузить, `1` — запись уже обработана и повторно загружать ее не нужно. |
@@ -25,6 +27,8 @@ CREATE TABLE dbo.StaffOvertime_1CZUP
     WorkStartAt      DATETIME2(0)     NOT NULL,
     WorkEndAt        DATETIME2(0)     NOT NULL,
     TotalHours       DECIMAL(9,2)     NOT NULL,
+    WorkJustification NVARCHAR(200)   NOT NULL,
+    PaymentType      NVARCHAR(10)     NOT NULL,
     GroupRequestId   BIGINT           NULL,
     IsLinkedRequest  BIT              NOT NULL
         CONSTRAINT DF_StaffOvertime_1CZUP_IsLinkedRequest DEFAULT (0),
@@ -36,6 +40,8 @@ CREATE TABLE dbo.StaffOvertime_1CZUP
         CHECK (RequestType IN (N'OVERTIME', N'WEEKEND')),
     CONSTRAINT CK_StaffOvertime_1CZUP_TotalHours
         CHECK (TotalHours >= 0),
+    CONSTRAINT CK_StaffOvertime_1CZUP_PaymentType
+        CHECK (PaymentType IN (N'DOUBLE', N'LABOR_CODE')),
     CONSTRAINT CK_StaffOvertime_1CZUP_WorkPeriod
         CHECK (WorkEndAt >= WorkStartAt)
 );
@@ -45,3 +51,7 @@ CREATE INDEX IX_StaffOvertime_1CZUP_Unprocessed
 ```
 
 В экспорт должны попадать только заявки со статусом «Выполнена» и только с типами `OVERTIME` и `WEEKEND`; заявки на дежурство в этот обмен не включаются. После успешной загрузки строки 1С должна устанавливать `IsProcessed = 1`. Значение следует менять только после завершения обработки записи, чтобы при ошибке ее можно было прочитать повторно.
+
+При экспорте `Staff_ID` заполняется из пользовательского поля `UF_1C_GUID` пользователя Bitrix24, указанного в свойстве заявки `SOTRUDNIK`.
+
+Единый скрипт `export_1czup.php` всегда включает в экспорт текущую заявку бизнес-процесса. Дополнительно он включает непосредственно связанные заявки из `SVYAZANNYE_ZAYAVKI` и, если заполнен `GROUP_LINK`, все заявки этой группы. Повторяющиеся ID исключаются до обращения к SQL-таблице.
