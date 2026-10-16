@@ -1,14 +1,13 @@
 <?php
 
 if (!defined('OVERTIME_REQUEST_VERSION')) {
-    define('OVERTIME_REQUEST_VERSION', '1.8.7-duty-work-date-fallback');
+    define('OVERTIME_REQUEST_VERSION', '1.9.0-zup-overtime-hours');
 }
 
 $overtimeConfig = [
     'DEBUG' => false,
 
     'IBLOCK_REQUESTS' => 391,
-    'IBLOCK_OVERTIME_REGISTRY' => 392,
     'IBLOCK_WORK_TYPES' => 393,
     'IBLOCK_PAYMENT_TYPES' => 394,
     'IBLOCK_STATUSES' => 388,
@@ -47,10 +46,13 @@ $overtimeConfig = [
     'OVERTIME_NIGHT_START_HOUR' => 22,
     'OVERTIME_NIGHT_END_HOUR' => 6,
 
-    // Реестр часов сверхурочки
-    'REG_PROP_EMPLOYEE' => 'SOTRUDNIK',
-    'REG_PROP_YEAR'     => 'GOD',
-    'REG_PROP_HOURS'    => 'KOLICHESTVO_CHASOV',
+    // Получение оформленных за год часов из 1С ЗУП.
+    // До появления веб-сервиса используется заглушка с фиксированным значением.
+    'ZUP_OVERTIME_SERVICE_ENABLED' => false,
+    'ZUP_OVERTIME_SERVICE_URL' => '',
+    'ZUP_OVERTIME_SERVICE_TIMEOUT' => 5,
+    'ZUP_OVERTIME_STUB_HOURS' => 0.0,
+    'ZUP_EMPLOYEE_GUID_FIELD' => 'UF_1C_GUID',
 
     // Типы оплаты
     'PAYMENT_PROP_WORK_TYPES' => 'TIPY_RABOTY',
